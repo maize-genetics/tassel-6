@@ -1,0 +1,7 @@
+*                         @btmonier
+
+# Parity oracle and project decisions: always need owner review.
+/testdata/golden/         @btmonier
+/docs/adr/                @btmonier
+/AGENTS.md                @btmonier
+/.cursor/rules/           @btmonier

@@ -1,0 +1,96 @@
+name: Agent task
+description: One task sized for a single agent session, one branch, one PR.
+title: "<type>(<scope>): <short task title>"
+labels: ["agent-task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write this so a fresh agent with no other context can finish it.
+        The agent reads AGENTS.md, this issue, the cited roadmap section and ADRs,
+        and the latest handoff before starting.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should exist when this is done, in one or two sentences.
+      placeholder: Port Centered IBS kinship into tassel-core as the `kinship` operation.
+    validations:
+      required: true
+
+  - type: input
+    id: roadmap
+    attributes:
+      label: Roadmap section and todo id
+      placeholder: "Phase 0 PoC, todo `kinship-pca`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: TASSEL 5 sources
+      description: Classes to port or consult, relative to src/main/java/net/maizegenetics/ in reference/tassel5.
+      placeholder: |
+        - analysis/distance/EndelmanDistanceMatrix.java
+        - analysis/distance/KinshipPlugin.java
+        - Existing test: src/test/java/.../CenteredIBSTest.java
+
+  - type: textarea
+    id: contracts
+    attributes:
+      label: Contracts and ADRs to build on
+      description: Interfaces this task must use but not change.
+      placeholder: |
+        - GenotypeTable.siteBlocks() (ADR-0012)
+        - Operation spec DSL (ADR-0002)
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Objective, checkable criteria. Include targets and golden tests.
+      value: |
+        - [ ] Golden test(s) pass on jvmTest, wasmJsNodeTest, and macosArm64Test
+        - [ ] No new dependencies; no java.* in commonMain
+        - [ ] Porting ledger row(s) updated
+        - [ ] Handoff written in the PR body
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      placeholder: BLAS fast path; Normalized IBS; UI wiring.
+
+  - type: textarea
+    id: verify
+    attributes:
+      label: Verification commands
+      value: |
+        ./gradlew :tassel-core:allTests
+        ./gradlew check
+      render: bash
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where should this run
+      options:
+        - Cloud agent or worktree (headless, parallel-safe)
+        - Local session (UI, integration, or needs the maintainer's machine)
+    validations:
+      required: true
+
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      description: Issues or PRs that must merge first.
+      placeholder: "#12, #14"
