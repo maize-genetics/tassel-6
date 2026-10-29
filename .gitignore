@@ -7,4 +7,7 @@ out/
 local.properties
 .DS_Store
 
+# TASSEL 5 reference source (scripts/fetch-reference.sh)
+reference/
+
 .cursor/
