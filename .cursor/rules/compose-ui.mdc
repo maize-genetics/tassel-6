@@ -1,0 +1,32 @@
+---
+description: Compose Multiplatform UI conventions for tassel-app
+globs: tassel-app/**/*.kt
+alwaysApply: false
+---
+
+# One UI, two targets
+
+`tassel-app` ships the same Compose UI to desktop (JVM) and web (wasmJs).
+
+- Shared UI lives in `commonMain`. Only file pickers, windowing, and
+  engine wiring go in `desktopMain`/`wasmJsMain`.
+- The UI never calls analyses directly. It talks to an `Engine` (local engine
+  now, remote/server engine later), so UI code must not assume results are
+  computed in-process or instantly.
+- Analysis forms are generated from operation specs. Do not hand-build a form
+  for an operation; extend the spec or the form generator instead.
+
+# State and performance
+
+- Unidirectional state: immutable UI state, events in, a view model per screen.
+- Long-running work runs in coroutines with progress and cancellation surfaced
+  in the UI. Never block the main thread (the browser has only one).
+- Genotype grids and large tables must be virtualized (`LazyColumn`/
+  `LazyRow` or canvas drawing). Never compose one node per genotype cell.
+- Heatmaps and scatter plots draw on `Canvas`; downsample before drawing when
+  points exceed the pixel count.
+
+# Look and feel
+
+- Material 3 with the app theme; no hard-coded colors outside the theme.
+- Every analysis result should be exportable in the TASSEL 5 text format.
