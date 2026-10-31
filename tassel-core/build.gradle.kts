@@ -1,5 +1,13 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.ktlint)
+    alias(libs.plugins.kover)
+}
+
+ktlint {
+    filter {
+        exclude { it.file.path.contains("/build/generated/") }
+    }
 }
 
 abstract class GenerateBuildInfo : DefaultTask() {
@@ -20,7 +28,8 @@ abstract class GenerateBuildInfo : DefaultTask() {
             |internal object BuildInfo {
             |    const val VERSION: String = "${version.get()}"
             |}
-            |""".trimMargin()
+            |
+            """.trimMargin(),
         )
     }
 }
