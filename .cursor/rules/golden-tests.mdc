@@ -1,0 +1,42 @@
+---
+description: Golden parity tests against TASSEL 5 and protection of test data
+globs: **/src/*Test/**/*.kt,testdata/**
+alwaysApply: false
+---
+
+# Golden tests are the oracle
+
+`testdata/golden/` holds outputs produced by the pinned TASSEL 5 release (see
+ADR-0009 and `testdata/golden/MANIFEST`). A ported analysis is correct when it
+matches them.
+
+- Never edit, regenerate, or delete files in `testdata/golden/` unless the issue
+  explicitly asks for it. If a golden test fails, fix the port or stop and
+  report. Do not "update the expectation".
+- Never loosen a tolerance to make a test pass. Tolerances are set per analysis
+  in the golden manifest; changing one needs an ADR or the maintainer's ok.
+- Put tests in `commonTest` so they run on every target. Use a
+  platform-specific test source set only for platform code.
+
+# Comparison conventions
+
+- Doubles: absolute tolerance from the manifest (kinship uses `8e-6`, matching
+  TASSEL 5's `CenteredIBSTest`).
+- PCA: compare eigenvalues directly; compare each eigenvector up to sign
+  (normalize so the largest-magnitude entry is positive, then compare).
+- Tables: compare headers, row order, and column order exactly, then values.
+- Text output: compare after normalizing line endings only.
+
+```kotlin
+// BAD
+assertEquals(expected, actual, 1e-3) // loosened until green
+
+// GOOD
+assertMatrixEquals(golden.kinship, actual, tolerance = manifest.tolerance("kinship"))
+```
+
+# Test data access
+
+Load files through the shared `TestData` helper so the same test runs on the
+JVM, Node (wasmJs), and Native. Do not use `java.io.File` or classpath
+resources in `commonTest`.

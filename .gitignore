@@ -10,4 +10,8 @@ local.properties
 # TASSEL 5 reference source (scripts/fetch-reference.sh)
 reference/
 
-.cursor/
+# Cursor: share rules and hooks; keep personal plans and state local
+.cursor/*
+!.cursor/rules/
+!.cursor/hooks/
+!.cursor/hooks.json

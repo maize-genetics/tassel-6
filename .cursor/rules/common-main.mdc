@@ -1,0 +1,44 @@
+---
+description: Pure-Kotlin constraints for multiplatform common source sets
+globs: **/src/commonMain/**/*.kt
+alwaysApply: false
+---
+
+# commonMain is pure Kotlin
+
+This code compiles to the JVM, wasmJs, macosArm64, and linuxX64. Anything
+JVM-only breaks three of the four targets.
+
+- No `java.*`, `javax.*`, `htsjdk.*`, `com.google.common.*`, `org.apache.*`, or
+  `kotlin.jvm.*` imports.
+- No `String.format`, `System.*`, `Thread`, `synchronized`, or reflection.
+- Use `kotlin.math`, `kotlinx.io` for byte streams, `kotlinx.coroutines` for
+  concurrency, and `kotlinx.serialization` for structured formats.
+- Platform needs go behind an interface or `expect`/`actual`, with the
+  `actual`s in `jvmMain`, `wasmJsMain`, and `nativeMain`.
+
+```kotlin
+// BAD: compiles on the JVM only
+val text = String.format("%.6f", value)
+
+// GOOD: shared formatter in commonMain, matching TASSEL 5 output
+val text = formatDecimal(value, digits = 6)
+```
+
+# Genotype access
+
+- Analyses read genotypes through site blocks, not whole matrices:
+
+```kotlin
+table.siteBlocks(blockSize = 4096).forEach { block -> /* accumulate */ }
+```
+
+- Genotypes are bytes, encoded as in TASSEL 5's `NucleotideAlignmentConstants`
+  (diploid packed in one byte: high nibble and low nibble alleles, `0xFF`
+  missing). Do not invent a second encoding.
+- Report progress and check cancellation in long loops (`ensureActive()`).
+
+# Porting
+
+- Add `@see` KDoc naming the TASSEL 5 class an entry point was ported from.
+- Keep TASSEL 5 defaults, missing-data handling, ordering, and tie-breaking.
