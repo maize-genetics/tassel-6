@@ -20,8 +20,8 @@ bindings.
 
 ## Repository layout
 
-The repo is currently a single-module JVM skeleton. The target layout, landing
-with the `kmp-skeleton` task, is:
+The `kmp-skeleton` task created the first three modules below; the rest land
+with later tasks:
 
 | Path | Contents |
 |------|----------|
@@ -107,7 +107,9 @@ At the end of a session:
 
 ## Verification
 
-Commands become available as the `kmp-skeleton` task lands:
+Gradle provisions the JDK 25 toolchain if it is not installed. Native tests run
+only on a matching host: `macosArm64Test` needs a Mac with full Xcode (Command
+Line Tools alone cannot link), and `linuxX64Test` needs Linux; CI covers both.
 
 ```bash
 ./gradlew :tassel-core:allTests        # jvm, wasmJs (Node), native tests
