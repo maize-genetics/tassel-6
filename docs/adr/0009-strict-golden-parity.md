@@ -1,6 +1,6 @@
 # ADR-0009: Strict numerical parity through TASSEL 5 golden tests
 
-- Status: Accepted (pinned version to be confirmed in the `golden-data` task)
+- Status: Accepted (pinned to `v5.2.98` in the `golden-data` task)
 - Date: 2026-10-29
 
 ## Context
@@ -28,6 +28,10 @@ by AI agents, which need an objective, automatic check of correctness.
 The plan named TASSEL 5.3.0. The TASSEL 5 repo currently reports version 5.3.0
 but its latest release tag is `v5.2.98`. The `golden-data` task must either tag
 5.3.0 in TASSEL 5 or pin `v5.2.98`, and record the choice in the manifest.
+
+Resolved 2026-11-02: pinned `v5.2.98` (the `tassel-5-standalone-v5.2.98.tar.gz`
+release asset). The PoC analyses have no behavioral changes between `v5.2.98`
+and the 5.3.0 development line. See `testdata/golden/MANIFEST`.
 
 ## Consequences
 
