@@ -1,0 +1,61 @@
+name: PR conventions
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-conventions-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Conventional Commits title (ADR-0010)
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|docs|test|build|ci|refactor|perf|chore|style|revert'
+          scopes='core|cli|app|server|bridge|bindings|testdata|docs|adr|build|ci'
+          pattern="^(${types})(\((${scopes})\))?!?: [^ ].*$"
+          if [[ "$TITLE" =~ $pattern ]]; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::PR title is not a Conventional Commit: '$TITLE'"
+            echo "Expected '<type>(<scope>): <summary>', for example 'feat(core): port Centered IBS kinship'."
+            echo "Types: ${types//|/, }"
+            echo "Scopes (optional): ${scopes//|/, }"
+            exit 1
+          fi
+
+  golden:
+    name: Golden files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the golden-update label for testdata/golden changes (ADR-0009)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'golden-update') }}
+        run: |
+          changed=$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | grep '^testdata/golden/' | sort -u || true)
+          if [[ -z "$changed" ]]; then
+            echo "No changes under testdata/golden/."
+            exit 0
+          fi
+          echo "Changes under testdata/golden/:"
+          echo "$changed"
+          if [[ "$HAS_LABEL" == "true" ]]; then
+            echo "The golden-update label is present; code-owner review is still required."
+            exit 0
+          fi
+          echo "::error::This PR changes testdata/golden/ but does not have the golden-update label."
+          exit 1
