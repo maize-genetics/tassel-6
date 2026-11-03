@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.ktlint)
@@ -38,6 +41,17 @@ val generateBuildInfo = tasks.register<GenerateBuildInfo>("generateBuildInfo") {
     version = project.version.toString()
     outputDir = layout.buildDirectory.dir("generated/buildInfo/commonMain/kotlin")
 }
+
+// commonTest reads testdata/ through TestData, which finds it through this variable on every target.
+val testDataDir = rootProject.layout.projectDirectory.dir("testdata")
+val testDataEnv = "TASSEL_TESTDATA_DIR"
+
+tasks.withType<AbstractTestTask>().configureEach {
+    inputs.dir(testDataDir).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("testData")
+}
+tasks.withType<Test>().configureEach { environment(testDataEnv, testDataDir.asFile.absolutePath) }
+tasks.withType<KotlinJsTest>().configureEach { environment(testDataEnv, testDataDir.asFile.absolutePath) }
+tasks.withType<KotlinNativeTest>().configureEach { environment(testDataEnv, testDataDir.asFile.absolutePath) }
 
 kotlin {
     jvmToolchain(libs.versions.jdk.get().toInt())
