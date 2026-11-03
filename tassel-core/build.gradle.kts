@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kover)
 }
@@ -70,9 +71,14 @@ kotlin {
     sourceSets {
         commonMain {
             kotlin.srcDir(generateBuildInfo.map { it.outputDir })
+            dependencies {
+                implementation(libs.kotlinx.coroutines.core)
+                api(libs.kotlinx.serialization.json)
+            }
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }
