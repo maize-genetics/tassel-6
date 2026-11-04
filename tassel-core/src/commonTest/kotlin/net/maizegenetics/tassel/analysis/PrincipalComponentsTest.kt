@@ -29,8 +29,8 @@ import kotlin.test.assertTrue
  * carry the MANIFEST's `rows-unordered` keyword, because TASSEL 5 returns its eigenvalues in an
  * order no sorted decomposition can reproduce ([tassel5ReturnsEigenvaluesOutOfOrderAfterTheSixtyThirdRow]),
  * so [eigenvaluesMatchGoldenInAnyRowOrder] compares them at that tolerance, which for
- * `eigenvalues.txt` means byte for byte. The two columns a row's position determines are checked
- * where TASSEL 5's order is already sorted
+ * `eigenvalues.txt` means cell-exact text with rows paired by value rather than by line. The two
+ * columns a row's position determines are checked where TASSEL 5's order is already sorted
  * ([eigenvalueIndexAndCumulativeProportionMatchGoldenWhileTassel5IsSorted]), and the one eigenvalue
  * that is mathematically zero is left to [theZeroEigenvalueIsLostInTheGramMatrix].
  *
@@ -59,12 +59,13 @@ class PrincipalComponentsTest {
     }
 
     /**
-     * The `eigenvalue` and `proportion of total` columns do not depend on where a row sits, so the
-     * whole golden is compared under the `rows-unordered` tolerance the MANIFEST records for it.
-     * For `eigenvalues.txt` that tolerance is `exact`, so this is a byte-for-byte comparison of
-     * TASSEL 5's rounded text; for the full-precision twin it is `rel 1e-9`.
+     * The `eigenvalue` and `proportion of total` columns do not depend on where a row sits, so
+     * those two columns are compared over 280 of the 281 rows under the `rows-unordered` tolerance
+     * the MANIFEST records, which pairs rows by value rather than by line. For `eigenvalues.txt`
+     * that tolerance is `exact`, so each cell compared must match TASSEL 5's rounded text exactly;
+     * for the full-precision twin it is `rel 1e-9`.
      *
-     * One of the 281 rows is dropped: [theZeroEigenvalueIsLostInTheGramMatrix] checks it instead.
+     * The row left out is the one [theZeroEigenvalueIsLostInTheGramMatrix] checks instead.
      */
     @Test
     fun eigenvaluesMatchGoldenInAnyRowOrder() {
