@@ -71,33 +71,53 @@ class GoldenManifest(val sections: Map<String, Section>) {
 
 /** How a golden file is compared; see the legend at the top of `testdata/golden/MANIFEST`. */
 sealed interface Tolerance {
+    /** Whether the data rows may be compared in any order, which is the `rows-unordered` keyword. */
+    val rowsUnordered: Boolean
+
     /** Identical text after normalizing line endings. */
-    data object Exact : Tolerance
+    data class Exact(override val rowsUnordered: Boolean = false) : Tolerance
 
     /** Headers, row labels, and layout identical; numbers are checked in the `.full.txt` twin. */
-    data object Format : Tolerance
+    data class Format(override val rowsUnordered: Boolean = false) : Tolerance
 
     /** Every number within [value] absolutely; [upToSign] allows negating whole columns. */
-    data class Absolute(val value: Double, val upToSign: Boolean = false) : Tolerance
+    data class Absolute(
+        val value: Double,
+        val upToSign: Boolean = false,
+        override val rowsUnordered: Boolean = false,
+    ) : Tolerance
 
     /** Every number within [value] relative to the golden; [upToSign] allows negating whole columns. */
-    data class Relative(val value: Double, val upToSign: Boolean = false) : Tolerance
+    data class Relative(
+        val value: Double,
+        val upToSign: Boolean = false,
+        override val rowsUnordered: Boolean = false,
+    ) : Tolerance
 
     companion object {
+        /** Keywords that may follow the tolerance itself, in any order. */
+        private val MODIFIERS = setOf("up-to-sign", "rows-unordered")
+
         fun parse(text: String): Tolerance {
             val words = text.split(' ').filter { it.isNotEmpty() }
-            val upToSign = words.lastOrNull() == "up-to-sign"
-            val terms = if (upToSign) words.dropLast(1) else words
+            val modifiers = words.takeLastWhile { it in MODIFIERS }
+            val terms = words.dropLast(modifiers.size)
+            val upToSign = "up-to-sign" in modifiers
+            val rowsUnordered = "rows-unordered" in modifiers
             fun number(): Double = terms.getOrNull(1)?.toDoubleOrNull() ?: error("Tolerance needs a number: '$text'")
             val tolerance = when (terms.firstOrNull()) {
-                "exact" -> Exact
-                "format" -> Format
-                "abs" -> Absolute(number(), upToSign)
-                "rel" -> Relative(number(), upToSign)
+                "exact" -> Exact(rowsUnordered)
+                "format" -> Format(rowsUnordered)
+                "abs" -> Absolute(number(), upToSign, rowsUnordered)
+                "rel" -> Relative(number(), upToSign, rowsUnordered)
                 else -> error("Unknown tolerance: '$text'")
             }
             val expectedTerms = if (tolerance is Absolute || tolerance is Relative) 2 else 1
-            require(terms.size == expectedTerms && (!upToSign || expectedTerms == 2)) { "Malformed tolerance: '$text'" }
+            require(
+                terms.size == expectedTerms &&
+                    modifiers.size == modifiers.distinct().size &&
+                    (!upToSign || expectedTerms == 2),
+            ) { "Malformed tolerance: '$text'" }
             return tolerance
         }
     }

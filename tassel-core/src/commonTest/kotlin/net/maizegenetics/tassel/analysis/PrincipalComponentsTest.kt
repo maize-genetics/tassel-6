@@ -26,13 +26,13 @@ import kotlin.test.assertTrue
  * `testdata/golden/pca/` (ADR-0009).
  *
  * The eigenvector and principal-component goldens are compared whole. The two eigenvalue goldens
- * cannot be, for two reasons that are both recorded as tests rather than hidden in a tolerance:
- * TASSEL 5 returns its eigenvalues in an order no sorted decomposition can reproduce
- * ([tassel5ReturnsEigenvaluesOutOfOrderAfterTheSixtyThirdRow]), and the one eigenvalue that is
- * mathematically zero cannot survive the Gram matrix ([theZeroEigenvalueIsLostInTheGramMatrix]).
- * [eigenvaluesMatchGoldenRowForRowWhileTassel5IsSorted] and
- * [eigenvaluesMatchGoldenOnceTassel5sRowsAreSorted] compare everything else, at the MANIFEST
- * tolerance, which for `eigenvalues.txt` means byte for byte.
+ * carry the MANIFEST's `rows-unordered` keyword, because TASSEL 5 returns its eigenvalues in an
+ * order no sorted decomposition can reproduce ([tassel5ReturnsEigenvaluesOutOfOrderAfterTheSixtyThirdRow]),
+ * so [eigenvaluesMatchGoldenInAnyRowOrder] compares them at that tolerance, which for
+ * `eigenvalues.txt` means cell-exact text with rows paired by value rather than by line. The two
+ * columns a row's position determines are checked where TASSEL 5's order is already sorted
+ * ([eigenvalueIndexAndCumulativeProportionMatchGoldenWhileTassel5IsSorted]), and the one eigenvalue
+ * that is mathematically zero is left to [theZeroEigenvalueIsLostInTheGramMatrix].
  *
  * @see net.maizegenetics.analysis.data.PrincipalComponentsPlugin
  * @see net.maizegenetics.stats.PCA.PrinComp
@@ -59,21 +59,22 @@ class PrincipalComponentsTest {
     }
 
     /**
-     * The `eigenvalue` and `proportion of total` columns do not depend on row order, so they can be
-     * compared against the whole golden once its rows are put in descending order. At the `exact`
-     * tolerance of `eigenvalues.txt` that is a byte-for-byte comparison of the rounded text.
+     * The `eigenvalue` and `proportion of total` columns do not depend on where a row sits, so
+     * those two columns are compared over 280 of the 281 rows under the `rows-unordered` tolerance
+     * the MANIFEST records, which pairs rows by value rather than by line. For `eigenvalues.txt`
+     * that tolerance is `exact`, so each cell compared must match TASSEL 5's rounded text exactly;
+     * for the full-precision twin it is `rel 1e-9`.
      *
-     * The last of the 281 values is left to [theZeroEigenvalueIsLostInTheGramMatrix].
+     * The row left out is the one [theZeroEigenvalueIsLostInTheGramMatrix] checks instead.
      */
     @Test
-    fun eigenvaluesMatchGoldenOnceTassel5sRowsAreSorted() {
+    fun eigenvaluesMatchGoldenInAnyRowOrder() {
         eachEigenvalueGolden { golden, actual ->
-            val rows = eigenvalues.rowCount - 1
             assertDelimitedMatches(
-                expected = firstRows(columns(sortRowsByEigenvalue(goldenText(golden)), VALUE, PROPORTION), rows),
-                actual = firstRows(columns(actual, VALUE, PROPORTION), rows),
+                expected = columns(withoutTheZeroEigenvalue(goldenText(golden)), VALUE, PROPORTION),
+                actual = columns(withoutTheZeroEigenvalue(actual), VALUE, PROPORTION),
                 tolerance = goldenTolerance(golden),
-                source = "$golden, rows sorted by eigenvalue",
+                source = golden,
             )
         }
     }
@@ -84,7 +85,8 @@ class PrincipalComponentsTest {
      * a singular value of 3.1e-15 to get 9.3e-30, `G`'s own noise floor is around `eps * trace`,
      * and no decomposition of `G` can tell 3.5e-15 from zero. Both are zero to every digit that
      * means anything; neither is zero in the sense `rel 1e-9` asks for, which is why this one value
-     * is checked here rather than in [eigenvaluesMatchGoldenOnceTassel5sRowsAreSorted].
+     * is checked here rather than in [eigenvaluesMatchGoldenInAnyRowOrder]. Dropping it is the only
+     * thing that test does beyond the MANIFEST tolerance, and this test is why.
      */
     @Test
     fun theZeroEigenvalueIsLostInTheGramMatrix() {
@@ -95,16 +97,19 @@ class PrincipalComponentsTest {
     }
 
     /**
-     * Over the leading rows where TASSEL 5's own order is already descending, the goldens are
-     * compared whole, including the `PC` index and the order-dependent `cumulative proportion`.
+     * The `PC` index and the running `cumulative proportion` are exactly what a row's position
+     * means, so [eigenvaluesMatchGoldenInAnyRowOrder] cannot compare them. They are an oracle over
+     * the leading rows where TASSEL 5's own order is already descending, and nowhere else. The `PC`
+     * index leads this projection, so the canonical order `rows-unordered` sorts into is the order
+     * TASSEL 5 wrote.
      */
     @Test
-    fun eigenvaluesMatchGoldenRowForRowWhileTassel5IsSorted() {
+    fun eigenvalueIndexAndCumulativeProportionMatchGoldenWhileTassel5IsSorted() {
         eachEigenvalueGolden { golden, actual ->
             val rows = sortedPrefix(goldenText(golden))
             assertDelimitedMatches(
-                expected = firstRows(goldenText(golden), rows),
-                actual = firstRows(actual, rows),
+                expected = firstRows(columns(goldenText(golden), PC, CUMULATIVE), rows),
+                actual = firstRows(columns(actual, PC, CUMULATIVE), rows),
                 tolerance = goldenTolerance(golden),
                 source = "$golden, first $rows rows",
             )
@@ -117,8 +122,9 @@ class PrincipalComponentsTest {
      * with an ascending run of small ones. The Gram-matrix route this port takes returns them
      * sorted, which is also what the plugin's own help text promises ("sorted high to low").
      *
-     * This test is the record of why the two eigenvalue goldens are compared the way they are. If a
-     * regenerated golden ever comes out sorted, it fails and those comparisons can be simplified.
+     * This test is the record of why the two eigenvalue goldens carry `rows-unordered` in the
+     * MANIFEST. If a regenerated golden ever comes out sorted, it fails, and the keyword and
+     * [eigenvalueIndexAndCumulativeProportionMatchGoldenWhileTassel5IsSorted] can both go.
      */
     @Test
     fun tassel5ReturnsEigenvaluesOutOfOrderAfterTheSixtyThirdRow() {
@@ -242,6 +248,7 @@ class PrincipalComponentsTest {
         const val PCS_FULL = "golden/pca/pcs.full.txt"
 
         /** Column indices of the eigenvalue table. */
+        const val PC = 0
         const val VALUE = 1
         const val PROPORTION = 2
         const val CUMULATIVE = 3
@@ -319,9 +326,16 @@ class PrincipalComponentsTest {
             return rejoin(keep.joinToString("\t") { head[it] }, dataRows(text).map { row -> keep.map { row[it] } })
         }
 
-        /** [text] with its data rows in descending eigenvalue order; a stable sort, so ties hold. */
-        fun sortRowsByEigenvalue(text: String): String =
-            rejoin(header(text), dataRows(text).sortedByDescending { it[VALUE].toDouble() })
+        /**
+         * [text] without the row holding the smallest eigenvalue, the one row the two sides cannot
+         * agree on; see [theZeroEigenvalueIsLostInTheGramMatrix]. The row is found by value and not
+         * by position, because neither file's row order is meaningful.
+         */
+        fun withoutTheZeroEigenvalue(text: String): String {
+            val rows = dataRows(text)
+            val zero = rows.indices.minBy { rows[it][VALUE].toDouble() }
+            return rejoin(header(text), rows.filterIndexed { index, _ -> index != zero })
+        }
 
         /** The first [rows] data rows of [text], with its header. */
         fun firstRows(text: String, rows: Int): String = rejoin(header(text), dataRows(text).take(rows))

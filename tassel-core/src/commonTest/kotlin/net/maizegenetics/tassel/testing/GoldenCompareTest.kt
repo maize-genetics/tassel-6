@@ -10,15 +10,15 @@ import kotlin.test.assertTrue
 class GoldenCompareTest {
     @Test
     fun exactAcceptsOnlyLineEndingDifferences() {
-        assertDelimitedMatches(TABLE, TABLE.replace("\n", "\r\n"), Tolerance.Exact)
-        val problem = failure { assertDelimitedMatches(TABLE, TABLE.replace("0.25", "0.26"), Tolerance.Exact) }
+        assertDelimitedMatches(TABLE, TABLE.replace("\n", "\r\n"), Tolerance.Exact())
+        val problem = failure { assertDelimitedMatches(TABLE, TABLE.replace("0.25", "0.26"), Tolerance.Exact()) }
         assertContains(problem, "line 2 differs")
         assertContains(problem, "0.26")
     }
 
     @Test
     fun exactCatchesAMissingFinalNewline() {
-        val problem = failure { assertDelimitedMatches(TABLE, TABLE.trimEnd('\n'), Tolerance.Exact) }
+        val problem = failure { assertDelimitedMatches(TABLE, TABLE.trimEnd('\n'), Tolerance.Exact()) }
         assertContains(problem, "only the expected text continues")
     }
 
@@ -60,11 +60,41 @@ class GoldenCompareTest {
     }
 
     @Test
+    fun rowsUnorderedPairsRowsByContentRatherThanByLine() {
+        assertDelimitedMatches(TABLE, SHUFFLED, Tolerance.Exact(rowsUnordered = true))
+        assertDelimitedMatches(TABLE, SHUFFLED, Tolerance.Absolute(1e-9, rowsUnordered = true))
+        val ordered = failure { assertDelimitedMatches(TABLE, SHUFFLED, Tolerance.Absolute(1e-9)) }
+        assertContains(ordered, "6 of 6 cells differ")
+    }
+
+    @Test
+    fun rowsUnorderedStillComparesEveryCell() {
+        val rounded = SHUFFLED.replace("0.25", "0.250")
+        val exact = failure { assertDelimitedMatches(TABLE, rounded, Tolerance.Exact(rowsUnordered = true)) }
+        assertContains(exact, "tolerance exact rows-unordered")
+        assertContains(exact, "line 2 (row \"a\"), column 3 (\"value\"): expected \"0.25\", actual \"0.250\"")
+        // The same number spelled differently, so a numeric tolerance takes it.
+        assertDelimitedMatches(TABLE, rounded, Tolerance.Absolute(1e-9, rowsUnordered = true))
+        val renamed = SHUFFLED.replace("a\t", "c\t")
+        val relabelled = failure { assertDelimitedMatches(TABLE, renamed, Tolerance.Exact(rowsUnordered = true)) }
+        assertContains(relabelled, "6 of 6 cells differ")
+    }
+
+    @Test
+    fun squareMatricesRejectRowsUnordered() {
+        val matrix = SquareMatrix.parse(MATRIX)
+        val problem = assertFailsWith<IllegalArgumentException> {
+            assertMatrixMatches(matrix, matrix, Tolerance.Absolute(1e-9, rowsUnordered = true))
+        }
+        assertContains(problem.message.orEmpty(), "rows-unordered has no meaning for a square matrix")
+    }
+
+    @Test
     fun formatChecksLabelsAndLayoutButNotNumbers() {
-        assertDelimitedMatches(TABLE, TABLE.replace("0.25", "9.9"), Tolerance.Format)
-        val renamed = failure { assertDelimitedMatches(TABLE, TABLE.replace("\tvalue", "\tVALUE"), Tolerance.Format) }
+        assertDelimitedMatches(TABLE, TABLE.replace("0.25", "9.9"), Tolerance.Format())
+        val renamed = failure { assertDelimitedMatches(TABLE, TABLE.replace("\tvalue", "\tVALUE"), Tolerance.Format()) }
         assertContains(renamed, "header column 3 is \"value\", actual \"VALUE\"")
-        val relabelled = failure { assertDelimitedMatches(TABLE, TABLE.replace("a\t", "z\t"), Tolerance.Format) }
+        val relabelled = failure { assertDelimitedMatches(TABLE, TABLE.replace("a\t", "z\t"), Tolerance.Format()) }
         assertContains(relabelled, "expected the text \"a\", actual \"z\"")
     }
 
@@ -122,11 +152,15 @@ class GoldenCompareTest {
 
     @Test
     fun readsTheManifestTolerances() {
-        assertEquals(Tolerance.Exact, goldenTolerance("golden/summary/alleles.txt"))
+        assertEquals(Tolerance.Exact(), goldenTolerance("golden/summary/alleles.txt"))
         assertEquals(Tolerance.Absolute(1e-12), goldenTolerance("golden/summary/sites.full.txt"))
         assertEquals(Tolerance.Absolute(1e-9, upToSign = true), goldenTolerance("golden/pca/eigenvectors.full.txt"))
-        assertEquals(Tolerance.Relative(1e-9), goldenTolerance("golden/pca/eigenvalues.full.txt"))
-        assertEquals(Tolerance.Format, goldenTolerance("golden/pca/eigenvectors.txt"))
+        assertEquals(Tolerance.Exact(rowsUnordered = true), goldenTolerance("golden/pca/eigenvalues.txt"))
+        assertEquals(
+            Tolerance.Relative(1e-9, rowsUnordered = true),
+            goldenTolerance("golden/pca/eigenvalues.full.txt"),
+        )
+        assertEquals(Tolerance.Format(), goldenTolerance("golden/pca/eigenvectors.txt"))
     }
 
     @Test
@@ -138,6 +172,10 @@ class GoldenCompareTest {
         val matrix = SquareMatrix.parse(goldenText(kinship))
         assertEquals(281, matrix.size)
         assertMatchesGoldenMatrix(kinship, matrix)
+        // The rows-unordered goldens have to match themselves line for line as well.
+        for (path in goldenManifest.section("pca").outputs.keys.filter { "eigenvalues" in it }) {
+            assertMatchesGolden(path, goldenText(path))
+        }
     }
 
     private fun failure(block: () -> Unit): String {
@@ -158,6 +196,7 @@ class GoldenCompareTest {
 
     private companion object {
         const val TABLE = "name\tcount\tvalue\na\t1\t0.25\nb\t2\t0.5\n"
+        const val SHUFFLED = "name\tcount\tvalue\nb\t2\t0.5\na\t1\t0.25\n"
         const val SMALL = "name\tvalue\na\t0.001\n"
         const val LABELLED = "Taxa\tInbreeding Coefficient\n0\tTBD\n"
         const val EIGENVECTORS = "Trait\tPC1\tPC2\nx\t0.5\t0.1\ny\t-0.8\t0.2\nz\t0.3\t0.3\n"

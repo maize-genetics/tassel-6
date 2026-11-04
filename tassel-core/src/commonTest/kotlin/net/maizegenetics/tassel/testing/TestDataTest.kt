@@ -29,7 +29,7 @@ class TestDataTest {
         assertEquals("5.2.98", tassel5["version"])
         assertEquals("v5.2.98", tassel5["tag"])
         assertEquals(Tolerance.Absolute(8e-6), manifest.tolerance("golden/kinship/centered_ibs.txt"))
-        assertEquals(Tolerance.Exact, manifest.tolerance("golden/summary/sites.txt"))
+        assertEquals(Tolerance.Exact(), manifest.tolerance("golden/summary/sites.txt"))
         assertEquals(Tolerance.Absolute(1e-9, upToSign = true), manifest.tolerance("golden/pca/eigenvectors.full.txt"))
         assertEquals(2, manifest.section("pca").commands.size)
         assertEquals(27, manifest.outputs.size)
@@ -44,11 +44,18 @@ class TestDataTest {
 
     @Test
     fun parsesTolerances() {
-        assertEquals(Tolerance.Format, Tolerance.parse("format"))
+        assertEquals(Tolerance.Format(), Tolerance.parse("format"))
         assertEquals(Tolerance.Relative(1e-9), Tolerance.parse("rel 1e-9"))
         assertEquals(Tolerance.Absolute(1e-5, upToSign = true), Tolerance.parse("abs 1e-5 up-to-sign"))
+        assertEquals(Tolerance.Exact(rowsUnordered = true), Tolerance.parse("exact rows-unordered"))
+        assertEquals(Tolerance.Relative(1e-9, rowsUnordered = true), Tolerance.parse("rel 1e-9 rows-unordered"))
+        assertEquals(
+            Tolerance.Absolute(1e-5, upToSign = true, rowsUnordered = true),
+            Tolerance.parse("abs 1e-5 up-to-sign rows-unordered"),
+        )
         assertFailsWith<IllegalStateException> { Tolerance.parse("abs") }
         assertFailsWith<IllegalArgumentException> { Tolerance.parse("exact up-to-sign") }
+        assertFailsWith<IllegalArgumentException> { Tolerance.parse("exact rows-unordered rows-unordered") }
         assertFailsWith<IllegalArgumentException> { GoldenManifest.parse("version = 1") }
     }
 

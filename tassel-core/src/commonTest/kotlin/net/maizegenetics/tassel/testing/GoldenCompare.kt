@@ -42,7 +42,10 @@ fun assertMatchesGolden(
  * identical, a cell that is not a number must be identical, and a numeric cell must agree within
  * the tolerance. [Tolerance.Format] checks everything except the numbers. `up-to-sign` first
  * negates any wholly numeric column whose largest-magnitude entry is negative, independently on
- * each side, which is how PCA eigenvectors are compared.
+ * each side, which is how PCA eigenvectors are compared. `rows-unordered` sorts the data rows of
+ * each side into a canonical order first, so a row is compared against the row that sorts the same
+ * way rather than against the row on the same line; with it, `exact` compares cells rather than
+ * whole text, so trailing whitespace and line order no longer count.
  */
 fun assertDelimitedMatches(
     expected: String,
@@ -53,7 +56,7 @@ fun assertDelimitedMatches(
 ) {
     val expectedText = normalizeLineEndings(expected)
     val actualText = normalizeLineEndings(actual)
-    if (tolerance is Tolerance.Exact) {
+    if (tolerance is Tolerance.Exact && !tolerance.rowsUnordered) {
         assertTextMatches(expectedText, actualText, source)
         return
     }
@@ -77,13 +80,17 @@ fun assertDelimitedMatches(
 
     val expectedSigns = columnSigns(expectedRows, tolerance)
     val actualSigns = columnSigns(actualRows, tolerance)
+    val expectedOrder = rowOrder(expectedRows, expectedSigns, tolerance)
+    val actualOrder = rowOrder(actualRows, actualSigns, tolerance)
     val mismatches = Mismatches(source, tolerance)
-    for (row in 1 until expectedRows.size) {
+    for (row in expectedOrder.indices) {
+        val expectedRow = expectedOrder[row]
+        val actualRow = actualOrder[row]
         for (column in 0 until columns) {
-            val where = "${rowName(expectedRows, row)}, column ${column + 1} (\"${expectedRows[0][column]}\")"
+            val where = "${rowName(expectedRows, expectedRow)}, column ${column + 1} (\"${expectedRows[0][column]}\")"
             val problem = cellProblem(
-                expected = expectedRows[row][column],
-                actual = actualRows[row][column],
+                expected = expectedRows[expectedRow][column],
+                actual = actualRows[actualRow][column],
                 expectedSign = expectedSigns[column],
                 actualSign = actualSigns[column],
                 tolerance = tolerance,
@@ -158,7 +165,9 @@ fun assertMatchesGoldenMatrix(
 /**
  * Asserts that square matrix [actual] matches [expected] under [tolerance]: the same labels in the
  * same order, then every value within the tolerance. [Tolerance.Format] checks the labels only, and
- * `up-to-sign` negates a column whose largest-magnitude entry is negative.
+ * `up-to-sign` negates a column whose largest-magnitude entry is negative. `rows-unordered` is
+ * rejected: a square matrix is labelled, so permuting its rows would have to permute its columns
+ * with them, and no golden needs that.
  */
 fun assertMatrixMatches(
     expected: SquareMatrix,
@@ -166,6 +175,7 @@ fun assertMatrixMatches(
     tolerance: Tolerance,
     source: String = "expected matrix",
 ) {
+    require(!tolerance.rowsUnordered) { "$source: rows-unordered has no meaning for a square matrix" }
     if (expected.size != actual.size) {
         fail("$source is ${expected.size} by ${expected.size}, actual is ${actual.size} by ${actual.size}")
     }
@@ -298,6 +308,33 @@ private fun columnSigns(rows: List<List<String>>, tolerance: Tolerance): DoubleA
     return signs
 }
 
+/**
+ * The data rows of [rows] in the order they are compared: the order they were written in, or a
+ * canonical order when [tolerance] is `rows-unordered`. Both sides are put in the same canonical
+ * order, so comparing them position by position pairs each golden row with the one row of the
+ * actual output that belongs to it, whatever line either of them sits on.
+ */
+private fun rowOrder(rows: List<List<String>>, signs: DoubleArray, tolerance: Tolerance): List<Int> {
+    val data = (1 until rows.size).toList()
+    if (!tolerance.rowsUnordered) return data
+    return data.sortedWith { left, right -> compareRows(rows[left], rows[right], signs) }
+}
+
+/** Two rows cell by cell, ascending: numbers by value after [signs], everything else as text. */
+private fun compareRows(left: List<String>, right: List<String>, signs: DoubleArray): Int {
+    for (column in 0 until minOf(left.size, right.size)) {
+        val leftValue = left[column].toDoubleOrNull()
+        val rightValue = right[column].toDoubleOrNull()
+        val order = if (leftValue == null || rightValue == null) {
+            left[column].compareTo(right[column])
+        } else {
+            (leftValue * signs[column]).compareTo(rightValue * signs[column])
+        }
+        if (order != 0) return order
+    }
+    return left.size - right.size
+}
+
 private fun matrixColumnSigns(matrix: SquareMatrix, tolerance: Tolerance): DoubleArray {
     val signs = DoubleArray(matrix.size) { 1.0 }
     if (!tolerance.upToSign) return signs
@@ -321,6 +358,9 @@ private fun cellProblem(
     actualSign: Double,
     tolerance: Tolerance,
 ): String? {
+    if (tolerance is Tolerance.Exact) {
+        return if (expected == actual) null else "expected \"$expected\", actual \"$actual\""
+    }
     val expectedValue = expected.toDoubleOrNull()
     val actualValue = actual.toDoubleOrNull()
     return when {
@@ -361,12 +401,16 @@ private fun numericProblem(expected: Double, actual: Double, tolerance: Toleranc
 /** The MANIFEST spelling of [tolerance], for failure messages. */
 private fun describe(tolerance: Tolerance): String {
     val text = when (tolerance) {
-        Tolerance.Exact -> "exact"
-        Tolerance.Format -> "format"
+        is Tolerance.Exact -> "exact"
+        is Tolerance.Format -> "format"
         is Tolerance.Absolute -> "abs ${tolerance.value}"
         is Tolerance.Relative -> "rel ${tolerance.value}"
     }
-    return if (tolerance.upToSign) "$text up-to-sign" else text
+    return buildString {
+        append(text)
+        if (tolerance.upToSign) append(" up-to-sign")
+        if (tolerance.rowsUnordered) append(" rows-unordered")
+    }
 }
 
 private val Tolerance.upToSign: Boolean
