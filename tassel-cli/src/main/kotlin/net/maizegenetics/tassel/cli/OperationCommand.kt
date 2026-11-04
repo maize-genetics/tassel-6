@@ -45,7 +45,7 @@ class OperationCommand(
     private val registry: OperationRegistry = TasselOperations.registry,
 ) : CliktCommand(name = descriptor.id) {
     private val input = if (descriptor.inputType != "Unit") {
-        option("--input", "-i", help = "Genotype file to analyze (HapMap)", metavar = "PATH")
+        option("--input", "-i", help = "Genotype file to analyze (HapMap or VCF)", metavar = "PATH")
             .required()
             .also { registerOption(it) }
     } else {
@@ -71,8 +71,8 @@ class OperationCommand(
 
     override fun run() = cliRun {
         if (input != null && descriptor.inputType != "GenotypeTable") {
-            // The only reader the CLI has is HapMap, so an operation over anything else needs a
-            // reader here before its subcommand can run.
+            // The CLI reads HapMap and VCF, so an operation over anything else needs a reader here
+            // before its subcommand can run.
             unsupported("'${descriptor.id}' takes a ${descriptor.inputType}, which the CLI cannot read yet")
         }
         val supplied = parameters.mapNotNull { (name, read) -> read()?.let { name to it } }.toMap()
