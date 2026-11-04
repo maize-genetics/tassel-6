@@ -94,6 +94,7 @@ class FilterTaxaTest {
         assertSame(filterTaxaOperation, TasselOperations.registry.byLegacyPlugin("FilterTaxaBuilderPlugin"))
         assertEquals(
             mapOf(
+                "taxaList" to "taxaList",
                 "includeTaxa" to "includeTaxa",
                 "minNotMissing" to "minNotMissing",
                 "minHeterozygous" to "minHeterozygous",
@@ -111,6 +112,35 @@ class FilterTaxaTest {
     fun specRunsTheHeterozygosityFilterFromCommandLineText() = runTest {
         val values = mapOf("minHeterozygous" to "0.005", "maxHeterozygous" to "0.02")
         assertEquals(268, filterTaxaOperation.run(tutorial, values).numberOfTaxa)
+    }
+
+    /**
+     * The `include-list` and `exclude-list` goldens through the spec, which needs the string-list parameter ADR-0018
+     * added. `taxaList` is the one comma-separated value TASSEL 5 takes on the command line.
+     */
+    @Test
+    fun specSelectsTaxaByNameAgainstTheGoldens() = runTest {
+        val text = NAMES.joinToString(",")
+        assertEquals("W22,B73,CML247,33-16", text)
+
+        val included = filterTaxaOperation.run(tutorial, mapOf("taxaList" to text, "includeTaxa" to "true"))
+        assertEquals(NAMES, included.taxa.names)
+        assertMatchesGolden(
+            "golden/filter-taxa/include-list.hmp.txt",
+            Buffer().also { HapMap.write(included, it) }.readString(),
+        )
+
+        val excluded = filterTaxaOperation.run(tutorial, mapOf("taxaList" to text, "includeTaxa" to "false"))
+        assertEquals(277, excluded.numberOfTaxa)
+        assertMatchesGolden(
+            "golden/filter-taxa/exclude-list.hmp.txt",
+            Buffer().also { HapMap.write(excluded, it) }.readString(),
+        )
+    }
+
+    @Test
+    fun specTakesATaxonListAsAlreadyTypedValuesToo() = runTest {
+        assertEquals(NAMES, filterTaxaOperation.run(tutorial, mapOf("taxaList" to NAMES)).taxa.names)
     }
 
     private fun assertGolden(name: String, filter: TaxaFilter, taxa: Int): GenotypeTable {

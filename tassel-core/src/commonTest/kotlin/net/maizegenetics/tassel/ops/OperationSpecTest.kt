@@ -101,6 +101,46 @@ class OperationSpecTest {
         assertTrue(problems.first { it.parameter == "rounding" }.message.contains("one of NONE, FLOOR, CEILING"))
     }
 
+    /**
+     * A string list is written as one comma-separated value, as TASSEL 5 writes
+     * `-taxaList W22,B73,CML247,33-16`. Entries keep their inner spaces and are not trimmed.
+     */
+    @Test
+    fun aStringListIsOneCommaSeparatedValue() = runTest {
+        assertEquals(listOf("B73"), joinNames.bind()["names"])
+        assertEquals(listOf("W22", "B73"), joinNames.bind(mapOf("names" to "W22,B73"))["names"])
+        assertEquals(listOf("a b"), joinNames.bind(mapOf("names" to "a b"))["names"])
+        assertEquals(listOf("W22", " B73"), joinNames.bind(mapOf("names" to " W22, B73 "))["names"])
+        assertEquals(listOf("W22"), joinNames.bind(mapOf("names" to listOf("W22")))["names"])
+        assertEquals("W22, B73, CML247", joinNames.run(Unit, mapOf("names" to "W22,B73,CML247")))
+        val all = mapOf("prefix" to "-", "names" to "W22", "extra" to "B73", "separator" to "|")
+        assertEquals("-W22|B73", joinNames.run(Unit, all))
+    }
+
+    @Test
+    fun aBlankEntryInAStringListIsRejected() {
+        val problems = problemsOf { joinNames.bind(mapOf("names" to "W22,,B73", "extra" to listOf("A", " "))) }
+        assertEquals(listOf("names", "extra"), problems.map { it.parameter })
+        assertTrue(problems.all { it.message == "value 2 of the list is blank" }, problems.toString())
+        val mistyped = problemsOf { joinNames.bind(mapOf("names" to 7, "extra" to listOf(1))) }
+        assertEquals(listOf("names", "extra"), mistyped.map { it.parameter })
+        assertTrue(
+            mistyped.all { "expected a comma-separated list" in it.message },
+            mistyped.toString(),
+        )
+    }
+
+    @Test
+    fun stringParametersCanBeRequired() = runTest {
+        val op = operation<Unit, String>(id = "need-text") {
+            val label by string(legacy = "labelName", help = "A label").required()
+            val names by stringList(legacy = "nameList", help = "Some names").required()
+            run { _, _ -> "${label()}=${names().joinToString("+")}" }
+        }
+        assertEquals(listOf("label", "names"), problemsOf { op.bind() }.map { it.parameter })
+        assertEquals("taxa=W22+B73", op.run(Unit, mapOf("label" to "taxa", "names" to "W22,B73")))
+    }
+
     @Test
     fun unknownNamesAreRejectedWithLegacyHint() {
         val e = assertFailsWith<InvalidParametersException> {
@@ -157,6 +197,7 @@ class OperationSpecTest {
         }
         assertFailsWith<IllegalArgumentException> { declare { double(default = 0.6, range = 0.0..0.5) } }
         assertFailsWith<IllegalArgumentException> { declare { int(range = 5..1) } }
+        assertFailsWith<IllegalArgumentException> { declare { stringList(default = listOf("a", "")) } }
         assertFailsWith<IllegalArgumentException> {
             declare {
                 val a by int(default = 1, legacy = "same")

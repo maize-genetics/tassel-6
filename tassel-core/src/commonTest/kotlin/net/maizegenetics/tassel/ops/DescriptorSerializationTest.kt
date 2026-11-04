@@ -45,8 +45,21 @@ class DescriptorSerializationTest {
     }
 
     @Test
+    fun descriptorDescribesTheStringParameters() {
+        assertEquals(
+            listOf(
+                StringParameterDescriptor("separator", "Text between names", "sep", default = ", "),
+                StringParameterDescriptor("prefix", "Text before the line", "linePrefix"),
+                StringListParameterDescriptor("names", "Names to join", "nameList", default = listOf("B73")),
+                StringListParameterDescriptor("extra", "More names to join", "extraNames"),
+            ),
+            joinNames.descriptor.parameters,
+        )
+    }
+
+    @Test
     fun descriptorJsonRoundTrips() {
-        for (descriptor in OperationRegistry(scaleValues, readLines, spin).descriptors) {
+        for (descriptor in OperationRegistry(scaleValues, joinNames, readLines, spin).descriptors) {
             val json = Json.encodeToString(OperationDescriptor.serializer(), descriptor)
             assertEquals(descriptor, Json.decodeFromString(OperationDescriptor.serializer(), json), json)
         }
@@ -68,6 +81,22 @@ class DescriptorSerializationTest {
         assertEquals(
             "siteMinAlleleFreq",
             parseLegacy("""{"type":"double","name":"minMaf","legacy":"siteMinAlleleFreq"}"""),
+        )
+    }
+
+    @Test
+    fun aStringListIsAJsonArray() {
+        val json = Json.parseToJsonElement(
+            Json.encodeToString(OperationDescriptor.serializer(), joinNames.descriptor),
+        )
+        val parameters = json.jsonObject.getValue("parameters").jsonArray.map { it.jsonObject }
+        assertEquals(
+            listOf("string", "string", "string-list", "string-list"),
+            parameters.map { it.getValue("type").jsonPrimitive.content },
+        )
+        assertEquals(
+            listOf("B73"),
+            parameters[2].getValue("default").jsonArray.map { it.jsonPrimitive.content },
         )
     }
 

@@ -126,6 +126,8 @@ class FilterSitesTest {
                 "siteRangeFilterType" to "rangeFilterType",
                 "startSite" to "startSite",
                 "endSite" to "endSite",
+                "startChr" to "startChr",
+                "endChr" to "endChr",
                 "startPos" to "startPosition",
                 "endPos" to "endPosition",
                 "siteMinCount" to "minCount",
@@ -151,10 +153,46 @@ class FilterSitesTest {
         assertEquals(500, filtered.numberOfSites)
     }
 
+    /**
+     * The `position-range-5-6` golden through the spec, which needs the string parameters ADR-0018 added. The values
+     * are the command-line text of the MANIFEST command, and the result is compared to the golden, not just counted.
+     */
     @Test
-    fun specRejectsFilteringByPositionUntilTheDslHasStrings() = runTest {
+    fun specFiltersByChromosomePositionAgainstTheGolden() = runTest {
+        val values = mapOf(
+            "siteRangeFilterType" to "POSITIONS",
+            "startChr" to "5",
+            "startPos" to "1000000",
+            "endChr" to "6",
+            "endPos" to "50000000",
+        ).mapKeys { (legacy, _) -> checkNotNull(filterSitesOperation.parameterByLegacyName(legacy)).name }
+
+        val filtered = filterSitesOperation.run(tutorial, values)
+        assertEquals(379, filtered.numberOfSites)
+        assertMatchesGolden(
+            "golden/filter-sites/position-range-5-6.hmp.txt",
+            Buffer().also { HapMap.write(filtered, it) }.readString(),
+        )
+    }
+
+    @Test
+    fun specInfersThePositionRangeTypeFromTheSuppliedChromosomes() = runTest {
+        val values = mapOf(
+            "startChr" to "5",
+            "startPosition" to "1000000",
+            "endChr" to "6",
+            "endPosition" to "50000000",
+        )
+        assertEquals(379, filterSitesOperation.run(tutorial, values).numberOfSites)
+    }
+
+    @Test
+    fun specNeedsBothChromosomesToFilterByPosition() = runTest {
         assertFailsWith<IllegalArgumentException> {
             filterSitesOperation.run(tutorial, mapOf("startPosition" to "1000000"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            filterSitesOperation.run(tutorial, mapOf("startChr" to "5"))
         }
     }
 

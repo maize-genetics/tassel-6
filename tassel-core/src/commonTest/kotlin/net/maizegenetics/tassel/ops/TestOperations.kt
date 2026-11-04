@@ -4,7 +4,7 @@ import kotlinx.coroutines.yield
 
 enum class Rounding { NONE, FLOOR, CEILING }
 
-/** Dummy operation using every parameter type; scales each input value. */
+/** Dummy operation using the numeric, boolean, enum, and file parameter types; scales each input value. */
 val scaleValues = operation<List<Double>, List<Double>>(
     id = "scale-values",
     legacyPlugin = "ScaleValuesPlugin",
@@ -31,6 +31,15 @@ val scaleValues = operation<List<Double>, List<Double>>(
             }
         }
     }
+}
+
+/** Dummy operation using the string parameter types (ADR-0018); joins names into one line. */
+val joinNames = operation<Unit, String>(id = "join-names", legacyPlugin = "JoinNamesPlugin") {
+    val separator by string(default = ", ", legacy = "sep", help = "Text between names")
+    val prefix by string(legacy = "linePrefix", help = "Text before the line")
+    val names by stringList(default = listOf("B73"), legacy = "nameList", help = "Names to join")
+    val extra by stringList(legacy = "extraNames", help = "More names to join")
+    run { _, _ -> prefix().orEmpty() + (names() + extra().orEmpty()).joinToString(separator()) }
 }
 
 /** Dummy operation with no input and a required file parameter. */

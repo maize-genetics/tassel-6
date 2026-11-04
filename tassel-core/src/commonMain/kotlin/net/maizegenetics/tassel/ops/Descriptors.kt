@@ -26,7 +26,7 @@ data class OperationDescriptor(
 
 /**
  * Serializable description of a [Parameter]. The subtype gives the value type; in JSON it is the
- * `type` field (`int`, `double`, `boolean`, `enum`, or `file`).
+ * `type` field (`int`, `double`, `boolean`, `enum`, `file`, `string`, or `string-list`).
  *
  * @see net.maizegenetics.plugindef.PluginParameter
  */
@@ -104,4 +104,29 @@ data class FileParameterDescriptor(
     override val required: Boolean = false,
     val default: String? = null,
     val kind: FileKind = FileKind.Input,
+) : ParameterDescriptor
+
+/** A free-text parameter, such as a chromosome name (ADR-0018). */
+@Serializable
+@SerialName("string")
+data class StringParameterDescriptor(
+    override val name: String,
+    override val help: String = "",
+    override val legacy: String? = null,
+    override val required: Boolean = false,
+    val default: String? = null,
+) : ParameterDescriptor
+
+/**
+ * A list of free-text values, such as taxon names (ADR-0018). As text it is one comma-separated
+ * list, which is how TASSEL 5 writes `-taxaList W22,B73`.
+ */
+@Serializable
+@SerialName("string-list")
+data class StringListParameterDescriptor(
+    override val name: String,
+    override val help: String = "",
+    override val legacy: String? = null,
+    override val required: Boolean = false,
+    val default: List<String>? = null,
 ) : ParameterDescriptor

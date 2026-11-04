@@ -7,6 +7,8 @@ import net.maizegenetics.tassel.ops.EnumParameterDescriptor
 import net.maizegenetics.tassel.ops.FileParameterDescriptor
 import net.maizegenetics.tassel.ops.IntParameterDescriptor
 import net.maizegenetics.tassel.ops.ParameterDescriptor
+import net.maizegenetics.tassel.ops.StringListParameterDescriptor
+import net.maizegenetics.tassel.ops.StringParameterDescriptor
 import net.maizegenetics.tassel.ops.TasselOperations
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -101,13 +103,39 @@ class OperationCommandTest {
     }
 
     @Test
-    fun theFlagsBlockedByTheMissingStringParameterTypeAreNotHandWritten() {
-        // tassel-6#45 adds string and string-list parameters to the DSL; until then filter-sites
-        // cannot declare startChr/endChr and filter-taxa cannot declare taxaList, so the generator
-        // must not show those flags. When #45 declares them, these assertions flip by themselves.
+    fun theFlagsThatNeededStringParametersAreGeneratedNotHandWritten() {
+        // These three flags were absent until tassel-6#45 added string and string-list parameters
+        // to the DSL (ADR-0018). Nothing in tassel-cli names them: they appear because
+        // filter-sites declares startChr and endChr and filter-taxa declares taxaList.
         val siteFlags = help("filter-sites")
-        assertFalse("--start-chr" in siteFlags || "--end-chr" in siteFlags)
-        assertFalse("--taxa-list" in help("filter-taxa"))
+        assertContains(siteFlags, "--start-chr")
+        assertContains(siteFlags, "--end-chr")
+        assertContains(help("filter-taxa"), "--taxa-list")
+    }
+
+    @Test
+    fun aStringListIsOneCommaSeparatedValue() {
+        // The spelling the engine is handed is the spelling a spec file would carry, so the CLI
+        // cannot drift from Operation.bind about where one value ends and the next begins.
+        val directory = tempDirectory("tassel-taxa-list")
+        val input = testDataPath("tutorial/mdp_genotype.hmp.txt")
+        val output = directory.resolve("kept")
+        val result = tasselCommand().test(
+            "--quiet filter-taxa --input $input --taxa-list W22,B73,CML247,33-16 --output $output",
+        )
+
+        assertEquals(0, result.statusCode, result.output)
+        val kept = outputText(directory.resolve("kept.hmp.txt")).lineSequence().first().split("\t")
+        assertEquals(listOf("W22", "B73", "CML247", "33-16"), kept.drop(11))
+    }
+
+    @Test
+    fun aStrayCommaInAStringListIsAUserError() {
+        val input = testDataPath("tutorial/mdp_genotype.hmp.txt")
+        val result = tasselCommand().test("filter-taxa --input $input --taxa-list W22,,B73")
+
+        assertEquals(EXIT_USER_ERROR, result.statusCode)
+        assertContains(result.output, "invalid value for --taxa-list: value 2 of the list is blank")
     }
 
     @Test
@@ -190,5 +218,7 @@ class OperationCommandTest {
         is BooleanParameterDescriptor -> parameter.default?.toString()
         is EnumParameterDescriptor -> parameter.default?.let { kebabCase(it) }
         is FileParameterDescriptor -> parameter.default
+        is StringParameterDescriptor -> parameter.default
+        is StringListParameterDescriptor -> parameter.default?.joinToString(",")
     }
 }

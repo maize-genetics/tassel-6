@@ -81,9 +81,8 @@ fun filterTaxa(
 /**
  * The spec for [filterTaxa], registered in [net.maizegenetics.tassel.ops.TasselOperations].
  *
- * TASSEL 5's `taxaList` is missing because the operation DSL has no string-list parameter type, so naming taxa means
- * calling [filterTaxa] with a [TaxaFilter] directly. [includeTaxa] is declared anyway, so the legacy name resolves;
- * like TASSEL 5, it does nothing without a taxon list.
+ * TASSEL 5 also accepts a `.txt` or `.json` file for `taxaList`; this spec takes only the inline comma-separated
+ * form, which is the one the goldens use.
  *
  * @see net.maizegenetics.analysis.filter.FilterTaxaBuilderPlugin
  */
@@ -92,6 +91,10 @@ val filterTaxaOperation = operation<GenotypeTable, GenotypeTable>(
     legacyPlugin = "FilterTaxaBuilderPlugin",
     help = "Keeps a subset of a genotype table's taxa",
 ) {
+    val taxaList by stringList(
+        legacy = "taxaList",
+        help = "Taxa to keep or to drop, comma separated; by default every taxon is kept",
+    )
     val includeTaxa by boolean(
         default = true,
         legacy = "includeTaxa",
@@ -120,6 +123,7 @@ val filterTaxaOperation = operation<GenotypeTable, GenotypeTable>(
         filterTaxa(
             input,
             TaxaFilter(
+                taxaNames = taxaList(),
                 includeTaxa = includeTaxa(),
                 minNotMissing = minNotMissing(),
                 minHeterozygous = minHeterozygous(),

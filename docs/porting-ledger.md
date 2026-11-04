@@ -28,8 +28,8 @@ targets), `bridged`, `retired`.
 | `dna/snp/ExportUtils.java` (HapMap writer) | `io.HapMap.write` | port | `golden/hapmap/mdp_genotype.hmp.txt`, exact (`HapMapTest`) | parity | #13 |
 | `dna/snp/io/BuilderFromVCF.java` | minimal VCF reader (GT only) | port | load `mdp_genotype_w_depth.vcf` | planned | |
 | `analysis/data/GenotypeSummaryPlugin.java` | `analysis.genotypeSummary`, `ops.summaryOperation` | port | all eight `summary/*` goldens, rounded and full precision (`GenotypeSummaryTest`) | parity | #15 |
-| `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java`, `analysis/filter/FilterBySites.java` | `filter.filterSites`, `filter.SiteFilter`, `filter-sites` operation | port | all six `golden/filter-sites/*.hmp.txt`, exact (`FilterSitesTest`) | parity | #16 |
-| `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java`, `analysis/filter/FilterByTaxa.java` | `filter.filterTaxa`, `filter.TaxaFilter`, `filter-taxa` operation | port | all four `golden/filter-taxa/*.hmp.txt`, exact (`FilterTaxaTest`) | parity | #16 |
+| `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java`, `analysis/filter/FilterBySites.java` | `filter.filterSites`, `filter.SiteFilter`, `filter-sites` operation | port | all six `golden/filter-sites/*.hmp.txt`, exact, through the kernel and (for `position-range-5-6`) through the spec (`FilterSitesTest`) | parity | #16, #45 |
+| `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java`, `analysis/filter/FilterByTaxa.java` | `filter.filterTaxa`, `filter.TaxaFilter`, `filter-taxa` operation | port | all four `golden/filter-taxa/*.hmp.txt`, exact, through the kernel and (for `include-list` and `exclude-list`) through the spec (`FilterTaxaTest`) | parity | #16, #45 |
 | `matrixalgebra/decomposition/SymmetricEigenvalueDecomposition.java` | `math.SymmetricEigenDecomposition` | port | R `prcomp` values from `PrinCompTest`, through the Gram matrix (`PrinCompOracleTest`); the PCA goldens (`PrincipalComponentsTest`) | parity | #17 |
 | `analysis/distance/KinshipPlugin.java`, `analysis/distance/EndelmanDistanceMatrix.java` | `kinship` operation (Centered IBS), `distance.centeredIbs` | port | `golden/kinship/centered_ibs.txt`, tol `abs 8e-6`, matched byte for byte including `SumPk` (`CenteredIbsTest`) | parity | #18 |
 | `taxa/distance/DistanceMatrix.java`, `DistanceMatrixBuilder.java`, `WriteDistanceMatrix.java` (`saveDelimitedDistanceMatrix`) | `distance.DistanceMatrix` and its `writeDelimited` | port | `golden/kinship/centered_ibs.txt` written from its values (`CenteredIbsTest`) | parity | #18 |
@@ -41,7 +41,7 @@ targets), `bridged`, `retired`.
 | `util/TableReportUtils.java` (`saveDelimitedTableReport`) | `table.ResultTable.writeDelimited` | port | `summary/alleles.txt` written from its values (`ResultTableTest`) | parity | #38 |
 | `util/DoubleFormat.java` | `table.DoubleFormat` | port | every numeric cell of `summary/*.full.txt` and `pca/*.full.txt` against its rounded twin (`DoubleFormatGoldenTest`) | parity | #38 |
 | `java.lang.Float.toString`, `Double.toString` (how TASSEL writes float matrix cells and quantitative annotations) | `table.floatToString`, `table.doubleToString` | port | the kinship golden's cells and `SumPk` (`CenteredIbsTest`); 400,000 values against the JVM (`ShortestDecimalJvmTest`) | parity | #18 |
-| `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | in progress | #11 |
+| `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002, ADR-0018) | redesign | n/a | in progress | #11, #45 |
 | `pipeline/TasselPipeline.java` (`-h`, `-export`, `-exportType`, and the per-plugin flags it builds from `PluginParameter`) | `tassel-cli`: one subcommand per registered operation, generated from the specs (ADR-0002, ADR-0006) | redesign | `golden/kinship/centered_ibs.txt` written by `tassel kinship`, exact (`KinshipEndToEndTest`) | parity (JVM, the CLI's only target) | #20 |
 | `pipeline/TasselPipeline.java` | `tassel translate` (ADR-0006) | redesign | translated commands give golden outputs | planned (stretch) | |
 
@@ -59,9 +59,12 @@ parameters are not ported. Nothing in the PoC needs them and no golden covers th
 | `filterName` | both | Names the TASSEL 5 `Datum` and the gzipped JSON filter definition, neither of which TASSEL 6 has |
 
 `startChr` and `endChr` (`FilterSiteBuilderPlugin`) and `taxaList`
-(`FilterTaxaBuilderPlugin`) are ported in the `SiteFilter` and `TaxaFilter` kernels, which the
-goldens exercise, but are missing from the operation specs: the DSL frozen in #11 has no string or
-string-list parameter type. See the handoff on #16.
+(`FilterTaxaBuilderPlugin`) were in this list until #45. They are now declared on the
+`filter-sites` and `filter-taxa` specs with the `string` and `stringList` parameter types ADR-0018
+added, so all ten golden parameter sets are reachable through the specs, the CLI, and the legacy
+translator. `taxaList` takes only TASSEL 5's inline comma-separated form; its `.txt`, `.json`, and
+`.json.gz` file forms are not ported, because a spec parameter does not read files and no golden
+uses them.
 
 ## Later phases
 

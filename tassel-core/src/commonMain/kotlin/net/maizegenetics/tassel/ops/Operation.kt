@@ -146,6 +146,28 @@ class OperationScope<I : Any, O : Any> internal constructor(internal val id: Str
         help: String = "",
     ): ParameterDeclaration<String?> = ParameterDeclaration(this, FileType(kind), null, legacy, help)
 
+    /** Text parameter with a default, for a value with no narrower type, such as a chromosome name. */
+    fun string(default: String, legacy: String? = null, help: String = ""): ParameterDeclaration<String> =
+        ParameterDeclaration(this, StringType, default, legacy, help)
+
+    /** Text parameter with no default; `null` unless supplied. */
+    fun string(legacy: String? = null, help: String = ""): ParameterDeclaration<String?> =
+        ParameterDeclaration(this, StringType, null, legacy, help)
+
+    /**
+     * Text-list parameter with a default. As text it is one comma-separated list, as TASSEL 5 takes
+     * `-taxaList W22,B73`; entries are not trimmed and none of them may be blank.
+     */
+    fun stringList(
+        default: List<String>,
+        legacy: String? = null,
+        help: String = "",
+    ): ParameterDeclaration<List<String>> = ParameterDeclaration(this, StringListType, default, legacy, help)
+
+    /** Text-list parameter with no default; `null` unless supplied. */
+    fun stringList(legacy: String? = null, help: String = ""): ParameterDeclaration<List<String>?> =
+        ParameterDeclaration(this, StringListType, null, legacy, help)
+
     /**
      * Sets the code that runs the operation. Read parameter values in [block] by calling the
      * parameter (`minMaf()`). Report progress through `progress`; when run by an engine, each report

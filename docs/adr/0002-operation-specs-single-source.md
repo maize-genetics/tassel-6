@@ -1,6 +1,7 @@
 # ADR-0002: Operation specs as the single source of truth
 
-- Status: Accepted (DSL details are frozen in the `operation-specs` task)
+- Status: Accepted (DSL details are frozen in the `operation-specs` task; amended
+  by ADR-0018, which adds string and string-list parameters)
 - Date: 2026-10-29
 
 ## Context
