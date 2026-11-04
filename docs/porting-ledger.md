@@ -33,7 +33,7 @@ targets), `bridged`, `retired`.
 | `analysis/distance/KinshipPlugin.java`, `analysis/distance/EndelmanDistanceMatrix.java` | `kinship` operation (Centered IBS) | port | `Centered_IBS_Matrix.txt`, tol `8e-6` | planned | |
 | `taxa/distance/DistanceMatrix.java`, `WriteDistanceMatrix.java` | kinship matrix type and writer | port | text output matches | planned | |
 | `analysis/data/PrincipalComponentsPlugin.java`, `stats/PCA/PrinComp.java` | `pca` operation (Gram-matrix eigen) | port | eigenvalues, vectors up to sign | planned | |
-| `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | planned | |
+| `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | in progress | #11 |
 | `pipeline/TasselPipeline.java` | `tassel translate` (ADR-0006) | redesign | translated commands give golden outputs | planned (stretch) | |
 
 ## Later phases
