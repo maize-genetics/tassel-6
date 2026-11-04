@@ -22,12 +22,12 @@ targets), `bridged`, `retired`.
 |-----------------|-----------------|----------|-------------|--------|-------|
 | `dna/snp/NucleotideAlignmentConstants.java` | `genotype.Nucleotide`, `Allele`, `Genotype` | port | encoding tables vs TASSEL 5 `v5.2.98` (`NucleotideTest`) | parity | #10 |
 | `util/SuperByteMatrix.java`, `dna/snp/genotypecall/ByteGenotypeCallTable.java` | `genotype.GenotypeTable`, `SiteBlock`, `InMemoryGenotypeTable` (ADR-0012) | redesign | via all I/O goldens | in progress | #10 |
-| `dna/snp/genotypecall/AlleleFreqCache.java`, `dna/snp/genotypecall/Stats.java` | `genotype.AlleleStats` | port | cases vs TASSEL 5 (`AlleleStatsTest`); summary goldens in #15 | in progress | #10 |
+| `dna/snp/genotypecall/AlleleFreqCache.java`, `dna/snp/genotypecall/Stats.java` | `genotype.AlleleStats` | port | cases vs TASSEL 5 (`AlleleStatsTest`); all 3,093 sites of `summary/sites.full.txt` (`GenotypeSummaryTest`) | parity | #10 |
 | `taxa/TaxaList*.java`, `taxa/Taxon.java`, `dna/map/PositionList*.java`, `dna/map/Position.java`, `dna/map/Chromosome.java` | `taxa.TaxaList`, `taxa.Taxon`, `position.PositionList`, `position.Position`, `position.Chromosome` | redesign | names and ordering vs TASSEL 5 (`PositionTest`); the HapMap golden (`HapMapTest`) | parity | #10 |
 | `dna/snp/io/BuilderFromHapMap.java` | `io.HapMap.read` | port | loads `mdp_genotype.hmp.txt` as 281 x 3,093 and writes back to the golden (`HapMapTest`) | parity | #13 |
 | `dna/snp/ExportUtils.java` (HapMap writer) | `io.HapMap.write` | port | `golden/hapmap/mdp_genotype.hmp.txt`, exact (`HapMapTest`) | parity | #13 |
 | `dna/snp/io/BuilderFromVCF.java` | minimal VCF reader (GT only) | port | load `mdp_genotype_w_depth.vcf` | planned | |
-| `analysis/data/GenotypeSummaryPlugin.java` | `summary` operation | port | overall, site, and taxa summary tables | planned | |
+| `analysis/data/GenotypeSummaryPlugin.java` | `analysis.genotypeSummary`, `ops.summaryOperation` | port | all eight `summary/*` goldens, rounded and full precision (`GenotypeSummaryTest`) | parity | #15 |
 | `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java`, `analysis/filter/FilterBySites.java` | `filter.filterSites`, `filter.SiteFilter`, `filter-sites` operation | port | all six `golden/filter-sites/*.hmp.txt`, exact (`FilterSitesTest`) | parity | #16 |
 | `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java`, `analysis/filter/FilterByTaxa.java` | `filter.filterTaxa`, `filter.TaxaFilter`, `filter-taxa` operation | port | all four `golden/filter-taxa/*.hmp.txt`, exact (`FilterTaxaTest`) | parity | #16 |
 | `matrixalgebra/decomposition/SymmetricEigenvalueDecomposition.java` | `math.SymmetricEigenDecomposition` | port | R `prcomp` values from `PrinCompTest`, through the Gram matrix (`PrinCompOracleTest`); PCA goldens in #19 | in progress | #17 |

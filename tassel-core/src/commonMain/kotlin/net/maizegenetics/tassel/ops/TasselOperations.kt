@@ -14,7 +14,7 @@ object TasselOperations {
     /** The operations, in presentation order. */
     val registry: OperationRegistry =
         OperationRegistry(
-            // summaryOperation,     // #15 GenotypeSummaryPlugin
+            summaryOperation, // #15 GenotypeSummaryPlugin
             filterSitesOperation, // #16 FilterSiteBuilderPlugin
             filterTaxaOperation, // #16 FilterTaxaBuilderPlugin
             // kinshipOperation,     // #18 KinshipPlugin
