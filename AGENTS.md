@@ -109,12 +109,19 @@ At the end of a session:
 
 Gradle provisions the JDK 25 toolchain if it is not installed. Native tests run
 only on a matching host: `macosArm64Test` needs a Mac with full Xcode (Command
-Line Tools alone cannot link), and `linuxX64Test` needs Linux; CI covers both.
+Line Tools alone cannot link), and `linuxX64Test` needs Linux.
+
+CI requires `linuxX64Test`; it is the native parity gate. `macosArm64Test` is
+advisory for the PoC because GitHub's hosted macOS runners frequently fail to
+acquire a runner, so it does not gate merges and does not belong in a "Done
+when" list. Do not poll or wait on it. Phase 4 bindings work restores it as a
+required check.
 
 ```bash
 ./gradlew :tassel-core:allTests        # jvm, wasmJs (Node), native tests
 ./gradlew :tassel-core:jvmTest         # fast inner loop
 ./gradlew check                        # everything CI runs
+./gradlew check -x macosArm64Test      # on a Mac without full Xcode
 ./gradlew :tassel-cli:run --args="--help"
 ./gradlew :tassel-app:run              # desktop
 ./gradlew :tassel-app:wasmJsBrowserDevelopmentRun   # web
