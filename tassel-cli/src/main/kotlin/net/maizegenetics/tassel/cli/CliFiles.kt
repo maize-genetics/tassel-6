@@ -11,6 +11,7 @@ import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.table.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
@@ -21,9 +22,18 @@ const val HAPMAP_EXTENSION: String = ".hmp.txt"
 /** TASSEL 5's extension for a table, matrix, or phenotype export. */
 const val TEXT_EXTENSION: String = ".txt"
 
+/** Plain-text VCF, which `--input` reads. */
+const val VCF_EXTENSION: String = ".vcf"
+
+/** bgzip-compressed VCF, which nothing can decompress yet. */
+const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
+
 /**
  * Reads a genotype file. `tassel-core` takes a `kotlinx.io.Source` and knows nothing about paths
  * (ADR-0017), so opening the file is the CLI's job.
+ *
+ * The format comes from the extension, as in TASSEL 5: `$VCF_EXTENSION` is read as VCF and
+ * everything else as HapMap.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
  * @throws IllegalArgumentException if it is not a file, or is in a format nothing can read yet.
@@ -33,11 +43,14 @@ fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.No
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
-    require(!path.endsWith(".vcf") && !path.endsWith(".vcf.gz")) {
-        "VCF input is not supported yet (tassel-6#14); convert to HapMap first: $path"
+    require(!path.endsWith(VCF_GZIP_EXTENSION)) {
+        "bgzip-compressed VCF is not supported yet (tassel-6#14 reads plain $VCF_EXTENSION only); " +
+            "decompress it first: $path"
     }
     CliLog.info("reading $path")
-    return SystemFileSystem.source(file).buffered().use { HapMap.read(it, progress) }
+    return SystemFileSystem.source(file).buffered().use { source ->
+        if (path.endsWith(VCF_EXTENSION)) Vcf.read(source, progress) else HapMap.read(source, progress)
+    }
 }
 
 /**
