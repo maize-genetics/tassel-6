@@ -23,9 +23,9 @@ targets), `bridged`, `retired`.
 | `dna/snp/NucleotideAlignmentConstants.java` | `genotype.Nucleotide`, `Allele`, `Genotype` | port | encoding tables vs TASSEL 5 `v5.2.98` (`NucleotideTest`) | parity | #10 |
 | `util/SuperByteMatrix.java`, `dna/snp/genotypecall/ByteGenotypeCallTable.java` | `genotype.GenotypeTable`, `SiteBlock`, `InMemoryGenotypeTable` (ADR-0012) | redesign | via all I/O goldens | in progress | #10 |
 | `dna/snp/genotypecall/AlleleFreqCache.java`, `dna/snp/genotypecall/Stats.java` | `genotype.AlleleStats` | port | cases vs TASSEL 5 (`AlleleStatsTest`); summary goldens in #15 | in progress | #10 |
-| `taxa/TaxaList*.java`, `taxa/Taxon.java`, `dna/map/PositionList*.java`, `dna/map/Position.java`, `dna/map/Chromosome.java` | `taxa.TaxaList`, `taxa.Taxon`, `position.PositionList`, `position.Position`, `position.Chromosome` | redesign | names and ordering vs TASSEL 5 (`PositionTest`); I/O goldens in #13 | in progress | #10 |
-| `dna/snp/io/BuilderFromHapMap.java` | HapMap reader | port | load `mdp_genotype.hmp.txt` | planned | |
-| `dna/snp/ExportUtils.java` (HapMap writer) | HapMap writer | port | write/read round-trip vs TASSEL 5 export | planned | |
+| `taxa/TaxaList*.java`, `taxa/Taxon.java`, `dna/map/PositionList*.java`, `dna/map/Position.java`, `dna/map/Chromosome.java` | `taxa.TaxaList`, `taxa.Taxon`, `position.PositionList`, `position.Position`, `position.Chromosome` | redesign | names and ordering vs TASSEL 5 (`PositionTest`); the HapMap golden (`HapMapTest`) | parity | #10 |
+| `dna/snp/io/BuilderFromHapMap.java` | `io.HapMap.read` | port | loads `mdp_genotype.hmp.txt` as 281 x 3,093 and writes back to the golden (`HapMapTest`) | parity | #13 |
+| `dna/snp/ExportUtils.java` (HapMap writer) | `io.HapMap.write` | port | `golden/hapmap/mdp_genotype.hmp.txt`, exact (`HapMapTest`) | parity | #13 |
 | `dna/snp/io/BuilderFromVCF.java` | minimal VCF reader (GT only) | port | load `mdp_genotype_w_depth.vcf` | planned | |
 | `analysis/data/GenotypeSummaryPlugin.java` | `summary` operation | port | overall, site, and taxa summary tables | planned | |
 | `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java` | `filter-sites` operation | port | MAF, count, and het filters | planned | |

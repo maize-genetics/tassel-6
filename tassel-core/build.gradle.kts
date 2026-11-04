@@ -73,6 +73,8 @@ kotlin {
             kotlin.srcDir(generateBuildInfo.map { it.outputDir })
             dependencies {
                 implementation(libs.kotlinx.coroutines.core)
+                // Readers and writers take kotlinx.io Source and Sink, so this is part of the public API (ADR-0017).
+                api(libs.kotlinx.io.core)
                 api(libs.kotlinx.serialization.json)
             }
         }
