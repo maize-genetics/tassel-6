@@ -152,6 +152,9 @@ manifest \
   "#   abs X          every number within X absolutely; text cells identical" \
   "#   rel X          every number within X relative to the golden value; text cells identical" \
   "#   ... up-to-sign each numeric column may be negated as a whole before comparing" \
+  "#   ... rows-unordered the data rows may be compared in any order: both sides are put in a" \
+  "#                  canonical row order first, so nothing a row's position implies is compared" \
+  "#                  (TASSEL 5's PCA eigenvalues come out of an SVD that does not sort them)" \
   "#   format         headers, row labels, and layout identical; numbers are checked in the" \
   "#                  .full.txt twin (PCA signs are arbitrary, so TASSEL-rounded text can differ)" \
   "" \
@@ -235,10 +238,10 @@ tassel5 -h "$H" -PrincipalComponentsPlugin -endPlugin \
 tassel5_full -h "$H" -PrincipalComponentsPlugin -endPlugin \
   -export "$P/pcs.full,$P/eigenvalues.full,$P/eigenvectors.full"
 output "$P/pcs.txt" format
-output "$P/eigenvalues.txt" exact
+output "$P/eigenvalues.txt" "exact rows-unordered"
 output "$P/eigenvectors.txt" format
 output "$P/pcs.full.txt" "abs 1e-5 up-to-sign"
-output "$P/eigenvalues.full.txt" "rel 1e-9"
+output "$P/eigenvalues.full.txt" "rel 1e-9 rows-unordered"
 output "$P/eigenvectors.full.txt" "abs 1e-9 up-to-sign"
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |

@@ -126,7 +126,7 @@ class GenotypeSummaryTest {
      * `abs 1e-12`) come from `testdata/golden/MANIFEST`.
      */
     private fun assertMatchesGoldens(name: String, table: ResultTable?) {
-        assertEquals(Tolerance.Exact, goldenTolerance("golden/summary/$name.txt"))
+        assertEquals(Tolerance.Exact(), goldenTolerance("golden/summary/$name.txt"))
         assertEquals(Tolerance.Absolute(1e-12), goldenTolerance("golden/summary/$name.full.txt"))
         assertMatchesGolden("golden/summary/$name.txt", table!!.toDelimitedString())
         assertMatchesGolden("golden/summary/$name.full.txt", table.toFullPrecisionString())

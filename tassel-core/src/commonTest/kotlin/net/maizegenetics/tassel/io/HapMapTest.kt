@@ -60,7 +60,7 @@ class HapMapTest {
 
     @Test
     fun writesTassel5Export() {
-        assertEquals(Tolerance.Exact, GoldenManifest.load().tolerance(GOLDEN))
+        assertEquals(Tolerance.Exact(), GoldenManifest.load().tolerance(GOLDEN))
         val written = Buffer().also { HapMap.write(readTutorial(), it) }.readString().lines()
         val golden = TestData.readText(GOLDEN).replace("\r\n", "\n").lines()
         assertEquals(golden.size, written.size, "number of lines")
