@@ -19,6 +19,6 @@ object TasselOperations {
             filterSitesOperation, // #16 FilterSiteBuilderPlugin
             filterTaxaOperation, // #16 FilterTaxaBuilderPlugin
             kinshipOperation, // #18 KinshipPlugin
-            // pcaOperation,         // #19 PrincipalComponentsPlugin
+            pcaOperation, // #19 PrincipalComponentsPlugin
         )
 }
