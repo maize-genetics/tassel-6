@@ -28,8 +28,8 @@ targets), `bridged`, `retired`.
 | `dna/snp/ExportUtils.java` (HapMap writer) | `io.HapMap.write` | port | `golden/hapmap/mdp_genotype.hmp.txt`, exact (`HapMapTest`) | parity | #13 |
 | `dna/snp/io/BuilderFromVCF.java` | minimal VCF reader (GT only) | port | load `mdp_genotype_w_depth.vcf` | planned | |
 | `analysis/data/GenotypeSummaryPlugin.java` | `summary` operation | port | overall, site, and taxa summary tables | planned | |
-| `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java` | `filter-sites` operation | port | MAF, count, and het filters | planned | |
-| `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java` | `filter-taxa` operation | port | coverage and het filters | planned | |
+| `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java`, `analysis/filter/FilterBySites.java` | `filter.filterSites`, `filter.SiteFilter`, `filter-sites` operation | port | all six `golden/filter-sites/*.hmp.txt`, exact (`FilterSitesTest`) | parity | #16 |
+| `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java`, `analysis/filter/FilterByTaxa.java` | `filter.filterTaxa`, `filter.TaxaFilter`, `filter-taxa` operation | port | all four `golden/filter-taxa/*.hmp.txt`, exact (`FilterTaxaTest`) | parity | #16 |
 | `matrixalgebra/decomposition/SymmetricEigenvalueDecomposition.java` | `math.SymmetricEigenDecomposition` | port | R `prcomp` values from `PrinCompTest`, through the Gram matrix (`PrinCompOracleTest`); PCA goldens in #19 | in progress | #17 |
 | `analysis/distance/KinshipPlugin.java`, `analysis/distance/EndelmanDistanceMatrix.java` | `kinship` operation (Centered IBS) | port | `Centered_IBS_Matrix.txt`, tol `8e-6` | planned | |
 | `taxa/distance/DistanceMatrix.java`, `WriteDistanceMatrix.java` | kinship matrix type and writer | port | text output matches | planned | |
@@ -39,6 +39,24 @@ targets), `bridged`, `retired`.
 | `util/DoubleFormat.java` | `table.DoubleFormat` | port | every numeric cell of `summary/*.full.txt` and `pca/*.full.txt` against its rounded twin (`DoubleFormatGoldenTest`) | parity | #38 |
 | `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | in progress | #11 |
 | `pipeline/TasselPipeline.java` | `tassel translate` (ADR-0006) | redesign | translated commands give golden outputs | planned (stretch) | |
+
+### Filter parameters not ported yet (#16)
+
+The two filter rows above are at parity for every parameter the goldens exercise. These TASSEL 5
+parameters are not ported. Nothing in the PoC needs them and no golden covers them.
+
+| TASSEL 5 parameter | Plugin | Why not |
+|--------------------|--------|---------|
+| `siteNames` | `FilterSiteBuilderPlugin` | Site-name lists; out of scope in #16 |
+| `positionList`, `bedFile`, `chrPosFile` | `FilterSiteBuilderPlugin` | Position-list and BED filters; out of scope in #16 |
+| `includeSites` | `FilterSiteBuilderPlugin` | Only has a meaning with the four parameters above |
+| `removeSitesWithIndels` | `FilterSiteBuilderPlugin` | Not in #16's parameter table; one predicate on `AlleleStats.hasIndel` when wanted |
+| `filterName` | both | Names the TASSEL 5 `Datum` and the gzipped JSON filter definition, neither of which TASSEL 6 has |
+
+`startChr` and `endChr` (`FilterSiteBuilderPlugin`) and `taxaList`
+(`FilterTaxaBuilderPlugin`) are ported in the `SiteFilter` and `TaxaFilter` kernels, which the
+goldens exercise, but are missing from the operation specs: the DSL frozen in #11 has no string or
+string-list parameter type. See the handoff on #16.
 
 ## Later phases
 

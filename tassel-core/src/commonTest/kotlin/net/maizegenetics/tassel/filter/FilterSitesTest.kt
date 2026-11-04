@@ -1,0 +1,175 @@
+package net.maizegenetics.tassel.filter
+
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.Buffer
+import kotlinx.io.readString
+import net.maizegenetics.tassel.genotype.Genotype
+import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.ops.TasselOperations
+import net.maizegenetics.tassel.testing.TestData
+import net.maizegenetics.tassel.testing.assertMatchesGolden
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
+
+/**
+ * `filter-sites` against the six TASSEL 5 `FilterSiteBuilderPlugin` parameter sets in
+ * `testdata/golden/filter-sites/` (ADR-0009, `testdata/golden/MANIFEST`). Each golden is a HapMap export compared
+ * exactly, so every test filters the tutorial file, writes it with [HapMap.write], and compares the text.
+ */
+class FilterSitesTest {
+    @Test
+    fun keepsSitesWithAtLeastMinCountTaxa() {
+        assertGolden("min-count-270", SiteFilter(minCount = 270), sites = 2033)
+    }
+
+    @Test
+    fun keepsSitesInsideTheMinorAlleleFrequencyRange() {
+        assertGolden("maf-0.05-0.4", SiteFilter(minMaf = 0.05, maxMaf = 0.4), sites = 2046)
+    }
+
+    @Test
+    fun keepsARangeOfSiteIndices() {
+        val filter = SiteFilter(rangeFilterType = SiteRangeFilterType.SITES, startSite = 100, endSite = 599)
+        assertGolden("site-range-100-599", filter, sites = 500)
+    }
+
+    @Test
+    fun keepsARangeOfChromosomePositions() {
+        val filter = SiteFilter(
+            rangeFilterType = SiteRangeFilterType.POSITIONS,
+            startChromosome = "5",
+            startPosition = 1000000,
+            endChromosome = "6",
+            endPosition = 50000000,
+        )
+        assertGolden("position-range-5-6", filter, sites = 379)
+    }
+
+    @Test
+    fun removingMinorSnpStatesKeepsEverySite() {
+        assertGolden("remove-minor-snp-states", SiteFilter(removeMinorSnpStates = true), sites = 3093)
+    }
+
+    @Test
+    fun combinesCountFrequencyAndHeterozygosity() {
+        val filter = SiteFilter(minCount = 250, minMaf = 0.1, maxHeterozygous = 0.02)
+        assertGolden("combined", filter, sites = 1953)
+    }
+
+    @Test
+    fun removingMinorSnpStatesOnlyChangesGenotypes() {
+        val filtered = filterSites(tutorial, SiteFilter(removeMinorSnpStates = true))
+        assertEquals(tutorial.positions.map { it.name }, filtered.positions.map { it.name })
+        assertEquals(tutorial.taxa.names, filtered.taxa.names)
+        var changed = 0
+        for (site in 0 until tutorial.numberOfSites) {
+            val before = tutorial.siteGenotypes(site)
+            val after = filtered.siteGenotypes(site)
+            before.indices.forEach { taxon ->
+                if (before[taxon] != after[taxon]) {
+                    assertEquals(Genotype.UNKNOWN, after[taxon], "site $site taxon $taxon")
+                    changed++
+                }
+            }
+        }
+        assertTrue(changed > 0, "removeMinorSnpStates changed no genotype")
+    }
+
+    @Test
+    fun aFilterThatKeepsEverythingReturnsTheSameTable() {
+        assertSame(tutorial, filterSites(tutorial, SiteFilter()))
+    }
+
+    @Test
+    fun aSiteRangeOutsideTheTableFails() {
+        val filter = SiteFilter(rangeFilterType = SiteRangeFilterType.SITES, startSite = 3000, endSite = 3093)
+        assertFailsWith<IllegalArgumentException> { filterSites(tutorial, filter) }
+    }
+
+    @Test
+    fun anUnknownChromosomeFails() {
+        val filter = SiteFilter(
+            rangeFilterType = SiteRangeFilterType.POSITIONS,
+            startChromosome = "11",
+            endChromosome = "11",
+        )
+        assertFailsWith<IllegalArgumentException> { filterSites(tutorial, filter) }
+    }
+
+    @Test
+    fun invalidThresholdsFail() {
+        assertFailsWith<IllegalArgumentException> { SiteFilter(minCount = -1) }
+        assertFailsWith<IllegalArgumentException> { SiteFilter(minMaf = 0.4, maxMaf = 0.1) }
+        assertFailsWith<IllegalArgumentException> { SiteFilter(minMaf = 1.5) }
+        assertFailsWith<IllegalArgumentException> { SiteFilter(maxHeterozygous = -0.1) }
+        assertFailsWith<IllegalArgumentException> {
+            SiteFilter(rangeFilterType = SiteRangeFilterType.SITES, startSite = 10, endSite = 5)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            SiteFilter(rangeFilterType = SiteRangeFilterType.POSITIONS, startChromosome = "1")
+        }
+    }
+
+    @Test
+    fun specCarriesTassel5Names() {
+        assertEquals("filter-sites", filterSitesOperation.id)
+        assertEquals("FilterSiteBuilderPlugin", filterSitesOperation.legacyPlugin)
+        assertSame(filterSitesOperation, TasselOperations.registry["filter-sites"])
+        assertSame(filterSitesOperation, TasselOperations.registry.byLegacyPlugin("FilterSiteBuilderPlugin"))
+        val legacy = filterSitesOperation.parameters.associate { checkNotNull(it.legacy) to it.name }
+        assertEquals(
+            mapOf(
+                "siteRangeFilterType" to "rangeFilterType",
+                "startSite" to "startSite",
+                "endSite" to "endSite",
+                "startPos" to "startPosition",
+                "endPos" to "endPosition",
+                "siteMinCount" to "minCount",
+                "siteMinAlleleFreq" to "minMaf",
+                "siteMaxAlleleFreq" to "maxMaf",
+                "minHeterozygous" to "minHeterozygous",
+                "maxHeterozygous" to "maxHeterozygous",
+                "removeMinorSNPStates" to "removeMinorSnpStates",
+            ),
+            legacy,
+        )
+    }
+
+    @Test
+    fun specRunsTheCombinedFilterFromCommandLineText() = runTest {
+        val values = mapOf("minCount" to "250", "minMaf" to "0.1", "maxHeterozygous" to "0.02")
+        assertEquals(1953, filterSitesOperation.run(tutorial, values).numberOfSites)
+    }
+
+    @Test
+    fun specInfersTheSiteRangeTypeFromTheSuppliedSites() = runTest {
+        val filtered = filterSitesOperation.run(tutorial, mapOf("startSite" to "100", "endSite" to "599"))
+        assertEquals(500, filtered.numberOfSites)
+    }
+
+    @Test
+    fun specRejectsFilteringByPositionUntilTheDslHasStrings() = runTest {
+        assertFailsWith<IllegalArgumentException> {
+            filterSitesOperation.run(tutorial, mapOf("startPosition" to "1000000"))
+        }
+    }
+
+    private fun assertGolden(name: String, filter: SiteFilter, sites: Int) {
+        val filtered = filterSites(tutorial, filter)
+        assertEquals(sites, filtered.numberOfSites, "number of sites")
+        assertEquals(281, filtered.numberOfTaxa, "number of taxa")
+        val written = Buffer().also { HapMap.write(filtered, it) }.readString()
+        assertMatchesGolden("golden/filter-sites/$name.hmp.txt", written)
+    }
+
+    private companion object {
+        /** The tutorial file is read once and shared: parsing it per test is slow on Node and Native. */
+        val tutorial: GenotypeTable by lazy {
+            HapMap.read(Buffer().also { it.write(TestData.readBytes("tutorial/mdp_genotype.hmp.txt")) })
+        }
+    }
+}
