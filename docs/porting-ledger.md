@@ -20,10 +20,10 @@ targets), `bridged`, `retired`.
 
 | TASSEL 5 source | TASSEL 6 target | Strategy | Golden test | Status | Issue |
 |-----------------|-----------------|----------|-------------|--------|-------|
-| `dna/snp/NucleotideAlignmentConstants.java` | `tassel-core` genotype encoding | port | encoding round-trip | planned | |
-| `util/SuperByteMatrix.java`, `dna/snp/genotypecall/ByteGenotypeCallTable.java` | `GenotypeTable` in-memory store with site blocks (ADR-0012) | redesign | via all I/O goldens | planned | |
-| `dna/snp/genotypecall/AlleleFreqCache.java` | allele statistics | port | via summary goldens | planned | |
-| `taxa/TaxaList*.java`, `dna/map/PositionList*.java` | taxa and position lists (with `biokotlin-core` types, ADR-0008) | redesign | via I/O goldens | planned | |
+| `dna/snp/NucleotideAlignmentConstants.java` | `genotype.Nucleotide`, `Allele`, `Genotype` | port | encoding tables vs TASSEL 5 `v5.2.98` (`NucleotideTest`) | parity | #10 |
+| `util/SuperByteMatrix.java`, `dna/snp/genotypecall/ByteGenotypeCallTable.java` | `genotype.GenotypeTable`, `SiteBlock`, `InMemoryGenotypeTable` (ADR-0012) | redesign | via all I/O goldens | in progress | #10 |
+| `dna/snp/genotypecall/AlleleFreqCache.java`, `dna/snp/genotypecall/Stats.java` | `genotype.AlleleStats` | port | cases vs TASSEL 5 (`AlleleStatsTest`); summary goldens in #15 | in progress | #10 |
+| `taxa/TaxaList*.java`, `taxa/Taxon.java`, `dna/map/PositionList*.java`, `dna/map/Position.java`, `dna/map/Chromosome.java` | `taxa.TaxaList`, `taxa.Taxon`, `position.PositionList`, `position.Position`, `position.Chromosome` | redesign | names and ordering vs TASSEL 5 (`PositionTest`); I/O goldens in #13 | in progress | #10 |
 | `dna/snp/io/BuilderFromHapMap.java` | HapMap reader | port | load `mdp_genotype.hmp.txt` | planned | |
 | `dna/snp/ExportUtils.java` (HapMap writer) | HapMap writer | port | write/read round-trip vs TASSEL 5 export | planned | |
 | `dna/snp/io/BuilderFromVCF.java` | minimal VCF reader (GT only) | port | load `mdp_genotype_w_depth.vcf` | planned | |
@@ -53,4 +53,5 @@ Temporary TASSEL 6 types that must be swapped for upstream equivalents.
 
 | Type | Replace with | Blocked on |
 |------|--------------|------------|
-| _none yet_ | | |
+| `net.maizegenetics.tassel.position.Chromosome` | `biokotlin-core` contig type, keeping TASSEL 5 name normalization and ordering | `biokotlin-core` published (ADR-0008) |
+| `net.maizegenetics.tassel.position.Position` | `biokotlin-core` `Position` (contig, position), with TASSEL 6 site fields (SNP name, strand, variants) kept alongside | `biokotlin-core` published (ADR-0008) |
