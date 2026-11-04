@@ -39,8 +39,7 @@ val pcaOperation = operation<GenotypeTable, PrincipalComponentsResult>(
         default = PcaLimit.number_of_components,
         legacy = "limitBy",
         help = "This parameter determines the type of value that will be used to limit the number of principal " +
-            "components (axes) returned. The possible choices are number_of_components, min_eigenvalue, and " +
-            "total_variance.",
+            "components (axes) returned.",
     )
     val numberOfComponents by int(
         default = DEFAULT_COMPONENTS,

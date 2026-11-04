@@ -20,6 +20,8 @@ import net.maizegenetics.tassel.ops.IntParameterDescriptor
 import net.maizegenetics.tassel.ops.OperationDescriptor
 import net.maizegenetics.tassel.ops.OperationRegistry
 import net.maizegenetics.tassel.ops.ParameterDescriptor
+import net.maizegenetics.tassel.ops.StringListParameterDescriptor
+import net.maizegenetics.tassel.ops.StringParameterDescriptor
 import net.maizegenetics.tassel.ops.TasselOperations
 
 /** `--input` and `--output` are the CLI's own; no spec may declare a parameter with either name. */
@@ -131,6 +133,17 @@ class OperationCommand(
             is FileParameterDescriptor -> text(
                 option(name, help = parameter.help, metavar = fileMetavar(parameter.kind)),
                 parameter.default,
+                parameter.required,
+            )
+            is StringParameterDescriptor -> text(
+                option(name, help = parameter.help, metavar = "TEXT"),
+                parameter.default,
+                parameter.required,
+            )
+            is StringListParameterDescriptor -> text(
+                // One comma-separated value, so the engine gets the same text a spec file would.
+                option(name, help = parameter.help, metavar = "TEXT,TEXT"),
+                parameter.default?.joinToString(","),
                 parameter.required,
             )
         }

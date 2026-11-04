@@ -145,9 +145,6 @@ fun filterSites(
 /**
  * The spec for [filterSites], registered in [net.maizegenetics.tassel.ops.TasselOperations].
  *
- * TASSEL 5's `startChr` and `endChr` are missing because the operation DSL has no string parameter type, so
- * [SiteRangeFilterType.POSITIONS] can only be used by calling [filterSites] with a [SiteFilter] directly.
- *
  * @see net.maizegenetics.analysis.filter.FilterSiteBuilderPlugin
  */
 val filterSitesOperation = operation<GenotypeTable, GenotypeTable>(
@@ -158,10 +155,12 @@ val filterSitesOperation = operation<GenotypeTable, GenotypeTable>(
     val rangeFilterType by enum(
         default = SiteRangeFilterType.NONE,
         legacy = "siteRangeFilterType",
-        help = "Keep a run of sites by table index (SITES) or by chromosome and position (POSITIONS)",
+        help = "Keep a run of sites by table index or by chromosome and position",
     )
     val startSite by int(default = 0, range = 0..Int.MAX_VALUE, legacy = "startSite", help = "First site to keep")
     val endSite by int(default = 0, range = 0..Int.MAX_VALUE, legacy = "endSite", help = "Last site to keep")
+    val startChr by string(legacy = "startChr", help = "Chromosome of the first site to keep")
+    val endChr by string(legacy = "endChr", help = "Chromosome of the last site to keep")
     val startPosition by int(
         range = 0..Int.MAX_VALUE,
         legacy = "startPos",
@@ -211,13 +210,10 @@ val filterSitesOperation = operation<GenotypeTable, GenotypeTable>(
         // TASSEL 5 FilterSiteBuilderPlugin.preProcessParameters infers the range type from the supplied coordinates.
         val inferred = when {
             rangeFilterType() != SiteRangeFilterType.NONE -> rangeFilterType()
-            startPosition() != null || endPosition() != null -> SiteRangeFilterType.POSITIONS
+            startChr() != null || endChr() != null || startPosition() != null || endPosition() != null ->
+                SiteRangeFilterType.POSITIONS
             startSite() != 0 || endSite() != 0 -> SiteRangeFilterType.SITES
             else -> SiteRangeFilterType.NONE
-        }
-        require(inferred != SiteRangeFilterType.POSITIONS) {
-            "filter-sites cannot filter by position yet: startChr and endChr need a string parameter type in the " +
-                "operation DSL. Call filterSites(table, SiteFilter(...)) directly until that lands."
         }
         filterSites(
             input,
@@ -225,6 +221,10 @@ val filterSitesOperation = operation<GenotypeTable, GenotypeTable>(
                 rangeFilterType = inferred,
                 startSite = startSite(),
                 endSite = endSite(),
+                startChromosome = startChr(),
+                startPosition = startPosition(),
+                endChromosome = endChr(),
+                endPosition = endPosition(),
                 minCount = minCount(),
                 minMaf = minMaf(),
                 maxMaf = maxMaf(),

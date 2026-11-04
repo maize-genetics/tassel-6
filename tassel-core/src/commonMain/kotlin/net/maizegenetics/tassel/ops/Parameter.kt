@@ -15,8 +15,8 @@ import kotlin.reflect.KProperty
  *
  * Inside an operation's `run` block, read the bound value with `parameter()` (see [RunScope]).
  *
- * @param T the Kotlin value type: `Int`, `Double`, `Boolean`, an enum, or `String` (file paths),
- *   nullable for optional parameters without a default.
+ * @param T the Kotlin value type: `Int`, `Double`, `Boolean`, an enum, `String` (text and file
+ *   paths), or `List<String>`, nullable for optional parameters without a default.
  * @property name parameter name, the Kotlin property name (lower camel case).
  * @property help one-line help text shown by the CLI, UI forms, and MCP tool schemas.
  * @property legacy TASSEL 5 command-line name (`PluginParameter.cmdLineName()`), or `null` if the
@@ -265,5 +265,39 @@ internal class FileType(private val kind: FileKind) : ValueType("a path") {
 
     override fun describe(parameter: Parameter<*>) = with(parameter) {
         FileParameterDescriptor(name, help, legacy, required, default as String?, kind)
+    }
+}
+
+internal object StringType : ValueType("text") {
+    override fun parse(text: String): Any = text
+
+    override fun cast(value: Any): Any? = value as? String
+
+    override fun describe(parameter: Parameter<*>) = with(parameter) {
+        StringParameterDescriptor(name, help, legacy, required, default as String?)
+    }
+}
+
+/**
+ * A list written as one comma-separated value, as TASSEL 5 writes `-taxaList W22,B73,CML247,33-16`.
+ * Entries keep their inner spaces and are not trimmed, which is TASSEL 5's `input.trim().split(",")`.
+ *
+ * @see net.maizegenetics.plugindef.AbstractPlugin.convert
+ */
+internal object StringListType : ValueType("a comma-separated list") {
+    override fun parse(text: String): Any = text.trim().split(",")
+
+    override fun cast(value: Any): Any? =
+        (value as? List<*>)?.takeIf { list -> list.all { it is String } }?.map { it as String }
+
+    // An empty entry can only come from a stray or doubled comma, and would match nothing downstream.
+    override fun rangeProblem(value: Any): String? {
+        val index = (value as List<*>).indexOfFirst { (it as String).isBlank() }
+        return if (index < 0) null else "value ${index + 1} of the list is blank"
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    override fun describe(parameter: Parameter<*>) = with(parameter) {
+        StringListParameterDescriptor(name, help, legacy, required, default as List<String>?)
     }
 }

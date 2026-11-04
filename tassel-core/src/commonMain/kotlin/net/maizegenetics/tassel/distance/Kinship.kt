@@ -34,8 +34,8 @@ val kinshipOperation = operation<GenotypeTable, DistanceMatrix>(
     val method by enum(
         default = KinshipMethod.Centered_IBS,
         legacy = "method",
-        help = "The Centered_IBS (Endelman - previously Scaled_IBS) method produces a kinship matrix that is " +
-            "scaled to give a reasonable estimate of additive genetic variance. Uses algorithm " +
+        help = "The centered IBS method (Endelman, previously called scaled IBS) produces a kinship matrix that " +
+            "is scaled to give a reasonable estimate of additive genetic variance. Uses algorithm " +
             "http://www.g3journal.org/content/2/11/1405.full.pdf Equation-13.",
     )
     val maxAlleles by int(
