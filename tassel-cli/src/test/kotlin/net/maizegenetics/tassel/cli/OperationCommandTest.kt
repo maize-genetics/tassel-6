@@ -12,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** A long flag such as `--max-alleles`, or a one-letter short flag. */
@@ -134,23 +135,60 @@ class OperationCommandTest {
     }
 
     @Test
-    fun enumValuesAreAcceptedInTassel5SpellingAndInKebabCase() {
-        val input = tempDirectory("tassel-enum").resolve("in.hmp.txt")
+    fun helpSpellsEveryEnumValueExactlyAsItHasToBeTyped() {
+        // The help formatter lowercases a metavar with no alternatives, which would corrupt a
+        // constant name such as Centered_IBS. Kebab-case values survive it. A Clikt upgrade that
+        // changed how a metavar is rendered would break this test rather than the user's copy-paste.
+        for (operation in registry.operations) {
+            val text = help(operation.id)
+            val enums = operation.descriptor.parameters.filterIsInstance<EnumParameterDescriptor>()
+            for (parameter in enums) {
+                val flag = "--" + kebabCase(parameter.name)
+                val shown = Regex("\\Q$flag\\E=(\\S+)").find(text)?.groupValues?.get(1)
+                assertNotNull(shown, "${operation.id} $flag has no metavar in:\n$text")
+                val offered = shown.trim('<', '>', '(', ')').split("|")
+                assertEquals(parameter.choices.map { kebabCase(it) }, offered, "${operation.id} $flag choices")
+                parameter.default?.let { assertContains(text, "default: ${kebabCase(it)}") }
+            }
+        }
+    }
+
+    @Test
+    fun anEnumValueCopiedOutOfTheHelpTextIsAccepted() {
+        val directory = tempDirectory("tassel-enum")
+        val input = directory.resolve("in.hmp.txt")
         writeHapMap(simulateGenotypes(taxa = 4, sites = 8, seed = 3), input)
-        for (value in listOf("SITES", "sites")) {
+        val shown = Regex("--method=(\\S+)").find(help("kinship"))!!.groupValues[1]
+        val offered = shown.trim('<', '>', '(', ')').split("|")
+        assertEquals(listOf("centered-ibs"), offered)
+
+        for (value in offered) {
             val result = tasselCommand().test(
-                "filter-sites --input $input --range-filter-type $value --start-site 0 --end-site 3 " +
-                    "--output ${input.parent.resolve("out-$value")}",
+                "--quiet kinship --input $input --method $value --output ${directory.resolve(value)}",
             )
             assertEquals(0, result.statusCode, result.output)
         }
     }
 
+    @Test
+    fun theTassel5SpellingOfAnEnumValueIsRejectedWithTheKebabCaseOne() {
+        // -method Centered_IBS is TASSEL 5's; it belongs to `tassel translate` (ADR-0006), so here
+        // it has to fail during parsing with an error naming the spelling this CLI takes.
+        val input = testDataPath("tutorial/mdp_genotype.hmp.txt")
+        val result = tasselCommand().test("kinship --input $input --method Centered_IBS")
+
+        assertEquals(EXIT_USER_ERROR, result.statusCode)
+        val message = result.output.replace(Regex("\\s+"), " ")
+        assertContains(message, "invalid choice: Centered_IBS")
+        assertContains(message, "centered-ibs")
+    }
+
+    /** How `--help` should spell a parameter's default: the way the user would type it. */
     private fun defaultText(parameter: ParameterDescriptor): String? = when (parameter) {
         is IntParameterDescriptor -> parameter.default?.toString()
         is DoubleParameterDescriptor -> parameter.default?.toString()
         is BooleanParameterDescriptor -> parameter.default?.toString()
-        is EnumParameterDescriptor -> parameter.default
+        is EnumParameterDescriptor -> parameter.default?.let { kebabCase(it) }
         is FileParameterDescriptor -> parameter.default
     }
 }

@@ -111,10 +111,10 @@ class OperationCommand(
             is EnumParameterDescriptor -> {
                 val choices = enumChoices(parameter.choices)
                 text(
-                    option(name, help = parameter.help)
-                        .choice(choices, metavar = choiceMetavar(parameter.choices, choices.keys), ignoreCase = true),
-                    parameter.default,
-                    parameter.required,
+                    option(name, help = parameter.help).choice(choices, metavar = choiceMetavar(choices.keys)),
+                    default = parameter.default,
+                    isRequired = parameter.required,
+                    defaultForHelp = parameter.default?.let { kebabCase(it) },
                 )
             }
             is IntParameterDescriptor -> text(
@@ -136,14 +136,18 @@ class OperationCommand(
         }
     }
 
-    /** Registers a string-valued option and returns its value, applying the spec's default if any. */
+    /**
+     * Registers a string-valued option and returns its value, applying the spec's default if any.
+     * [defaultForHelp] is how `--help` spells that default when it is not how the user types it.
+     */
     private fun text(
         option: OptionWithValues<String?, String, String>,
         default: String? = null,
         isRequired: Boolean = false,
+        defaultForHelp: String? = null,
     ): () -> String? {
         if (default != null) {
-            val withDefault = option.default(default)
+            val withDefault = option.default(default, defaultForHelp ?: default)
             registerOption(withDefault)
             return { withDefault.value }
         }
@@ -158,26 +162,27 @@ class OperationCommand(
 }
 
 /**
- * Enum values the CLI accepts: the spec's constant names, which TASSEL 5 also accepts
- * (`-method Centered_IBS`), plus a kebab-case spelling where that differs
- * (`--method centered-ibs`, as `.cursor/rules/cli.mdc` writes it). Matching ignores letter case.
- * Either way the engine is sent the constant name, which is the only form the spec parses.
+ * The only spelling the CLI accepts for an enum value: the spec's constant name in kebab-case
+ * (`--method centered-ibs`), which is the house style in `.cursor/rules/cli.mdc`. TASSEL 5's own
+ * spelling (`-method Centered_IBS`) belongs to `tassel translate` under ADR-0006, not here. The
+ * engine is sent the constant name, which is the only form the spec parses.
+ *
+ * @return accepted value to constant name.
  */
-private fun enumChoices(choices: List<String>): Map<String, String> = buildMap {
-    for (choice in choices) {
-        put(choice, choice)
-        val kebab = kebabCase(choice)
-        if (!kebab.equals(choice, ignoreCase = true)) put(kebab, choice)
-    }
+private fun enumChoices(choices: List<String>): Map<String, String> {
+    val accepted = choices.associateBy { kebabCase(it) }
+    require(accepted.size == choices.size) { "enum constants share a kebab-case spelling: $choices" }
+    return accepted
 }
 
 /**
- * What `--help` shows for an enum: the spec's constant names, which are also what TASSEL 5 accepts.
- * A one-constant enum lists its kebab-case alias too, because the help formatter lowercases a
- * metavar that offers no alternatives, and `(centered_ibs)` would be the wrong spelling to show.
+ * What `--help` shows for an enum. The accepted values are kebab-case and so already lowercase,
+ * which is what makes this safe: the help formatter lowercases a metavar that offers no
+ * alternatives, and lowercasing a kebab-case value cannot change it. So the help always spells a
+ * value exactly as it has to be typed, whether there is one choice or several.
  */
-private fun choiceMetavar(choices: List<String>, accepted: Set<String>): String =
-    (if (choices.size > 1) choices else accepted.toList()).joinToString("|", "(", ")")
+private fun choiceMetavar(accepted: Collection<String>): String =
+    if (accepted.size == 1) accepted.first() else accepted.joinToString("|", "(", ")")
 
 /** Spells out the spec's inclusive range, which `--help` would otherwise not show. */
 private fun withRange(help: String, min: Any?, max: Any?): String = when {
