@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.ops
 
+import net.maizegenetics.tassel.distance.kinshipOperation
 import net.maizegenetics.tassel.filter.filterSitesOperation
 import net.maizegenetics.tassel.filter.filterTaxaOperation
 
@@ -17,7 +18,7 @@ object TasselOperations {
             // summaryOperation,     // #15 GenotypeSummaryPlugin
             filterSitesOperation, // #16 FilterSiteBuilderPlugin
             filterTaxaOperation, // #16 FilterTaxaBuilderPlugin
-            // kinshipOperation,     // #18 KinshipPlugin
+            kinshipOperation, // #18 KinshipPlugin
             // pcaOperation,         // #19 PrincipalComponentsPlugin
         )
 }
