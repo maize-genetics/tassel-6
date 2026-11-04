@@ -23,6 +23,8 @@ val testDataDir = rootProject.layout.projectDirectory.dir("testdata")
 tasks.withType<Test>().configureEach {
     inputs.dir(testDataDir).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("testData")
     environment("TASSEL_TESTDATA_DIR", testDataDir.asFile.absolutePath)
+    // Same reason as applicationDefaultJvmArgs: Mordant loads JNA to look at the terminal.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
 application {
