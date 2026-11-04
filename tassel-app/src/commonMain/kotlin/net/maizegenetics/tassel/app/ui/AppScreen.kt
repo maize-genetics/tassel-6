@@ -24,56 +24,77 @@ import net.maizegenetics.tassel.app.grid.GenotypeGrid
 import net.maizegenetics.tassel.app.state.Activity
 import net.maizegenetics.tassel.app.state.AppEvent
 import net.maizegenetics.tassel.app.state.AppState
+import net.maizegenetics.tassel.app.state.Showing
 import net.maizegenetics.tassel.app.theme.LocalAlleleColors
+import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.tasselVersion
 
 /** Width of the data tree pane. */
 private val TREE_WIDTH = 260.dp
 
-/** The one screen the app has: the data tree on the left, the grid for the selected dataset on the right. */
+/** Width of the analysis form pane, when one is open. */
+private val FORM_WIDTH = 320.dp
+
+/** The one screen the app has: the data tree, the grid or result for what is selected, and the open form. */
 @Composable
 fun AppScreen(state: AppState, onEvent: (AppEvent) -> Unit) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxSize()) {
-            DataTree(
-                datasets = state.datasets,
-                selectedId = state.selectedId,
-                busy = state.activity is Activity.Loading,
-                onEvent = onEvent,
-                modifier = Modifier.width(TREE_WIDTH),
-            )
+            DataTree(state = state, onEvent = onEvent, modifier = Modifier.width(TREE_WIDTH))
             VerticalDivider()
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.weight(1f).fillMaxSize()) {
                 when (val activity = state.activity) {
-                    is Activity.Loading -> LoadingBanner(activity)
+                    is Activity.Loading -> ProgressBanner(activity.progress, "Reading ${activity.name}", null, onEvent)
+                    is Activity.Running ->
+                        ProgressBanner(activity.progress, "Running ${activity.operationId}", AppEvent.Cancel, onEvent)
                     is Activity.Failed -> FailureBanner(activity, onEvent)
                     Activity.Idle -> Unit
                 }
-                val selected = state.selected
-                if (selected == null) {
-                    EmptyPane()
-                } else {
-                    GridHeader(selected.name, selected.dimensions)
-                    GenotypeGrid(selected.table, modifier = Modifier.fillMaxSize())
-                }
+                Content(state, onEvent)
+            }
+            val form = state.form
+            if (form != null) {
+                VerticalDivider()
+                AnalysisFormPane(
+                    form = form,
+                    running = state.busy,
+                    onEvent = onEvent,
+                    modifier = Modifier.width(FORM_WIDTH),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun LoadingBanner(activity: Activity.Loading) {
+private fun Content(state: AppState, onEvent: (AppEvent) -> Unit) {
+    val showing = state.showing
+    val result = state.selectedResult
+    val dataset = state.selected
+    when {
+        showing is Showing.Result && result != null -> ResultPane(result, showing.part, onEvent)
+        dataset != null -> {
+            GridHeader(dataset.name, dataset.dimensions)
+            GenotypeGrid(dataset.table, modifier = Modifier.fillMaxSize())
+        }
+        else -> EmptyPane()
+    }
+}
+
+/** Progress of whatever is in flight, with a cancel button when the work can be cancelled. */
+@Composable
+private fun ProgressBanner(progress: Progress, title: String, cancel: AppEvent?, onEvent: (AppEvent) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-        Text(
-            activity.progress.message ?: "Reading ${activity.name}",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        // The reader does not know the site count until the end, so an unknown total gets an indeterminate bar.
-        if (activity.progress.total == 0L) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(progress.message ?: title, style = MaterialTheme.typography.bodySmall)
+            if (cancel != null) TextButton(onClick = { onEvent(cancel) }) { Text("Cancel") }
+        }
+        // Neither the reader nor every operation knows its total up front, so an unknown total is indeterminate.
+        if (progress.total == 0L) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else {
             LinearProgressIndicator(
-                progress = { activity.progress.fraction.toFloat() },
+                progress = { progress.fraction.toFloat() },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -89,7 +110,7 @@ private fun FailureBanner(activity: Activity.Failed, onEvent: (AppEvent) -> Unit
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Could not read ${activity.name}: ${activity.message}",
+                "${activity.name} failed: ${activity.message}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.fillMaxWidth(DISMISSIBLE_TEXT_FRACTION),
@@ -108,7 +129,7 @@ private fun EmptyPane() {
         ) {
             Text("TASSEL ${tasselVersion()}", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Load the tutorial dataset to see the genotype grid.",
+                "Load the tutorial dataset, then pick an analysis.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
