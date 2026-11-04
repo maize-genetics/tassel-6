@@ -42,6 +42,7 @@ targets), `bridged`, `retired`.
 | `util/DoubleFormat.java` | `table.DoubleFormat` | port | every numeric cell of `summary/*.full.txt` and `pca/*.full.txt` against its rounded twin (`DoubleFormatGoldenTest`) | parity | #38 |
 | `java.lang.Float.toString`, `Double.toString` (how TASSEL writes float matrix cells and quantitative annotations) | `table.floatToString`, `table.doubleToString` | port | the kinship golden's cells and `SumPk` (`CenteredIbsTest`); 400,000 values against the JVM (`ShortestDecimalJvmTest`) | parity | #18 |
 | `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | in progress | #11 |
+| `pipeline/TasselPipeline.java` (`-h`, `-export`, `-exportType`, and the per-plugin flags it builds from `PluginParameter`) | `tassel-cli`: one subcommand per registered operation, generated from the specs (ADR-0002, ADR-0006) | redesign | `golden/kinship/centered_ibs.txt` written by `tassel kinship`, exact (`KinshipEndToEndTest`) | parity (JVM, the CLI's only target) | #20 |
 | `pipeline/TasselPipeline.java` | `tassel translate` (ADR-0006) | redesign | translated commands give golden outputs | planned (stretch) | |
 
 ### Filter parameters not ported yet (#16)
