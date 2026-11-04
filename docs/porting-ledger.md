@@ -30,6 +30,7 @@ targets), `bridged`, `retired`.
 | `analysis/data/GenotypeSummaryPlugin.java` | `summary` operation | port | overall, site, and taxa summary tables | planned | |
 | `analysis/filter/FilterSiteBuilderPlugin.java`, `dna/snp/FilterSite.java` | `filter-sites` operation | port | MAF, count, and het filters | planned | |
 | `analysis/filter/FilterTaxaBuilderPlugin.java`, `dna/snp/FilterTaxa.java` | `filter-taxa` operation | port | coverage and het filters | planned | |
+| `matrixalgebra/decomposition/SymmetricEigenvalueDecomposition.java` | `math.SymmetricEigenDecomposition` | port | R `prcomp` values from `PrinCompTest`, through the Gram matrix (`PrinCompOracleTest`); PCA goldens in #19 | in progress | #17 |
 | `analysis/distance/KinshipPlugin.java`, `analysis/distance/EndelmanDistanceMatrix.java` | `kinship` operation (Centered IBS) | port | `Centered_IBS_Matrix.txt`, tol `8e-6` | planned | |
 | `taxa/distance/DistanceMatrix.java`, `WriteDistanceMatrix.java` | kinship matrix type and writer | port | text output matches | planned | |
 | `analysis/data/PrincipalComponentsPlugin.java`, `stats/PCA/PrinComp.java` | `pca` operation (Gram-matrix eigen) | port | eigenvalues, vectors up to sign | planned | |
