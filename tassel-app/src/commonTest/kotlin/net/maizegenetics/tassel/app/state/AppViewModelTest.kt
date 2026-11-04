@@ -4,9 +4,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import net.maizegenetics.tassel.app.testing.FakeGenotypeFiles
+import net.maizegenetics.tassel.app.testing.RecordingResultFiles
 import net.maizegenetics.tassel.app.testing.SMALL_HAPMAP
 import net.maizegenetics.tassel.app.testing.TextGenotypeFile
 import net.maizegenetics.tassel.app.testing.hapMapText
+import net.maizegenetics.tassel.app.testing.testEngine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -17,10 +19,10 @@ import kotlin.test.assertTrue
 class AppViewModelTest {
     @Test
     fun theTreeStartsEmpty() = runTest {
-        val state = AppViewModel(FakeGenotypeFiles(), this).state.value
+        val state = AppViewModel(FakeGenotypeFiles(), testEngine(), RecordingResultFiles(), this).state.value
 
         assertEquals(emptyList(), state.datasets)
-        assertNull(state.selectedId)
+        assertEquals(Showing.Nothing, state.showing)
         assertNull(state.selected)
         assertEquals(Activity.Idle, state.activity)
     }
@@ -28,7 +30,7 @@ class AppViewModelTest {
     @Test
     fun loadingTheTutorialDatasetAddsItAndSelectsIt() = runTest {
         val files = FakeGenotypeFiles(tutorial = TextGenotypeFile("mdp_genotype.hmp.txt", SMALL_HAPMAP))
-        val viewModel = AppViewModel(files, this)
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenTutorial)
         testScheduler.advanceUntilIdle()
@@ -45,7 +47,7 @@ class AppViewModelTest {
     fun loadingShowsProgressUntilTheReaderFinishes() = runTest {
         val gate = CompletableDeferred<Unit>()
         val file = TextGenotypeFile("big.hmp.txt", SMALL_HAPMAP) { gate.await() }
-        val viewModel = AppViewModel(FakeGenotypeFiles(tutorial = file), this)
+        val viewModel = AppViewModel(FakeGenotypeFiles(tutorial = file), testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenTutorial)
 
@@ -63,19 +65,19 @@ class AppViewModelTest {
     @Test
     fun cancellingTheChooserChangesNothing() = runTest {
         val files = FakeGenotypeFiles(chosen = null)
-        val viewModel = AppViewModel(files, this)
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenFile)
         testScheduler.advanceUntilIdle()
 
         assertEquals(1, files.chooseRequests)
-        assertEquals(AppState(), viewModel.state.value)
+        assertEquals(AppState(operations = viewModel.state.value.operations), viewModel.state.value)
     }
 
     @Test
     fun aFileThatCannotBeReadIsReportedAndDismissible() = runTest {
         val files = FakeGenotypeFiles(chosen = TextGenotypeFile("notes.txt", "not a genotype file\n"))
-        val viewModel = AppViewModel(files, this)
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenFile)
         testScheduler.advanceUntilIdle()
@@ -96,7 +98,8 @@ class AppViewModelTest {
         val gate = CompletableDeferred<Unit>()
         val slow = TextGenotypeFile("slow.hmp.txt", SMALL_HAPMAP) { gate.await() }
         val quick = TextGenotypeFile("quick.hmp.txt", hapMapText(listOf("a"), listOf("A")))
-        val viewModel = AppViewModel(FakeGenotypeFiles(tutorial = slow, chosen = quick), this)
+        val files = FakeGenotypeFiles(tutorial = slow, chosen = quick)
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenTutorial)
         viewModel.handle(AppEvent.OpenFile)
@@ -133,6 +136,7 @@ class AppViewModelTest {
 
         assertEquals(emptyList(), viewModel.state.value.datasets)
         assertNull(viewModel.state.value.selected)
+        assertEquals(Showing.Nothing, viewModel.state.value.showing)
     }
 
     @Test
@@ -149,7 +153,8 @@ class AppViewModelTest {
     private fun loadedTwice(scope: TestScope): AppViewModel {
         val first = TextGenotypeFile("first.hmp.txt", SMALL_HAPMAP)
         val second = TextGenotypeFile("second.hmp.txt", SMALL_HAPMAP)
-        val viewModel = AppViewModel(FakeGenotypeFiles(tutorial = first, chosen = second), scope)
+        val files = FakeGenotypeFiles(tutorial = first, chosen = second)
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), scope)
         viewModel.handle(AppEvent.OpenTutorial)
         scope.testScheduler.advanceUntilIdle()
         viewModel.handle(AppEvent.OpenFile)
