@@ -56,6 +56,9 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "net.maizegenetics.tassel.app.MainKt"
+        // Skiko loads its native renderer with System.load; JDK 25 warns unless native access is granted, and a
+        // future JDK will block it outright. Same reason as tassel-cli's applicationDefaultJvmArgs for JNA.
+        jvmArgs += "--enable-native-access=ALL-UNNAMED"
         // Compose runs and packages with the Gradle JVM unless told to use the toolchain.
         javaHome = javaToolchains
             .launcherFor { languageVersion = JavaLanguageVersion.of(libs.versions.jdk.get()) }
