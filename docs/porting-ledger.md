@@ -33,6 +33,9 @@ targets), `bridged`, `retired`.
 | `analysis/distance/KinshipPlugin.java`, `analysis/distance/EndelmanDistanceMatrix.java` | `kinship` operation (Centered IBS) | port | `Centered_IBS_Matrix.txt`, tol `8e-6` | planned | |
 | `taxa/distance/DistanceMatrix.java`, `WriteDistanceMatrix.java` | kinship matrix type and writer | port | text output matches | planned | |
 | `analysis/data/PrincipalComponentsPlugin.java`, `stats/PCA/PrinComp.java` | `pca` operation (Gram-matrix eigen) | port | eigenvalues, vectors up to sign | planned | |
+| `util/TableReport.java`, `util/SimpleTableReport.java` | `table.ResultTable`, `table.ResultTableBuilder` | redesign | via the summary and PCA table goldens (#15, #19) | in progress | #38 |
+| `util/TableReportUtils.java` (`saveDelimitedTableReport`) | `table.ResultTable.writeDelimited` | port | `summary/alleles.txt` written from its values (`ResultTableTest`) | parity | #38 |
+| `util/DoubleFormat.java` | `table.DoubleFormat` | port | every numeric cell of `summary/*.full.txt` and `pca/*.full.txt` against its rounded twin (`DoubleFormatGoldenTest`) | parity | #38 |
 | `plugindef/PluginParameter.java`, `plugindef/AbstractPlugin.java` | operation spec DSL (ADR-0002) | redesign | n/a | in progress | #11 |
 | `pipeline/TasselPipeline.java` | `tassel translate` (ADR-0006) | redesign | translated commands give golden outputs | planned (stretch) | |
 
