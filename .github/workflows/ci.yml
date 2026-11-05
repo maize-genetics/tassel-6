@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Every pull request, whatever it targets. Stacked PRs target the branch below them, and GitHub
+  # retargets them when that branch merges; a base filter would leave them with no CI at all, since
+  # a retarget fires `edited`, which `pull_request` does not trigger on.
   pull_request:
-    branches: [develop, main]
   push:
     branches: [develop]
 
