@@ -1,0 +1,25 @@
+---
+description: Gradle build conventions (version catalog, KMP targets, toolchain)
+globs: **/*.gradle.kts,gradle/libs.versions.toml,gradle.properties
+alwaysApply: false
+---
+
+# Build conventions
+
+- All versions live in `gradle/libs.versions.toml`. Reference them as
+  `libs.<alias>`; never hard-code a version in a module build script.
+- JVM toolchain is JDK 25 (ADR-0011). Do not lower it for a single module.
+- `tassel-core` targets: `jvm`, `wasmJs { browser(); nodejs() }`, `macosArm64`,
+  `linuxX64`. Adding or dropping a target needs an ADR.
+- Keep the configuration cache working. No `project.` access at execution
+  time, no eager task creation (`tasks.register`, not `tasks.create`).
+- New dependencies must be declared in the PR description. Dependencies in
+  `commonMain` must publish all four core targets.
+
+```kotlin
+// BAD
+implementation("com.github.ajalt.clikt:clikt:5.0.3")
+
+// GOOD
+implementation(libs.clikt)
+```

@@ -20,8 +20,8 @@ bindings.
 
 ## Repository layout
 
-The repo is currently a single-module JVM skeleton. The target layout, landing
-with the `kmp-skeleton` task, is:
+The `kmp-skeleton` task created the first three modules below; the rest land
+with later tasks:
 
 | Path | Contents |
 |------|----------|
@@ -107,12 +107,21 @@ At the end of a session:
 
 ## Verification
 
-Commands become available as the `kmp-skeleton` task lands:
+Gradle provisions the JDK 25 toolchain if it is not installed. Native tests run
+only on a matching host: `macosArm64Test` needs a Mac with full Xcode (Command
+Line Tools alone cannot link), and `linuxX64Test` needs Linux.
+
+CI requires `linuxX64Test`; it is the native parity gate. `macosArm64Test` is
+advisory for the PoC because GitHub's hosted macOS runners frequently fail to
+acquire a runner, so it does not gate merges and does not belong in a "Done
+when" list. Do not poll or wait on it. Phase 4 bindings work restores it as a
+required check.
 
 ```bash
 ./gradlew :tassel-core:allTests        # jvm, wasmJs (Node), native tests
 ./gradlew :tassel-core:jvmTest         # fast inner loop
 ./gradlew check                        # everything CI runs
+./gradlew check -x macosArm64Test      # on a Mac without full Xcode
 ./gradlew :tassel-cli:run --args="--help"
 ./gradlew :tassel-app:run              # desktop
 ./gradlew :tassel-app:wasmJsBrowserDevelopmentRun   # web

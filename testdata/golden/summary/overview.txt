@@ -1,0 +1,16 @@
+Stat Type	Value
+Number of Taxa	281
+Number of Sites	3093
+Sites x Taxa	869133
+Number Not Missing	837722
+Proportion Not Missing	0.96386
+Number Missing	31411
+Proportion Missing	0.03614
+Number Gametes	1.7383E6
+Gametes Not Missing	1.6754E6
+Proportion Gametes Not Missing	0.96386
+Gametes Missing	62822
+Proportion Gametes Missing	0.03614
+Number Heterozygous	9622
+Proportion Heterozygous	0.01107
+Average Minor Allele Frequency	0.21914

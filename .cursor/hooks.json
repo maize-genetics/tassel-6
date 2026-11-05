@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "python3 .cursor/hooks/guard-common-main.py",
+        "matcher": "Write|StrReplace|Edit|MultiEdit",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "bash .cursor/hooks/fast-tests-on-stop.sh",
+        "timeout": 900,
+        "loop_limit": 2
+      }
+    ]
+  }
+}

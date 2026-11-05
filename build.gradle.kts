@@ -1,24 +1,15 @@
 plugins {
-    kotlin("jvm") version "2.4.21"
-    application
-}
-
-repositories {
-    mavenCentral()
+    alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.compose.multiplatform) apply false
+    alias(libs.plugins.ktlint)
+    alias(libs.plugins.kover)
 }
 
 dependencies {
-    testImplementation(kotlin("test"))
-}
-
-kotlin {
-    jvmToolchain(21)
-}
-
-application {
-    mainClass = "net.maizegenetics.tassel.MainKt"
-}
-
-tasks.test {
-    useJUnitPlatform()
+    kover(project(":tassel-core"))
+    kover(project(":tassel-cli"))
+    kover(project(":tassel-app"))
 }

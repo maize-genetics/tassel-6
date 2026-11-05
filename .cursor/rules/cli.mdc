@@ -1,0 +1,34 @@
+---
+description: Clikt CLI conventions for tassel-cli
+globs: tassel-cli/**/*.kt
+alwaysApply: false
+---
+
+# CLI is generated from operation specs
+
+- Each analysis subcommand comes from its operation spec in `tassel-core`.
+  Do not hand-write a subcommand for an operation that has a spec; fix the
+  generator or the spec.
+- Hand-written commands are limited to infrastructure: `dev simulate`,
+  `translate` (legacy `run_pipeline.pl` syntax), `serve`, `mcp`.
+
+# Conventions (follow phg_v2)
+
+- Command names are kebab-case verbs/nouns: `filter-sites`, `kinship`, `pca`.
+- Options are kebab-case long flags (`--min-maf`), with the spec's help text
+  and default shown in `--help`.
+- Logging goes to stderr; results go to files or stdout. Exit codes: 0 success,
+  1 user error (bad input or options), 2 internal error.
+- Output files use the TASSEL 5 text formats so results diff cleanly against
+  TASSEL 5 and load in existing tools.
+
+```bash
+tassel filter-sites --input mdp_genotype.hmp.txt --min-maf 0.05 --output filtered.hmp.txt
+tassel kinship --input filtered.hmp.txt --method centered-ibs --output kinship.txt
+```
+
+# Legacy translation
+
+`tassel translate` maps TASSEL 5 plugin flags to TASSEL 6 commands using the
+`legacy = "..."` names on spec parameters. Unknown plugins report that they
+need the TASSEL 5 bridge rather than failing silently.

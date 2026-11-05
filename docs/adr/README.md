@@ -25,3 +25,6 @@ sequentially; use a short kebab-case title.
 | [0014](0014-agentic-mcp-support.md) | Agent support: local MCP server, in-app assistant, CLI skill | Accepted |
 | [0015](0015-pangenome-complements.md) | Pangenome complements: consume grits/ropebwt3-phg outputs and add a viewer | Accepted |
 | [0016](0016-agentic-development-workflow.md) | Agent-driven development workflow | Accepted |
+| [0017](0017-kotlinx-io-core-io.md) | kotlinx-io for core I/O | Accepted |
+| [0018](0018-string-parameters-in-the-operation-dsl.md) | String and string-list parameters in the operation DSL | Accepted |
+| [0019](0019-suspending-progress-reports.md) | Progress reports suspend, putting a yield point inside long-running core work | Proposed |
