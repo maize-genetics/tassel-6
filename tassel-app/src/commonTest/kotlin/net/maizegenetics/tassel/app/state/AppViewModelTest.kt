@@ -1,14 +1,17 @@
 package net.maizegenetics.tassel.app.state
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import net.maizegenetics.tassel.app.testing.FakeGenotypeFiles
 import net.maizegenetics.tassel.app.testing.RecordingResultFiles
+import net.maizegenetics.tassel.app.testing.ReleaseRecordingEngine
 import net.maizegenetics.tassel.app.testing.SMALL_HAPMAP
 import net.maizegenetics.tassel.app.testing.TextGenotypeFile
 import net.maizegenetics.tassel.app.testing.hapMapText
 import net.maizegenetics.tassel.app.testing.testEngine
+import net.maizegenetics.tassel.ops.Progress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -60,6 +63,43 @@ class AppViewModelTest {
         testScheduler.advanceUntilIdle()
         assertEquals(Activity.Idle, viewModel.state.value.activity)
         assertEquals(1, viewModel.state.value.datasets.size)
+    }
+
+    @Test
+    fun theLoadingBannerCarriesTheReadersProgress() = runTest {
+        // The reports exist whether or not anyone draws them; this is the half an agent can check. That they
+        // reach the screen on the browser's one thread is ADR-0019's yield, and the maintainer's eyes.
+        val file = TextGenotypeFile("big.hmp.txt", hapMapText(listOf("a"), List(1000) { "A" }))
+        val viewModel = AppViewModel(FakeGenotypeFiles(tutorial = file), testEngine(), RecordingResultFiles(), this)
+        val seen = mutableListOf<Progress>()
+        backgroundScope.launch {
+            viewModel.state.collect { state -> (state.activity as? Activity.Loading)?.let { seen += it.progress } }
+        }
+
+        viewModel.handle(AppEvent.OpenTutorial)
+        testScheduler.advanceUntilIdle()
+
+        // A watcher sharing the reader's thread only gets a turn because the reader gives it one.
+        assertTrue(seen.size > 1, "progress never changed while loading: $seen")
+        assertEquals(1, viewModel.state.value.datasets.size)
+    }
+
+    @Test
+    fun closingADatasetGivesItsDataBackToTheEngine() = runTest {
+        val engine = ReleaseRecordingEngine()
+        val files = FakeGenotypeFiles(tutorial = TextGenotypeFile("mdp_genotype.hmp.txt", SMALL_HAPMAP))
+        val viewModel = AppViewModel(files, engine, RecordingResultFiles(), this)
+        viewModel.handle(AppEvent.OpenTutorial)
+        testScheduler.advanceUntilIdle()
+        // Running once is what makes the engine hold the dataset: the handle is created on first use.
+        viewModel.handle(AppEvent.ShowForm("summary"))
+        viewModel.handle(AppEvent.Run)
+        testScheduler.advanceUntilIdle()
+
+        viewModel.handle(AppEvent.Close(viewModel.state.value.datasets.single().id))
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(1, engine.released.size, "released handles: ${engine.released}")
     }
 
     @Test

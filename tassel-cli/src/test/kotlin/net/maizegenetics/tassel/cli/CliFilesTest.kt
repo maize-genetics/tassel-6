@@ -2,6 +2,7 @@ package net.maizegenetics.tassel.cli
 
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.testing.test
+import kotlinx.coroutines.runBlocking
 import net.maizegenetics.tassel.analysis.genotypeSummary
 import net.maizegenetics.tassel.distance.centeredIbs
 import kotlin.io.path.exists
@@ -16,7 +17,7 @@ class CliFilesTest {
     private val table = simulateGenotypes(taxa = 6, sites = 12, seed = 5)
 
     @Test
-    fun theExtensionIsAppendedUnlessTheBaseAlreadyHasIt() {
+    fun theExtensionIsAppendedUnlessTheBaseAlreadyHasIt() = runBlocking {
         assertEquals("kinship.txt", outputPath("kinship", null, TEXT_EXTENSION))
         assertEquals("kinship.txt", outputPath("kinship.txt", null, TEXT_EXTENSION))
         assertEquals("out/filtered.hmp.txt", outputPath("out/filtered", null, HAPMAP_EXTENSION))
@@ -24,13 +25,13 @@ class CliFilesTest {
     }
 
     @Test
-    fun aResultWithSeveralPartsNamesEachOne() {
+    fun aResultWithSeveralPartsNamesEachOne() = runBlocking {
         assertEquals("run.sites.txt", outputPath("run", "sites", TEXT_EXTENSION))
         assertEquals("run.sites.txt", outputPath("run.txt", "sites", TEXT_EXTENSION))
     }
 
     @Test
-    fun eachResultTypeKnowsWhatFilesItBecomes() {
+    fun eachResultTypeKnowsWhatFilesItBecomes() = runBlocking {
         assertEquals(listOf(null to HAPMAP_EXTENSION), outputParts(table).map { it.part to it.extension })
         assertEquals(
             listOf(null to TEXT_EXTENSION),
@@ -43,14 +44,14 @@ class CliFilesTest {
     }
 
     @Test
-    fun aResultNothingCanWriteIsAnInternalError() {
+    fun aResultNothingCanWriteIsAnInternalError() = runBlocking {
         val failure = assertFailsWith<CliktError> { outputParts("not a result") }
         assertContains(failure.message!!, "no writer for a String result")
         assertEquals(EXIT_INTERNAL_ERROR, failure.statusCode)
     }
 
     @Test
-    fun onlyTheRequestedSummaryTablesAreWritten() {
+    fun onlyTheRequestedSummaryTablesAreWritten() = runBlocking {
         val directory = tempDirectory("tassel-summary-parts")
         val input = directory.resolve("in.hmp.txt")
         writeHapMap(table, input)
@@ -66,7 +67,7 @@ class CliFilesTest {
     }
 
     @Test
-    fun aMissingOutputDirectoryIsCreated() {
+    fun aMissingOutputDirectoryIsCreated() = runBlocking {
         val directory = tempDirectory("tassel-mkdir")
         val input = directory.resolve("in.hmp.txt")
         writeHapMap(table, input)

@@ -53,7 +53,7 @@ data class TaxaFilter(
  * @see net.maizegenetics.analysis.filter.FilterByTaxa
  * @see net.maizegenetics.analysis.filter.FilterTaxaBuilderPlugin
  */
-fun filterTaxa(
+suspend fun filterTaxa(
     table: GenotypeTable,
     filter: TaxaFilter,
     progress: ProgressReporter = ProgressReporter.None,
@@ -153,7 +153,7 @@ private fun namedTaxa(taxa: TaxaList, filter: TaxaFilter): IntArray {
  * two [net.maizegenetics.tassel.genotype.AlleleStats] counts TASSEL 5's taxon filter uses, so
  * `FilterTaxaTest.statisticsMatchAlleleStats` checks them against `GenotypeTable.taxonStats`.
  */
-private fun keepByStats(
+private suspend fun keepByStats(
     table: GenotypeTable,
     filter: TaxaFilter,
     selected: IntArray,

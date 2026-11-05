@@ -38,7 +38,7 @@ const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
  * @throws kotlinx.io.IOException if the file cannot be read.
  * @throws IllegalArgumentException if it is not a file, or is in a format nothing can read yet.
  */
-fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
+suspend fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
     val file = Path(path)
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
@@ -60,7 +60,7 @@ fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.No
  * @property part file name suffix for one of several results, or `null` when there is only one.
  * @property extension TASSEL 5's extension for this kind of file.
  */
-internal class OutputPart(val part: String?, val extension: String, val write: (Sink) -> Unit)
+internal class OutputPart(val part: String?, val extension: String, val write: suspend (Sink) -> Unit)
 
 /**
  * The files [result] becomes. An operation's output type decides them, so adding an operation whose
@@ -99,7 +99,7 @@ private fun tablePart(part: String, table: ResultTable) =
  * unless the base already ends with it, and a result with several parts puts the part name in
  * between (`--output run` gives `run.overview.txt`, `run.sites.txt`, and so on).
  */
-internal fun writeResult(result: Any, output: String?, progress: ProgressReporter = ProgressReporter.None) {
+internal suspend fun writeResult(result: Any, output: String?, progress: ProgressReporter = ProgressReporter.None) {
     val parts = outputParts(result, progress)
     if (output == null) {
         val sink = System.out.asSink().buffered()

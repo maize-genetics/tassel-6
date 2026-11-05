@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.Buffer
 import kotlinx.io.readString
 import kotlinx.io.writeString
@@ -7,7 +8,9 @@ import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.Nucleotide
+import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.testing.GoldenManifest
+import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.Tolerance
 import kotlin.test.Test
@@ -22,7 +25,7 @@ import kotlin.test.assertTrue
  */
 class HapMapTest {
     @Test
-    fun readsTutorialDimensions() {
+    fun readsTutorialDimensions() = runTest {
         val table = readTutorial()
         assertEquals(281, table.numberOfTaxa)
         assertEquals(3093, table.numberOfSites)
@@ -33,7 +36,7 @@ class HapMapTest {
     }
 
     @Test
-    fun readsTutorialPositions() {
+    fun readsTutorialPositions() = runTest {
         val table = readTutorial()
         val first = table.positions[0]
         assertEquals("PZB00859.1", first.name)
@@ -47,7 +50,7 @@ class HapMapTest {
     }
 
     @Test
-    fun readsTutorialGenotypes() {
+    fun readsTutorialGenotypes() = runTest {
         val table = readTutorial()
         // Site 0 of the input reads CC for 33-16, AA for A188, NN for CML328, and AC for A654.
         assertEquals(Nucleotide.genotype("CC"), table.genotype(0, 0))
@@ -59,7 +62,18 @@ class HapMapTest {
     }
 
     @Test
-    fun writesTassel5Export() {
+    fun reportsProgressWhileParsingNotOnlyAtTheEnd() = runTest {
+        // Each report is a suspension point (ADR-0019), so reporting only once at the end would leave a
+        // single-threaded caller frozen for the whole parse. 3,093 sites at one report per 256 is twelve.
+        val reports = mutableListOf<Progress>()
+        HapMap.read(Buffer().also { it.write(TestData.readBytes(TUTORIAL)) }) { reports += it }
+
+        assertTrue(reports.size >= 12, "reports during the parse: ${reports.size}")
+        assertEquals(Progress(3093, 3093, "Reading HapMap"), reports.last())
+    }
+
+    @Test
+    fun writesTassel5Export() = runTest {
         assertEquals(Tolerance.Exact(), GoldenManifest.load().tolerance(GOLDEN))
         val written = Buffer().also { HapMap.write(readTutorial(), it) }.readString().lines()
         val golden = TestData.readText(GOLDEN).replace("\r\n", "\n").lines()
@@ -70,7 +84,7 @@ class HapMapTest {
     }
 
     @Test
-    fun readingBackWhatWasWrittenGivesTheSameFile() {
+    fun readingBackWhatWasWrittenGivesTheSameFile() = runTest {
         // One IUPAC character per genotype loses allele order, so A/C and C/A both come back as A/C; writing the
         // re-read table must still give the same file.
         val table = readTutorial()
@@ -82,14 +96,14 @@ class HapMapTest {
     }
 
     @Test
-    fun readsOneLetterGenotypes() {
+    fun readsOneLetterGenotypes() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A/C", "1", "10", "A", "M"))
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
         assertEquals(Nucleotide.genotype("AC"), table.genotype(1, 0))
     }
 
     @Test
-    fun readsTwoLetterGenotypes() {
+    fun readsTwoLetterGenotypes() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A/C", "1", "10", "AA", "CA"))
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
         // Reversed, as in TASSEL 5: the second character becomes the first allele.
@@ -97,7 +111,7 @@ class HapMapTest {
     }
 
     @Test
-    fun readsIndelsAndMissingGenotypes() {
+    fun readsIndelsAndMissingGenotypes() = runTest {
         val table = read(header("T1", "T2", "T3"), site("s1", "+/-", "1", "10", "+", "0", "N"))
         assertEquals(Nucleotide.genotype("++"), table.genotype(0, 0))
         assertEquals(Nucleotide.genotype("-+"), table.genotype(1, 0))
@@ -105,7 +119,7 @@ class HapMapTest {
     }
 
     @Test
-    fun skipsAnnotationLines() {
+    fun skipsAnnotationLines() = runTest {
         val table = read(
             "##fileformat=HapMap",
             "##SAMPLE=<ID=T1,Project=test>",
@@ -116,7 +130,7 @@ class HapMapTest {
     }
 
     @Test
-    fun sortsSitesThatAreOutOfOrder() {
+    fun sortsSitesThatAreOutOfOrder() = runTest {
         val table = read(
             header("T1"),
             site("s3", "A/C", "2", "5", "A"),
@@ -128,21 +142,21 @@ class HapMapTest {
     }
 
     @Test
-    fun writesTwoLetterGenotypesWhenAsked() {
+    fun writesTwoLetterGenotypesWhenAsked() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A/C", "1", "10", "A", "M"))
         val written = Buffer().also { HapMap.write(table, it, diploid = true) }.readString()
         assertEquals("s1\tA/C\t1\t10\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAA\tAC", written.lines()[1])
     }
 
     @Test
-    fun writesNaWhenNoAlleleIsCalled() {
+    fun writesNaWhenNoAlleleIsCalled() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A/C", "1", "10", "N", "N"))
         val written = Buffer().also { HapMap.write(table, it) }.readString()
         assertEquals("s1\tNA\t1\t10\t+\tNA\tNA\tNA\tNA\tNA\tNA\tN\tN", written.lines()[1])
     }
 
     @Test
-    fun writesTheHeaderTassel5Writes() {
+    fun writesTheHeaderTassel5Writes() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A/C", "1", "10", "A", "C"))
         val written = Buffer().also { HapMap.write(table, it) }.readString()
         assertEquals(HapMap.FIXED_COLUMNS + listOf("T1", "T2"), written.lines()[0].split('\t'))
@@ -151,7 +165,7 @@ class HapMapTest {
     }
 
     @Test
-    fun rejectsMalformedInput() {
+    fun rejectsMalformedInput() = runTest {
         assertFailsWith<IllegalArgumentException> { read() }
         assertFailsWith<IllegalArgumentException> { read("##only annotations") }
         assertFailsWith<IllegalArgumentException> { read(HapMap.FIXED_COLUMNS.joinToString("\t")) }
@@ -168,7 +182,7 @@ class HapMapTest {
     }
 
     @Test
-    fun rejectsGenotypesWithoutANucleotideMeaning() {
+    fun rejectsGenotypesWithoutANucleotideMeaning() = runTest {
         val failure = assertFailsWith<IllegalArgumentException> {
             read(header("T1", "T2"), site("s1", "A/C", "1", "10", "A", "!"))
         }
@@ -176,15 +190,15 @@ class HapMapTest {
     }
 
     @Test
-    fun rejectsDelimitersTassel5Rejects() {
+    fun rejectsDelimitersTassel5Rejects() = runTest {
         val table = read(header("T1"), site("s1", "A/C", "1", "10", "A"))
         assertFailsWith<IllegalArgumentException> { HapMap.write(table, Buffer(), delimiter = ',') }
     }
 
     /** The tutorial file is read once and shared: parsing it per test is slow on Node and Native. */
-    private fun readTutorial(): GenotypeTable = tutorial
+    private suspend fun readTutorial(): GenotypeTable = tutorial()
 
-    private fun read(vararg lines: String): GenotypeTable =
+    private suspend fun read(vararg lines: String): GenotypeTable =
         HapMap.read(Buffer().also { buffer -> lines.forEach { buffer.writeString(it + "\n") } })
 
     private fun header(vararg taxa: String): String = (HapMap.FIXED_COLUMNS + taxa.toList()).joinToString("\t")
@@ -206,7 +220,7 @@ class HapMapTest {
         const val TUTORIAL = "tutorial/mdp_genotype.hmp.txt"
         const val GOLDEN = "golden/hapmap/mdp_genotype.hmp.txt"
 
-        val tutorial: GenotypeTable by lazy {
+        val tutorial = SuspendLazy {
             HapMap.read(Buffer().also { it.write(TestData.readBytes(TUTORIAL)) })
         }
     }

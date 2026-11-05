@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.Buffer
 import kotlinx.io.readString
 import kotlinx.io.writeString
@@ -8,6 +9,7 @@ import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.Nucleotide
 import net.maizegenetics.tassel.testing.GoldenManifest
+import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.Tolerance
 import kotlin.test.Test
@@ -22,8 +24,8 @@ import kotlin.test.assertTrue
  */
 class VcfTest {
     @Test
-    fun readsTutorialDimensions() {
-        val table = tutorial
+    fun readsTutorialDimensions() = runTest {
+        val table = tutorial()
         assertEquals(281, table.numberOfTaxa)
         assertEquals(3093, table.numberOfSites)
         assertEquals("33-16", table.taxa[0].name)
@@ -32,8 +34,8 @@ class VcfTest {
     }
 
     @Test
-    fun readsTutorialPositions() {
-        val table = tutorial
+    fun readsTutorialPositions() = runTest {
+        val table = tutorial()
         val first = table.positions[0]
         assertEquals("PZA01271.1", first.name)
         assertEquals("1", first.chromosome.name)
@@ -48,8 +50,8 @@ class VcfTest {
     }
 
     @Test
-    fun readsTutorialGenotypes() {
-        val table = tutorial
+    fun readsTutorialGenotypes() = runTest {
+        val table = tutorial()
         // Site 0 (REF=C, ALT=G) reads 0/0 for 33-16, 1/1 for 38-11, and ./. for CI3A.
         assertEquals(Genotype.of(Allele.C, Allele.C), table.genotype(0, 0))
         assertEquals(Genotype.of(Allele.G, Allele.G), table.genotype(1, 0))
@@ -59,9 +61,9 @@ class VcfTest {
     }
 
     @Test
-    fun writesTassel5HapMapExport() {
+    fun writesTassel5HapMapExport() = runTest {
         assertEquals(Tolerance.Exact(), GoldenManifest.load().tolerance(GOLDEN))
-        val written = Buffer().also { HapMap.write(tutorial, it) }.readString().lines()
+        val written = Buffer().also { HapMap.write(tutorial(), it) }.readString().lines()
         val goldenLines = TestData.readText(GOLDEN).replace("\r\n", "\n").lines()
 
         // Maintainer decision (tassel-6#14, 2026-11-04): compare from the rs# header row down. The golden's first
@@ -71,7 +73,7 @@ class VcfTest {
         // "fix" it by editing the golden or the MANIFEST, whose tolerance for this output stays exact. The shape of
         // the skipped block is asserted so the test still fails if the golden or the taxa count changes.
         val skipped = goldenLines.takeWhile { it.startsWith("##") }
-        assertEquals(tutorial.numberOfTaxa, skipped.size, "skipped ##SAMPLE= lines")
+        assertEquals(tutorial().numberOfTaxa, skipped.size, "skipped ##SAMPLE= lines")
         assertTrue(skipped.all { it.startsWith("##SAMPLE=<ID=") }, "every skipped line is a ##SAMPLE= annotation")
         val golden = goldenLines.drop(skipped.size)
         assertTrue(golden.first().startsWith("rs#\talleles\tchrom\tpos\t"), "first compared line: ${golden.first()}")
@@ -83,7 +85,7 @@ class VcfTest {
     }
 
     @Test
-    fun readsUnphasedAndPhasedAndMissingCalls() {
+    fun readsUnphasedAndPhasedAndMissingCalls() = runTest {
         // Phase is not kept: the genotype byte has no phase bit, so 0|1 and 0/1 are the same afterwards.
         val table = read(header("T1", "T2", "T3", "T4", "T5"), site("s1", "A", "C", "0/0", "0/1", "0|1", "1|1", "./."))
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
@@ -94,21 +96,21 @@ class VcfTest {
     }
 
     @Test
-    fun readsTheMissingFormsTassel5Reads() {
+    fun readsTheMissingFormsTassel5Reads() = runTest {
         // TASSEL 5 treats any taxon column starting with a dot as missing, and a negative allele index as missing.
         val table = read(header("T1", "T2", "T3", "T4"), site("s1", "A", "C", ".", ".|.", ".:5", "0/."))
         (0..3).forEach { assertEquals(Genotype.UNKNOWN, table.genotype(it, 0), "taxon $it") }
     }
 
     @Test
-    fun readsASingleCharacterCallAsHomozygous() {
+    fun readsASingleCharacterCallAsHomozygous() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A", "C", "0", "1"))
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
         assertEquals(Nucleotide.genotype("CC"), table.genotype(1, 0))
     }
 
     @Test
-    fun readsMultiallelicSites() {
+    fun readsMultiallelicSites() = runTest {
         val table = read(header("T1", "T2"), site("s1", "A", "C,G", "0/2", "1/2"))
         assertEquals(listOf("A", "C", "G"), table.positions[0].knownVariants)
         assertEquals(Genotype.of(Allele.A, Allele.G), table.genotype(0, 0))
@@ -116,14 +118,14 @@ class VcfTest {
     }
 
     @Test
-    fun readsASiteWithNoAlternateAllele() {
+    fun readsASiteWithNoAlternateAllele() = runTest {
         val table = read(header("T1"), site("s1", "A", ".", "0/0"))
         assertEquals(listOf("A"), table.positions[0].knownVariants)
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
     }
 
     @Test
-    fun readsIndelsTheWayTassel5Does() {
+    fun readsIndelsTheWayTassel5Does() = runTest {
         // REF longer than ALT: TASSEL 5 drops the shared first base, so AT/A becomes T and a gap.
         val deletion = read(header("T1", "T2"), site("s1", "AT", "A", "0/0", "1/1"))
         assertEquals(listOf("AT", "A"), deletion.positions[0].knownVariants)
@@ -137,7 +139,7 @@ class VcfTest {
     }
 
     @Test
-    fun readsSymbolicAlleles() {
+    fun readsSymbolicAlleles() = runTest {
         // TASSEL 5 rewrites <INS> to +, <DEL> to -, and * to N before taking the first character of each variant.
         val table = read(header("T1", "T2", "T3"), site("s1", "A", "<INS>,<DEL>", "0/0", "1/1", "2/2"))
         assertEquals(Nucleotide.genotype("AA"), table.genotype(0, 0))
@@ -150,14 +152,14 @@ class VcfTest {
     }
 
     @Test
-    fun namesASiteWithoutAnIdTheWayTassel5Does() {
+    fun namesASiteWithoutAnIdTheWayTassel5Does() = runTest {
         val table = read(header("T1"), site(".", "A", "C", "0/0"))
         assertEquals("S1_10", table.positions[0].name)
         assertEquals(null, table.positions[0].snpId)
     }
 
     @Test
-    fun skipsAnnotationLinesAndCommentsInTheBody() {
+    fun skipsAnnotationLinesAndCommentsInTheBody() = runTest {
         val table = read(
             "##fileformat=VCFv4.0",
             "##SAMPLE=<ID=T1,FATHER=T1,INBREEDF=0.97,MOTHER=T1>",
@@ -171,7 +173,7 @@ class VcfTest {
     }
 
     @Test
-    fun sortsSitesThatAreOutOfOrder() {
+    fun sortsSitesThatAreOutOfOrder() = runTest {
         val table = read(
             header("T1"),
             site("s3", "A", "C", "0/0", chromosome = "2", position = "5"),
@@ -186,7 +188,7 @@ class VcfTest {
     }
 
     @Test
-    fun readsAHeaderWithoutAnIdColumn() {
+    fun readsAHeaderWithoutAnIdColumn() = runTest {
         // HeaderPositions finds columns by name, so a file may leave any of them out.
         val table = read(
             "#CHROM\tPOS\tREF\tALT\tINFO\tFORMAT\tT1",
@@ -197,7 +199,7 @@ class VcfTest {
     }
 
     @Test
-    fun rejectsMalformedInput() {
+    fun rejectsMalformedInput() = runTest {
         assertFailsWith<IllegalArgumentException> { read() }
         assertFailsWith<IllegalArgumentException> { read("##only annotations") }
         // A #CHROM header with no taxon column.
@@ -215,7 +217,7 @@ class VcfTest {
     }
 
     @Test
-    fun rejectsAFormatWithoutGtFirst() {
+    fun rejectsAFormatWithoutGtFirst() = runTest {
         val misplaced = assertFailsWith<IllegalArgumentException> {
             read(header("T1"), "1\t10\ts1\tA\tC\t.\tPASS\tNS=1\tAD:GT\t2,0:0/0")
         }
@@ -227,7 +229,7 @@ class VcfTest {
     }
 
     @Test
-    fun rejectsACallNamingAnAlleleTheSiteDoesNotList() {
+    fun rejectsACallNamingAnAlleleTheSiteDoesNotList() = runTest {
         val failure = assertFailsWith<IllegalArgumentException> {
             read(header("T1"), site("s1", "A", "C", "0/2"))
         }
@@ -235,7 +237,7 @@ class VcfTest {
     }
 
     @Test
-    fun doesNotReadAlleleIndicesOfTenOrMore() {
+    fun doesNotReadAlleleIndicesOfTenOrMore() = runTest {
         // TASSEL 5 reads only the characters at offsets 0 and 2 of the GT field, so 10/10 is read as allele 1 and
         // then '/' - '0', which is -1 and therefore missing. Matched deliberately rather than fixed (tassel-6#14).
         val alts = (1..10).joinToString(",") { listOf("C", "G", "T")[it % 3] }
@@ -245,14 +247,14 @@ class VcfTest {
     }
 
     @Test
-    fun readsBackWhatHapMapWrote() {
-        val written = Buffer().also { HapMap.write(tutorial, it) }.readString()
+    fun readsBackWhatHapMapWrote() = runTest {
+        val written = Buffer().also { HapMap.write(tutorial(), it) }.readString()
         val reread = HapMap.read(Buffer().also { it.writeString(written) })
-        assertEquals(tutorial.taxa.names, reread.taxa.names)
-        assertEquals(tutorial.positions.map { it.name }, reread.positions.map { it.name })
+        assertEquals(tutorial().taxa.names, reread.taxa.names)
+        assertEquals(tutorial().positions.map { it.name }, reread.positions.map { it.name })
     }
 
-    private fun read(vararg lines: String): GenotypeTable =
+    private suspend fun read(vararg lines: String): GenotypeTable =
         Vcf.read(Buffer().also { buffer -> lines.forEach { buffer.writeString(it + "\n") } })
 
     private fun header(vararg taxa: String): String = (Vcf.FIXED_COLUMNS + taxa.toList()).joinToString("\t")
@@ -284,7 +286,7 @@ class VcfTest {
         const val TAXON_CI3A = 57
         val FIXED_HEADER = Vcf.FIXED_COLUMNS.joinToString("\t")
 
-        val tutorial: GenotypeTable by lazy {
+        val tutorial = SuspendLazy {
             Vcf.read(Buffer().also { it.write(TestData.readBytes(TUTORIAL)) })
         }
     }

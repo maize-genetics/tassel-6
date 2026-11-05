@@ -107,7 +107,7 @@ data class SiteFilter(
  * @see net.maizegenetics.analysis.filter.FilterBySites
  * @see net.maizegenetics.analysis.filter.FilterSiteBuilderPlugin
  */
-fun filterSites(
+suspend fun filterSites(
     table: GenotypeTable,
     filter: SiteFilter,
     progress: ProgressReporter = ProgressReporter.None,

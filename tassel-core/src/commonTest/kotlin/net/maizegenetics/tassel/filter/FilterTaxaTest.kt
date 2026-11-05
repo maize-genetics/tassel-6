@@ -6,6 +6,7 @@ import kotlinx.io.readString
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.ops.TasselOperations
+import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.assertMatchesGolden
 import kotlin.test.Test
@@ -20,40 +21,40 @@ import kotlin.test.assertSame
  */
 class FilterTaxaTest {
     @Test
-    fun keepsTaxaWithEnoughCalledSites() {
+    fun keepsTaxaWithEnoughCalledSites() = runTest {
         assertGolden("min-not-missing-0.95", TaxaFilter(minNotMissing = 0.95), taxa = 242)
     }
 
     @Test
-    fun keepsTaxaInsideTheHeterozygosityRange() {
+    fun keepsTaxaInsideTheHeterozygosityRange() = runTest {
         val filter = TaxaFilter(minHeterozygous = 0.005, maxHeterozygous = 0.02)
         assertGolden("het-0.005-0.02", filter, taxa = 268)
     }
 
     @Test
-    fun keepsTheNamedTaxaInTheOrderTheyWereNamed() {
+    fun keepsTheNamedTaxaInTheOrderTheyWereNamed() = runTest {
         val filter = TaxaFilter(taxaNames = NAMES, includeTaxa = true)
         val filtered = assertGolden("include-list", filter, taxa = 4)
         assertEquals(NAMES, filtered.taxa.names)
     }
 
     @Test
-    fun dropsTheNamedTaxaAndKeepsTableOrder() {
+    fun dropsTheNamedTaxaAndKeepsTableOrder() = runTest {
         val filter = TaxaFilter(taxaNames = NAMES, includeTaxa = false)
         val filtered = assertGolden("exclude-list", filter, taxa = 277)
-        assertEquals(tutorial.taxa.names.filter { it !in NAMES }, filtered.taxa.names)
+        assertEquals(tutorial().taxa.names.filter { it !in NAMES }, filtered.taxa.names)
     }
 
     @Test
-    fun namesTheTableDoesNotHaveAreIgnored() {
+    fun namesTheTableDoesNotHaveAreIgnored() = runTest {
         val filter = TaxaFilter(taxaNames = listOf("W22", "not-a-taxon", "B73"), includeTaxa = true)
-        assertEquals(listOf("W22", "B73"), filterTaxa(tutorial, filter).taxa.names)
+        assertEquals(listOf("W22", "B73"), filterTaxa(tutorial(), filter).taxa.names)
     }
 
     @Test
-    fun aFilterThatKeepsEverythingReturnsTheSameTable() {
-        assertSame(tutorial, filterTaxa(tutorial, TaxaFilter()))
-        assertSame(tutorial, filterTaxa(tutorial, TaxaFilter(taxaNames = tutorial.taxa.names)))
+    fun aFilterThatKeepsEverythingReturnsTheSameTable() = runTest {
+        assertSame(tutorial(), filterTaxa(tutorial(), TaxaFilter()))
+        assertSame(tutorial(), filterTaxa(tutorial(), TaxaFilter(taxaNames = tutorial().taxa.names)))
     }
 
     /**
@@ -61,25 +62,25 @@ class FilterTaxaTest {
      * this pins them to the `AlleleStats` values TASSEL 5's `Stats` returns.
      */
     @Test
-    fun statisticsMatchAlleleStats() {
-        val keptByStats = filterTaxa(tutorial, TaxaFilter(minNotMissing = 0.95)).taxa.names.toSet()
-        val keptByAlleleStats = tutorial.taxa.indices
-            .filter { tutorial.taxonStats(it).proportionNotMissing >= 0.95 }
-            .map { tutorial.taxa[it].name }
+    fun statisticsMatchAlleleStats() = runTest {
+        val keptByStats = filterTaxa(tutorial(), TaxaFilter(minNotMissing = 0.95)).taxa.names.toSet()
+        val keptByAlleleStats = tutorial().taxa.indices
+            .filter { tutorial().taxonStats(it).proportionNotMissing >= 0.95 }
+            .map { tutorial().taxa[it].name }
             .toSet()
         assertEquals(keptByAlleleStats, keptByStats)
 
-        val keptByHet = filterTaxa(tutorial, TaxaFilter(minHeterozygous = 0.005, maxHeterozygous = 0.02))
+        val keptByHet = filterTaxa(tutorial(), TaxaFilter(minHeterozygous = 0.005, maxHeterozygous = 0.02))
             .taxa.names.toSet()
-        val keptByAlleleStatsHet = tutorial.taxa.indices
-            .filter { tutorial.taxonStats(it).proportionHeterozygous in 0.005..0.02 }
-            .map { tutorial.taxa[it].name }
+        val keptByAlleleStatsHet = tutorial().taxa.indices
+            .filter { tutorial().taxonStats(it).proportionHeterozygous in 0.005..0.02 }
+            .map { tutorial().taxa[it].name }
             .toSet()
         assertEquals(keptByAlleleStatsHet, keptByHet)
     }
 
     @Test
-    fun invalidThresholdsFail() {
+    fun invalidThresholdsFail() = runTest {
         assertFailsWith<IllegalArgumentException> { TaxaFilter(minNotMissing = 1.5) }
         assertFailsWith<IllegalArgumentException> { TaxaFilter(minHeterozygous = -0.1) }
         assertFailsWith<IllegalArgumentException> { TaxaFilter(maxHeterozygous = 2.0) }
@@ -87,7 +88,7 @@ class FilterTaxaTest {
     }
 
     @Test
-    fun specCarriesTassel5Names() {
+    fun specCarriesTassel5Names() = runTest {
         assertEquals("filter-taxa", filterTaxaOperation.id)
         assertEquals("FilterTaxaBuilderPlugin", filterTaxaOperation.legacyPlugin)
         assertSame(filterTaxaOperation, TasselOperations.registry["filter-taxa"])
@@ -111,7 +112,7 @@ class FilterTaxaTest {
     @Test
     fun specRunsTheHeterozygosityFilterFromCommandLineText() = runTest {
         val values = mapOf("minHeterozygous" to "0.005", "maxHeterozygous" to "0.02")
-        assertEquals(268, filterTaxaOperation.run(tutorial, values).numberOfTaxa)
+        assertEquals(268, filterTaxaOperation.run(tutorial(), values).numberOfTaxa)
     }
 
     /**
@@ -123,14 +124,14 @@ class FilterTaxaTest {
         val text = NAMES.joinToString(",")
         assertEquals("W22,B73,CML247,33-16", text)
 
-        val included = filterTaxaOperation.run(tutorial, mapOf("taxaList" to text, "includeTaxa" to "true"))
+        val included = filterTaxaOperation.run(tutorial(), mapOf("taxaList" to text, "includeTaxa" to "true"))
         assertEquals(NAMES, included.taxa.names)
         assertMatchesGolden(
             "golden/filter-taxa/include-list.hmp.txt",
             Buffer().also { HapMap.write(included, it) }.readString(),
         )
 
-        val excluded = filterTaxaOperation.run(tutorial, mapOf("taxaList" to text, "includeTaxa" to "false"))
+        val excluded = filterTaxaOperation.run(tutorial(), mapOf("taxaList" to text, "includeTaxa" to "false"))
         assertEquals(277, excluded.numberOfTaxa)
         assertMatchesGolden(
             "golden/filter-taxa/exclude-list.hmp.txt",
@@ -140,11 +141,11 @@ class FilterTaxaTest {
 
     @Test
     fun specTakesATaxonListAsAlreadyTypedValuesToo() = runTest {
-        assertEquals(NAMES, filterTaxaOperation.run(tutorial, mapOf("taxaList" to NAMES)).taxa.names)
+        assertEquals(NAMES, filterTaxaOperation.run(tutorial(), mapOf("taxaList" to NAMES)).taxa.names)
     }
 
-    private fun assertGolden(name: String, filter: TaxaFilter, taxa: Int): GenotypeTable {
-        val filtered = filterTaxa(tutorial, filter)
+    private suspend fun assertGolden(name: String, filter: TaxaFilter, taxa: Int): GenotypeTable {
+        val filtered = filterTaxa(tutorial(), filter)
         assertEquals(taxa, filtered.numberOfTaxa, "number of taxa")
         assertEquals(3093, filtered.numberOfSites, "number of sites")
         val written = Buffer().also { HapMap.write(filtered, it) }.readString()
@@ -157,7 +158,7 @@ class FilterTaxaTest {
         val NAMES = listOf("W22", "B73", "CML247", "33-16")
 
         /** The tutorial file is read once and shared: parsing it per test is slow on Node and Native. */
-        val tutorial: GenotypeTable by lazy {
+        val tutorial = SuspendLazy {
             HapMap.read(Buffer().also { it.write(TestData.readBytes("tutorial/mdp_genotype.hmp.txt")) })
         }
     }

@@ -6,6 +6,7 @@ import kotlinx.io.readString
 import net.maizegenetics.tassel.app.analysis.AnalysisEngine
 import net.maizegenetics.tassel.app.analysis.LocalAnalysisEngine
 import net.maizegenetics.tassel.app.export.ResultFiles
+import net.maizegenetics.tassel.engine.DataHandle
 import net.maizegenetics.tassel.engine.LocalEngine
 import net.maizegenetics.tassel.ops.OperationRegistry
 import net.maizegenetics.tassel.ops.TasselOperations
@@ -22,6 +23,17 @@ import kotlin.coroutines.EmptyCoroutineContext
 fun testEngine(registry: OperationRegistry = TasselOperations.registry): AnalysisEngine =
     LocalAnalysisEngine(LocalEngine(registry, EmptyCoroutineContext))
 
+/** An [AnalysisEngine] that records which handles were released, over a real engine that does the releasing. */
+class ReleaseRecordingEngine(private val delegate: AnalysisEngine = testEngine()) : AnalysisEngine by delegate {
+    /** Handles the app asked the engine to free, in order. */
+    val released: MutableList<DataHandle> = mutableListOf()
+
+    override suspend fun release(handle: DataHandle) {
+        released += handle
+        delegate.release(handle)
+    }
+}
+
 /** A [ResultFiles] that keeps what was written instead of saving it, and can pretend the user cancelled. */
 class RecordingResultFiles(private val accept: Boolean = true) : ResultFiles {
     /** File names the app asked to save, in order. */
@@ -30,7 +42,7 @@ class RecordingResultFiles(private val accept: Boolean = true) : ResultFiles {
     /** What was written under each of [names]. */
     val contents: MutableList<String> = mutableListOf()
 
-    override suspend fun save(fileName: String, write: (Sink) -> Unit): Boolean {
+    override suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean {
         names += fileName
         val buffer = Buffer()
         write(buffer)

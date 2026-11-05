@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.app.analysis
 
+import kotlinx.coroutines.test.runTest
 import net.maizegenetics.tassel.analysis.genotypeSummary
 import net.maizegenetics.tassel.analysis.principalComponents
 import net.maizegenetics.tassel.app.testing.testTable
@@ -29,7 +30,7 @@ class ResultPartsTest {
     )
 
     @Test
-    fun aResultTableIsOnePaneAndExportsExactlyWhatTheCoreWriterWrites() {
+    fun aResultTableIsOnePaneAndExportsExactlyWhatTheCoreWriterWrites() = runTest {
         val table = resultTable("Overall Summary", listOf("Stat Type", "Value")) {
             row("Number of Taxa", 3.0)
         }
@@ -44,7 +45,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun aGenotypeSummaryBecomesOnePanePerTableWithFileNamesFromTheirTitles() {
+    fun aGenotypeSummaryBecomesOnePanePerTableWithFileNamesFromTheirTitles() = runTest {
         val summary = genotypeSummary(testTable(numberOfTaxa = 3, numberOfSites = 4))
 
         val parts = resultParts(summary, "mdp.summary")
@@ -65,7 +66,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun aDistanceMatrixGetsAHeatmapAndTheSquareMatrixAsItsTable() {
+    fun aDistanceMatrixGetsAHeatmapAndTheSquareMatrixAsItsTable() = runTest {
         val parts = resultParts(matrix, "mdp.kinship")
 
         assertEquals(1, parts.size)
@@ -82,7 +83,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun theMatrixTableIsTheNameThenTheWholeRow() {
+    fun theMatrixTableIsTheNameThenTheWholeRow() = runTest {
         val table = resultParts(matrix, "mdp.kinship")[0].table
 
         assertEquals(listOf("Taxa", "B73", "Mo17", "CML247"), table.columnNames)
@@ -93,7 +94,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun principalComponentsGiveTheComponentsFirstWithAScatterOfTheFirstTwo() {
+    fun principalComponentsGiveTheComponentsFirstWithAScatterOfTheFirstTwo() = runTest {
         val result = principalComponents(testTable(numberOfTaxa = 4, numberOfSites = 6), numberOfComponents = 3)
 
         val parts = resultParts(result, "mdp.pca")
@@ -113,7 +114,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun theComponentsTableShowsTheTaxonNameAndTheFloatsTasselWrites() {
+    fun theComponentsTableShowsTheTaxonNameAndTheFloatsTasselWrites() = runTest {
         val result = principalComponents(testTable(numberOfTaxa = 4, numberOfSites = 6), numberOfComponents = 2)
 
         val table = resultParts(result, "mdp.pca")[0].table
@@ -127,7 +128,7 @@ class ResultPartsTest {
     }
 
     @Test
-    fun aPhenotypeWithOneCovariateHasNothingToPlotAgainst() {
+    fun aPhenotypeWithOneCovariateHasNothingToPlotAgainst() = runTest {
         val phenotype = PhenotypeTable(
             listOf(PhenotypeTable.taxa(listOf("B73", "Mo17")), PhenotypeTable.Attribute("PC1", floatArrayOf(1f, 2f))),
         )
@@ -140,14 +141,14 @@ class ResultPartsTest {
     }
 
     @Test
-    fun anOutputTypeNothingKnowsHowToShowSaysSoRatherThanDrawingNothing() {
+    fun anOutputTypeNothingKnowsHowToShowSaysSoRatherThanDrawingNothing() = runTest {
         val failure = assertFailsWith<IllegalArgumentException> { resultParts("a bare string", "mdp.mystery") }
 
         assertTrue(failure.message!!.contains("resultParts"), failure.message!!)
     }
 
     @Test
-    fun aGenotypeExportKeepsTheHapMapExtensionAndDoesNotDoubleIt() {
+    fun aGenotypeExportKeepsTheHapMapExtensionAndDoesNotDoubleIt() = runTest {
         assertEquals("mdp_genotype.hmp.txt", genotypeFileName("mdp_genotype.hmp.txt"))
         assertEquals("filtered.hmp.txt", genotypeFileName("filtered"))
     }

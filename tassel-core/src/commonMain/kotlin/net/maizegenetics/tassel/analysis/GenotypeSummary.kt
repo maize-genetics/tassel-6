@@ -39,7 +39,7 @@ class GenotypeSummary internal constructor(
  *
  * @see net.maizegenetics.analysis.data.GenotypeSummaryPlugin
  */
-fun genotypeSummary(
+suspend fun genotypeSummary(
     genotypes: GenotypeTable,
     overview: Boolean = true,
     siteSummary: Boolean = true,
@@ -133,7 +133,7 @@ private const val MAX_ALLELES = Allele.NUCLEOTIDE_STATES
  *
  * @see net.maizegenetics.analysis.data.GenotypeSummaryPlugin.getSiteSummary
  */
-private fun siteTable(
+private suspend fun siteTable(
     genotypes: GenotypeTable,
     totals: GenotypeSummaryTotals,
     progress: ProgressReporter,
@@ -206,7 +206,7 @@ private fun siteTable(
  *
  * @see net.maizegenetics.analysis.data.GenotypeSummaryPlugin.getTaxaSummary
  */
-private fun taxaTable(genotypes: GenotypeTable, progress: ProgressReporter): ResultTable {
+private suspend fun taxaTable(genotypes: GenotypeTable, progress: ProgressReporter): ResultTable {
     val numberOfSites = genotypes.numberOfSites
     val numberOfTaxa = genotypes.numberOfTaxa
     val totalGametes = numberOfSites * 2
@@ -256,7 +256,7 @@ private fun taxaTable(genotypes: GenotypeTable, progress: ProgressReporter): Res
  * @see net.maizegenetics.dna.snp.genotypecall.AbstractGenotypeCallTable.genoCounts
  * @see net.maizegenetics.dna.snp.genotypecall.AbstractGenotypeCallTable.majorMinorCounts
  */
-private fun overviewCounts(
+private suspend fun overviewCounts(
     genotypes: GenotypeTable,
     totals: GenotypeSummaryTotals,
     accumulate: Boolean,

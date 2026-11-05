@@ -19,7 +19,7 @@ import java.awt.Frame
  * @param owner the window the dialog is modal to, or null for an unowned dialog.
  */
 class DesktopResultFiles(private val owner: Frame? = null) : ResultFiles {
-    override suspend fun save(fileName: String, write: (Sink) -> Unit): Boolean {
+    override suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean {
         val path = withContext(Dispatchers.Swing) {
             // FileDialog is the native chooser on macOS and Windows, as in DesktopGenotypeFiles.
             val dialog = FileDialog(owner, "Save result", FileDialog.SAVE)

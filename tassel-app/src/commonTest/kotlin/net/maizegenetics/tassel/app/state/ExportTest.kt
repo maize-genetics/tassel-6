@@ -116,7 +116,7 @@ class ExportTest {
     }
 
     @Test
-    fun theFileNameFollowsTheClisOutputNaming() {
+    fun theFileNameFollowsTheClisOutputNaming() = runTest {
         assertEquals("mdp_genotype.kinship", baseName("mdp_genotype.hmp.txt", "kinship"))
         assertEquals("result.pca", baseName("", "pca"))
     }
@@ -132,6 +132,6 @@ class ExportTest {
 
 /** A [ResultFiles] whose save always fails, as a full disk would. */
 private class FailingResultFiles : ResultFiles {
-    override suspend fun save(fileName: String, write: (Sink) -> Unit): Boolean =
+    override suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean =
         throw IllegalStateException("no room on device")
 }

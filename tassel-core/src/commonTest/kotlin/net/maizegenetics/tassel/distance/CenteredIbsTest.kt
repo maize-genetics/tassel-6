@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.distance
 
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.Buffer
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
@@ -7,6 +8,7 @@ import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.ops.TasselOperations
 import net.maizegenetics.tassel.testing.SquareMatrix
+import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.assertMatchesGoldenMatrix
 import net.maizegenetics.tassel.testing.goldenText
@@ -24,16 +26,16 @@ import kotlin.test.assertTrue
  */
 class CenteredIbsTest {
     @Test
-    fun matchesGoldenMatrix() {
-        assertMatchesGoldenMatrix(GOLDEN, SquareMatrix.parse(kinship.toDelimitedString()))
+    fun matchesGoldenMatrix() = runTest {
+        assertMatchesGoldenMatrix(GOLDEN, SquareMatrix.parse(kinship().toDelimitedString()))
     }
 
     @Test
-    fun matchesGoldenSumPk() {
+    fun matchesGoldenSumPk() = runTest {
         val expected = SquareMatrix.parse(goldenText(GOLDEN)).properties
             .single { it.startsWith("##$SUMPK=") }
             .substringAfter('=')
-        assertEquals(expected, kinship.annotations[SUMPK])
+        assertEquals(expected, kinship().annotations[SUMPK])
     }
 
     /**
@@ -43,13 +45,13 @@ class CenteredIbsTest {
      * left under it, and will fail first if the summation order ever drifts.
      */
     @Test
-    fun writesTheGoldenByteForByte() {
-        assertEquals(normalizeLineEndings(goldenText(GOLDEN)), kinship.toDelimitedString())
+    fun writesTheGoldenByteForByte() = runTest {
+        assertEquals(normalizeLineEndings(goldenText(GOLDEN)), kinship().toDelimitedString())
     }
 
     @Test
-    fun writesTassel5MatrixFormat() {
-        val written = kinship.toDelimitedString().lines()
+    fun writesTassel5MatrixFormat() = runTest {
+        val written = kinship().toDelimitedString().lines()
         val expected = normalizeLineEndings(goldenText(GOLDEN)).lines()
         assertEquals(expected.size, written.size, "line count")
         assertEquals(expected[0].substringBefore('='), written[0].substringBefore('='), "first annotation key")
@@ -64,36 +66,36 @@ class CenteredIbsTest {
     }
 
     @Test
-    fun writesBothAnnotationsSortedByKey() {
-        assertEquals(listOf(SUMPK, DistanceMatrix.MATRIX_TYPE), kinship.annotations.keys.toList())
-        assertEquals(KinshipMethod.Centered_IBS.name, kinship.annotations[DistanceMatrix.MATRIX_TYPE])
+    fun writesBothAnnotationsSortedByKey() = runTest {
+        assertEquals(listOf(SUMPK, DistanceMatrix.MATRIX_TYPE), kinship().annotations.keys.toList())
+        assertEquals(KinshipMethod.Centered_IBS.name, kinship().annotations[DistanceMatrix.MATRIX_TYPE])
     }
 
     @Test
-    fun isSymmetricAndSurvivesTheRoundTripThroughText() {
-        val written = SquareMatrix.parse(kinship.toDelimitedString())
-        assertEquals(281, kinship.numberOfTaxa)
-        assertEquals(tutorial.taxa.names, written.labels)
-        for (row in 0 until kinship.numberOfTaxa) {
-            assertEquals(kinship.distance(row, 0), kinship.distance(0, row))
-            assertEquals(kinship.distance(row, row), written.values[row][row].toFloat())
+    fun isSymmetricAndSurvivesTheRoundTripThroughText() = runTest {
+        val written = SquareMatrix.parse(kinship().toDelimitedString())
+        assertEquals(281, kinship().numberOfTaxa)
+        assertEquals(tutorial().taxa.names, written.labels)
+        for (row in 0 until kinship().numberOfTaxa) {
+            assertEquals(kinship().distance(row, 0), kinship().distance(0, row))
+            assertEquals(kinship().distance(row, row), written.values[row][row].toFloat())
         }
     }
 
     @Test
-    fun reportsProgressOverEverySite() {
+    fun reportsProgressOverEverySite() = runTest {
         val reports = mutableListOf<Progress>()
-        centeredIbs(tutorial, progress = ProgressReporter { reports += it })
+        centeredIbs(tutorial(), progress = ProgressReporter { reports += it })
         assertTrue(reports.size > 1, "expected a report per run of sites, got ${reports.size}")
-        assertTrue(reports.all { it.total == tutorial.numberOfSites.toLong() })
-        assertEquals(tutorial.numberOfSites.toLong(), reports.last().completed)
+        assertTrue(reports.all { it.total == tutorial().numberOfSites.toLong() })
+        assertEquals(tutorial().numberOfSites.toLong(), reports.last().completed)
         assertEquals(reports.map { it.completed }.sorted(), reports.map { it.completed })
     }
 
     @Test
-    fun rejectsMaxAllelesOutsideTassel5Range() {
-        assertFailsWith<IllegalArgumentException> { centeredIbs(opposingHomozygotes, maxAlleles = 1) }
-        assertFailsWith<IllegalArgumentException> { centeredIbs(opposingHomozygotes, maxAlleles = 7) }
+    fun rejectsMaxAllelesOutsideTassel5Range() = runTest {
+        assertFailsWith<IllegalArgumentException> { centeredIbs(opposingHomozygotes(), maxAlleles = 1) }
+        assertFailsWith<IllegalArgumentException> { centeredIbs(opposingHomozygotes(), maxAlleles = 7) }
     }
 
     /**
@@ -101,8 +103,8 @@ class CenteredIbsTest {
      * `SumPk` is `2 * 0.5 * 0.5` and the terms are `(2 - 1)^2`, `(0 - 1)(2 - 1)`, and `(0 - 1)^2`.
      */
     @Test
-    fun matchesHandComputedValuesOnTwoTaxa() {
-        val matrix = centeredIbs(opposingHomozygotes)
+    fun matchesHandComputedValuesOnTwoTaxa() = runTest {
+        val matrix = centeredIbs(opposingHomozygotes())
         assertEquals("0.5", matrix.annotations[SUMPK])
         assertEquals(2.0f, matrix.distance(0, 0))
         assertEquals(2.0f, matrix.distance(1, 1))
@@ -115,15 +117,15 @@ class CenteredIbsTest {
 
     /** A site with one allele left is skipped: `alleles.size - 1` evaluates to zero pseudo-sites. */
     @Test
-    fun monomorphicSitesContributeNothing() {
+    fun monomorphicSitesContributeNothing() = runTest {
         val padded = centeredIbs(hapMap("AA" to "CC", "GG" to "GG", "TT" to "TT"))
-        val plain = centeredIbs(opposingHomozygotes)
+        val plain = centeredIbs(opposingHomozygotes())
         assertEquals(plain.annotations, padded.annotations)
         assertEquals(plain.toDelimitedString(), padded.toDelimitedString())
     }
 
     @Test
-    fun isRegisteredWithTassel5LegacyNames() {
+    fun isRegisteredWithTassel5LegacyNames() = runTest {
         assertEquals(kinshipOperation, TasselOperations.registry.get("kinship"))
         assertEquals(kinshipOperation, TasselOperations.registry.byLegacyPlugin("KinshipPlugin"))
         assertEquals(KinshipMethod.Centered_IBS, kinshipOperation.parameter("method")?.default)
@@ -138,16 +140,16 @@ class CenteredIbsTest {
         const val TOLERANCE = 8e-6
         const val SUMPK = DistanceMatrix.CENTERED_IBS_SUMPK
 
-        val tutorial: GenotypeTable by lazy {
+        val tutorial = SuspendLazy {
             HapMap.read(Buffer().also { it.write(TestData.readBytes(TUTORIAL)) })
         }
 
-        val kinship: DistanceMatrix by lazy { centeredIbs(tutorial) }
+        val kinship = SuspendLazy { centeredIbs(tutorial()) }
 
-        val opposingHomozygotes: GenotypeTable by lazy { hapMap("AA" to "CC") }
+        val opposingHomozygotes = SuspendLazy { hapMap("AA" to "CC") }
 
         /** One HapMap site per pair of genotypes, with two taxa named `one` and `two`. */
-        fun hapMap(vararg sites: Pair<String, String>): GenotypeTable {
+        suspend fun hapMap(vararg sites: Pair<String, String>): GenotypeTable {
             val header = (HapMap.FIXED_COLUMNS + listOf("one", "two")).joinToString("\t")
             val lines = sites.mapIndexed { site, (one, two) ->
                 listOf("s$site", "A/C", "1", "${site + 1}", "+", "NA", "NA", "NA", "NA", "NA", "NA", one, two)

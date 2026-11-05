@@ -5,6 +5,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import net.maizegenetics.tassel.ops.InvalidParametersException
 import net.maizegenetics.tassel.ops.OperationRegistry
 import net.maizegenetics.tassel.ops.Progress
@@ -81,6 +82,29 @@ class LocalEngineTest {
         job.join()
         assertTrue(job.isCancelled)
         assertEquals(listOf(1L, 2L, 3L), seen)
+    }
+
+    @Test
+    fun progressReportsLetOtherWorkRunOnTheSameThread() = runTest {
+        // ADR-0019: reporting suspends and the engine yields there, which is the whole reason the browser can
+        // draw while an analysis runs. With no suspension point inside the kernel the four reports would all
+        // land before the other coroutine ran once.
+        val engine = LocalEngine(registry, EmptyCoroutineContext)
+        val order = mutableListOf<String>()
+        val run = launch {
+            engine.run(RunRequest("count-blocking", parameters = mapOf("total" to "4"))) { order += "report" }
+        }
+        val other = launch {
+            repeat(4) {
+                order += "other"
+                yield()
+            }
+        }
+        run.join()
+        other.join()
+
+        assertEquals(4, order.count { it == "report" }, "reports in $order")
+        assertTrue(order.indexOf("other") < order.lastIndexOf("report"), "did not interleave: $order")
     }
 
     @Test

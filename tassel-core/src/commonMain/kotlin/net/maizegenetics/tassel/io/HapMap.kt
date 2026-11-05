@@ -43,7 +43,7 @@ object HapMap {
      * @throws IllegalArgumentException if the file is empty, a header is malformed, a position is not an integer, a
      *   genotype has no nucleotide meaning, or a line has the wrong number of genotypes.
      */
-    fun read(source: Source, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
+    suspend fun read(source: Source, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
         var line = source.readLine() ?: throw IllegalArgumentException("HapMap input is empty")
         while (line.startsWith("##")) {
             // TASSEL 5 reads taxa annotations from ##SAMPLE lines; Taxon carries only a name, so they are skipped.
@@ -84,7 +84,7 @@ object HapMap {
      * @param diploid writes two allele characters per genotype (`AG`) instead of one IUPAC character (`R`).
      * @param delimiter must be a tab or a space, as in TASSEL 5.
      */
-    fun write(
+    suspend fun write(
         table: GenotypeTable,
         sink: Sink,
         diploid: Boolean = false,
@@ -266,6 +266,12 @@ object HapMap {
     private const val CHROMOSOME_COLUMN = 2
     private const val POSITION_COLUMN = 3
     private const val EXCERPT_LENGTH = 25
-    private const val PROGRESS_SITES = 4096
+
+    /**
+     * Sites between progress reports. Each report is a suspension point (ADR-0019), so this is also
+     * how often a single-threaded caller gets the thread back. The tutorial file has 3,093 sites, so
+     * anything much larger reports once, after the parse, which is too late to be worth reporting.
+     */
+    private const val PROGRESS_SITES = 256
     private val UNDEFINED_GENOTYPE: Byte = Genotype.of(Allele.UNDEFINED, Allele.UNDEFINED)
 }

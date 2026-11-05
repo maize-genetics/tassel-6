@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 class OperationSpecTest {
     @Test
-    fun parametersKeepDeclarationOrderAndMetadata() {
+    fun parametersKeepDeclarationOrderAndMetadata() = runTest {
         assertEquals(
             listOf("factor", "repeats", "limit", "negate", "rounding", "report"),
             scaleValues.parameters.map {
@@ -24,7 +24,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun defaultsFillUnsuppliedValues() {
+    fun defaultsFillUnsuppliedValues() = runTest {
         val values = scaleValues.bind()
         assertEquals(
             mapOf(
@@ -41,7 +41,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun textValuesAreParsed() {
+    fun textValuesAreParsed() = runTest {
         val values = scaleValues.bind(
             mapOf(
                 "factor" to "2.5",
@@ -56,7 +56,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun typedValuesAreAccepted() {
+    fun typedValuesAreAccepted() = runTest {
         val values = scaleValues.bind(
             mapOf(
                 "factor" to 2,
@@ -70,7 +70,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun rangesAreInclusive() {
+    fun rangesAreInclusive() = runTest {
         for (ok in listOf(0.0, 10.0)) assertEquals(ok, scaleValues.bind(mapOf("factor" to ok))["factor"])
         for (ok in listOf("1", "5")) assertEquals(ok.toInt(), scaleValues.bind(mapOf("repeats" to ok))["repeats"])
         val problems = problemsOf { scaleValues.bind(mapOf("factor" to -0.25, "repeats" to "6", "limit" to 1001)) }
@@ -79,7 +79,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun badTypesAndTextAreRejected() {
+    fun badTypesAndTextAreRejected() = runTest {
         val problems = problemsOf {
             scaleValues.bind(
                 mapOf(
@@ -118,7 +118,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun aBlankEntryInAStringListIsRejected() {
+    fun aBlankEntryInAStringListIsRejected() = runTest {
         val problems = problemsOf { joinNames.bind(mapOf("names" to "W22,,B73", "extra" to listOf("A", " "))) }
         assertEquals(listOf("names", "extra"), problems.map { it.parameter })
         assertTrue(problems.all { it.message == "value 2 of the list is blank" }, problems.toString())
@@ -142,7 +142,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun unknownNamesAreRejectedWithLegacyHint() {
+    fun unknownNamesAreRejectedWithLegacyHint() = runTest {
         val e = assertFailsWith<InvalidParametersException> {
             scaleValues.bind(mapOf("bogus" to "1", "scaleFactor" to "2.0"))
         }
@@ -152,7 +152,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun requiredParametersMustBeSupplied() {
+    fun requiredParametersMustBeSupplied() = runTest {
         val path = readLines.parameter("path")!!
         assertTrue(path.required)
         assertNull(path.default)
@@ -182,7 +182,7 @@ class OperationSpecTest {
     }
 
     @Test
-    fun invalidDeclarationsFail() {
+    fun invalidDeclarationsFail() = runTest {
         fun declare(block: OperationScope<Unit, Unit>.() -> Unit) = operation<Unit, Unit>(id = "bad", block = block)
         val finish: OperationScope<Unit, Unit>.() -> Unit = { run { _, _ -> } }
 
@@ -218,7 +218,7 @@ class OperationSpecTest {
     @Test
     fun adrSketchWorks() = runTest {
         class Table(val maf: List<Double>)
-        fun filterSites(input: Table, minMaf: Double, minCount: Int, progress: ProgressReporter): Table {
+        suspend fun filterSites(input: Table, minMaf: Double, minCount: Int, progress: ProgressReporter): Table {
             progress.report(1, 1)
             return Table(input.maf.filter { it >= minMaf && minCount >= 0 })
         }

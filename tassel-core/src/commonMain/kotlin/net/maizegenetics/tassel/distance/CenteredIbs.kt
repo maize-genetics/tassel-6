@@ -55,7 +55,7 @@ private const val MIN_SITES_PER_REPORT = 100
  *
  * @see net.maizegenetics.analysis.distance.EndelmanDistanceMatrix
  */
-fun centeredIbs(
+suspend fun centeredIbs(
     table: GenotypeTable,
     maxAlleles: Int = DEFAULT_MAX_ALLELES,
     progress: ProgressReporter = ProgressReporter.None,
@@ -66,12 +66,18 @@ fun centeredIbs(
     val numberOfTaxa = table.numberOfTaxa
     var sitesDone = 0
     val blockSize = maxOf(table.numberOfSites / GOLDEN_MAX_THREADS, MIN_SITES_PER_BLOCK)
-    val blocks = table.siteBlocks(blockSize = blockSize).map { block ->
-        accumulate(block, maxAlleles) { sites ->
-            sitesDone += sites
-            progress.report(sitesDone, table.numberOfSites)
+    // A plain loop rather than Sequence.map: reporting progress suspends (ADR-0019), and a lazy
+    // sequence's transform cannot.
+    val blocks = buildList {
+        for (block in table.siteBlocks(blockSize = blockSize)) {
+            add(
+                accumulate(block, maxAlleles) { sites ->
+                    sitesDone += sites
+                    progress.report(sitesDone, table.numberOfSites)
+                },
+            )
         }
-    }.toList()
+    }
     // TASSEL 5 reduces its parallel stream right to left, so the blocks are added as a + (b + (c + d)).
     // Any other order shifts the float sums by a few ulps, which the golden text would show.
     val total = blocks.reduceRight { block, rest -> block.also { it.add(rest) } }
@@ -113,7 +119,7 @@ private class Sums(numberOfTaxa: Int) {
  * Sums one block of sites into a triangle of its own, reporting the sites covered as it goes. Each
  * site's genotypes are read once.
  */
-private fun accumulate(block: SiteBlock, maxAlleles: Int, reportSites: (Int) -> Unit): Sums {
+private suspend fun accumulate(block: SiteBlock, maxAlleles: Int, reportSites: suspend (Int) -> Unit): Sums {
     val numberOfTaxa = block.numberOfTaxa
     val sums = Sums(numberOfTaxa)
     val fence = block.sites.last + 1
