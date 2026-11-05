@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.cli
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.io.buffered
 import kotlinx.io.files.SystemFileSystem
 import net.maizegenetics.tassel.genotype.GenotypeTable
@@ -28,6 +29,6 @@ fun normalizeLineEndings(text: String): String = text.replace("\r\n", "\n").repl
 fun tempDirectory(name: String): Path = Files.createTempDirectory(name).also { it.toFile().deleteOnExit() }
 
 /** Writes [table] as HapMap, for tests that need an input file. */
-fun writeHapMap(table: GenotypeTable, path: Path) {
+fun writeHapMap(table: GenotypeTable, path: Path) = runBlocking {
     SystemFileSystem.sink(kotlinx.io.files.Path(path.toString())).buffered().use { HapMap.write(table, it) }
 }

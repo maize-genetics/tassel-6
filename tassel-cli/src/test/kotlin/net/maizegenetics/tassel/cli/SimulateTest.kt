@@ -1,6 +1,7 @@
 package net.maizegenetics.tassel.cli
 
 import com.github.ajalt.clikt.testing.test
+import kotlinx.coroutines.runBlocking
 import kotlinx.io.buffered
 import kotlinx.io.files.SystemFileSystem
 import net.maizegenetics.tassel.genotype.Genotype
@@ -22,7 +23,7 @@ class SimulateTest {
     }
 
     @Test
-    fun theSameSeedWritesTheSameBytes() {
+    fun theSameSeedWritesTheSameBytes() = runBlocking {
         val directory = tempDirectory("tassel-simulate")
         val first = simulate("--taxa 25 --sites 200 --seed 1", directory.resolve("first.hmp.txt"))
         val second = simulate("--taxa 25 --sites 200 --seed 1", directory.resolve("second.hmp.txt"))
@@ -30,7 +31,7 @@ class SimulateTest {
     }
 
     @Test
-    fun anotherSeedWritesAnotherFile() {
+    fun anotherSeedWritesAnotherFile() = runBlocking {
         val directory = tempDirectory("tassel-simulate-seeds")
         val first = simulate("--taxa 25 --sites 200 --seed 1", directory.resolve("first.hmp.txt"))
         val second = simulate("--taxa 25 --sites 200 --seed 2", directory.resolve("second.hmp.txt"))
@@ -38,7 +39,7 @@ class SimulateTest {
     }
 
     @Test
-    fun theOutputLoadsBackThroughTheHapMapReader() {
+    fun theOutputLoadsBackThroughTheHapMapReader() = runBlocking {
         val directory = tempDirectory("tassel-simulate-read")
         val file = simulate("--taxa 25 --sites 200 --seed 1 --missing-rate 0.1", directory.resolve("sim.hmp.txt"))
 
@@ -56,7 +57,7 @@ class SimulateTest {
     }
 
     @Test
-    fun noGenotypeIsMissingByDefault() {
+    fun noGenotypeIsMissingByDefault() = runBlocking {
         val table = simulateGenotypes(taxa = 10, sites = 20, seed = 7)
         val missing = (0 until table.numberOfSites).sumOf { site ->
             table.siteGenotypes(site).count { it == Genotype.UNKNOWN }
@@ -65,7 +66,7 @@ class SimulateTest {
     }
 
     @Test
-    fun minorAlleleFrequenciesStayInsideTheRequestedRange() {
+    fun minorAlleleFrequenciesStayInsideTheRequestedRange() = runBlocking {
         val table = simulateGenotypes(taxa = 400, sites = 60, minMaf = 0.3, maxMaf = 0.5, seed = 11)
         val frequencies = (0 until table.numberOfSites).map { table.siteStats(it).minorAlleleFrequency }
         // 800 gametes per site, so sampling noise around a frequency in [0.3, 0.5] is small.
@@ -73,7 +74,7 @@ class SimulateTest {
     }
 
     @Test
-    fun impossibleOptionsAreUserErrors() {
+    fun impossibleOptionsAreUserErrors() = runBlocking {
         val result = tasselCommand().test("dev simulate --min-maf 0.4 --max-maf 0.1")
         assertEquals(EXIT_USER_ERROR, result.statusCode)
         assertContains(result.output, "--min-maf")

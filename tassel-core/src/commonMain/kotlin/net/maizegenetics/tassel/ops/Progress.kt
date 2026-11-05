@@ -22,10 +22,15 @@ data class Progress(val completed: Long, val total: Long, val message: String? =
 /**
  * Receives [Progress] from a running operation. Engines may throw a cancellation exception from
  * [report] when the run has been cancelled, so long loops that report progress also stop promptly.
+ *
+ * [report] suspends, which makes every progress report a suspension point inside the reader or
+ * kernel that emits it (ADR-0019). A kernel only reports; whether reporting also yields the thread
+ * is the engine's choice, and [net.maizegenetics.tassel.engine.LocalEngine] yields so the browser's
+ * one thread can paint between reports.
  */
 fun interface ProgressReporter {
     /** Called by the operation as work completes. */
-    fun report(progress: Progress)
+    suspend fun report(progress: Progress)
 
     companion object {
         /** Ignores all progress. */
@@ -34,9 +39,9 @@ fun interface ProgressReporter {
 }
 
 /** Reports [completed] of [total] work units. */
-fun ProgressReporter.report(completed: Int, total: Int, message: String? = null) =
+suspend fun ProgressReporter.report(completed: Int, total: Int, message: String? = null) =
     report(Progress(completed.toLong(), total.toLong(), message))
 
 /** Reports [completed] of [total] work units. */
-fun ProgressReporter.report(completed: Long, total: Long, message: String? = null) =
+suspend fun ProgressReporter.report(completed: Long, total: Long, message: String? = null) =
     report(Progress(completed, total, message))

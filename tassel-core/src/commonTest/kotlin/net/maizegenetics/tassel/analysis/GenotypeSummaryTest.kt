@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.analysis
 
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.Buffer
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
@@ -10,6 +11,7 @@ import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.position.PositionList
 import net.maizegenetics.tassel.table.ResultTable
 import net.maizegenetics.tassel.taxa.TaxaList
+import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.Tolerance
 import net.maizegenetics.tassel.testing.assertMatchesGolden
@@ -28,41 +30,41 @@ import kotlin.test.assertTrue
  */
 class GenotypeSummaryTest {
     @Test
-    fun overviewMatchesGolden() = assertMatchesGoldens("overview", tutorialSummary.overview)
+    fun overviewMatchesGolden() = runTest { assertMatchesGoldens("overview", tutorialSummary().overview) }
 
     @Test
-    fun allelesMatchGolden() = assertMatchesGoldens("alleles", tutorialSummary.alleles)
+    fun allelesMatchGolden() = runTest { assertMatchesGoldens("alleles", tutorialSummary().alleles) }
 
     @Test
-    fun sitesMatchGolden() = assertMatchesGoldens("sites", tutorialSummary.sites)
+    fun sitesMatchGolden() = runTest { assertMatchesGoldens("sites", tutorialSummary().sites) }
 
     @Test
-    fun taxaMatchGolden() = assertMatchesGoldens("taxa", tutorialSummary.taxa)
+    fun taxaMatchGolden() = runTest { assertMatchesGoldens("taxa", tutorialSummary().taxa) }
 
     @Test
-    fun tablesAreShapedAsTassel5() {
+    fun tablesAreShapedAsTassel5() = runTest {
         assertEquals(
             listOf("Overall Summary", "Allele Summary", "Site Summary", "Taxa Summary"),
-            tutorialSummary.tables.map { it.title },
+            tutorialSummary().tables.map { it.title },
         )
-        assertEquals(15, tutorialSummary.overview!!.rowCount)
-        assertEquals(3093, tutorialSummary.sites!!.rowCount)
-        assertEquals(281, tutorialSummary.taxa!!.rowCount)
+        assertEquals(15, tutorialSummary().overview!!.rowCount)
+        assertEquals(3093, tutorialSummary().sites!!.rowCount)
+        assertEquals(281, tutorialSummary().taxa!!.rowCount)
         // Fifteen fixed columns, four each for alleles 3 to 6, then six more.
-        assertEquals(37, tutorialSummary.sites!!.columnCount)
+        assertEquals(37, tutorialSummary().sites!!.columnCount)
     }
 
     @Test
-    fun countsAreDoublesInTheOverviewAndLongsInTheAlleleTable() {
+    fun countsAreDoublesInTheOverviewAndLongsInTheAlleleTable() = runTest {
         // TASSEL 5 holds every overview value as a Double, which is why its full-precision export says "281.0".
-        assertTrue(tutorialSummary.overview!!.rows.all { it[1] is Double }, "overview values")
+        assertTrue(tutorialSummary().overview!!.rows.all { it[1] is Double }, "overview values")
         // The allele table holds its counts as Long, so they print without a decimal point.
-        assertTrue(tutorialSummary.alleles!!.rows.all { it[1] is Long }, "allele counts")
+        assertTrue(tutorialSummary().alleles!!.rows.all { it[1] is Long }, "allele counts")
     }
 
     @Test
-    fun majorMinorPairRowsHaveNoFrequency() {
-        val pairs = tutorialSummary.alleles!!.rows.filter { (it[0] as String).contains(':') }
+    fun majorMinorPairRowsHaveNoFrequency() = runTest {
+        val pairs = tutorialSummary().alleles!!.rows.filter { (it[0] as String).contains(':') }
         assertEquals(16, pairs.size)
         pairs.forEach { assertNull(it[3], "frequency of ${it[0]}") }
         // Every site is counted once, by its major and minor allele.
@@ -70,23 +72,23 @@ class GenotypeSummaryTest {
     }
 
     @Test
-    fun eachReportCanBeTurnedOff() {
-        val onlySites = genotypeSummary(tutorial, overview = false, taxaSummary = false)
+    fun eachReportCanBeTurnedOff() = runTest {
+        val onlySites = genotypeSummary(tutorial(), overview = false, taxaSummary = false)
         assertNull(onlySites.overview)
         assertNull(onlySites.alleles)
         assertNull(onlySites.taxa)
         assertEquals(listOf("Site Summary"), onlySites.tables.map { it.title })
-        val withoutSites = genotypeSummary(tutorial, siteSummary = false, taxaSummary = false)
+        val withoutSites = genotypeSummary(tutorial(), siteSummary = false, taxaSummary = false)
         assertEquals(listOf("Overall Summary", "Allele Summary"), withoutSites.tables.map { it.title })
         // TASSEL 5 recomputes the overview totals in its own pass when the site summary is off. The tutorial file has
         // no rare or undefined allele codes, so that pass gives the same numbers as the site pass.
-        assertEquals(tutorialSummary.overview!!.rows, withoutSites.overview!!.rows)
-        val nothing = genotypeSummary(tutorial, overview = false, siteSummary = false, taxaSummary = false)
+        assertEquals(tutorialSummary().overview!!.rows, withoutSites.overview!!.rows)
+        val nothing = genotypeSummary(tutorial(), overview = false, siteSummary = false, taxaSummary = false)
         assertTrue(nothing.tables.isEmpty())
     }
 
     @Test
-    fun countsOneSidedMissingGenotypesAsHeterozygous() {
+    fun countsOneSidedMissingGenotypesAsHeterozygous() = runTest {
         // TASSEL 5's GenotypeTable.heterozygousCount(site) asks whether the two allele codes differ, so A/N counts as
         // heterozygous even though AlleleStats.heterozygousCount does not count it.
         val summary = genotypeSummary(oneSite("AA", "AN", "AC", "NN"))
@@ -104,7 +106,7 @@ class GenotypeSummaryTest {
     }
 
     @Test
-    fun reportsAbsentAllelesAsTassel5Placeholders() {
+    fun reportsAbsentAllelesAsTassel5Placeholders() = runTest {
         val summary = genotypeSummary(oneSite("AA", "AA"))
         val sites = summary.sites!!
         assertEquals("NA", sites[0, sites.columnIndex("Minor Allele")])
@@ -150,11 +152,11 @@ class GenotypeSummaryTest {
     )
 
     private companion object {
-        val tutorial: GenotypeTable by lazy {
+        val tutorial = SuspendLazy {
             HapMap.read(Buffer().also { it.write(TestData.readBytes("tutorial/mdp_genotype.hmp.txt")) })
         }
 
         /** Summarizing 281 taxa x 3,093 sites is slow on Node and Native, so every test shares one run. */
-        val tutorialSummary: GenotypeSummary by lazy { genotypeSummary(tutorial) }
+        val tutorialSummary = SuspendLazy { genotypeSummary(tutorial()) }
     }
 }

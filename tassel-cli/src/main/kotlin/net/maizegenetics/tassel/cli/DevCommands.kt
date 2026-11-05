@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.restrictTo
+import kotlinx.coroutines.runBlocking
 import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
@@ -64,7 +65,7 @@ class Simulate : CliktCommand(name = "simulate") {
         require(minMaf <= maxMaf) { "--min-maf ($minMaf) is above --max-maf ($maxMaf)" }
         CliLog.info("simulating $taxa taxa x $sites sites, seed $seed")
         val table = simulateGenotypes(taxa, sites, minMaf, maxMaf, missingRate, seed)
-        writeResult(table, output, stderrProgress())
+        runBlocking { writeResult(table, output, stderrProgress()) }
     }
 }
 

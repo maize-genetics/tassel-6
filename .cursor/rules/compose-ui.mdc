@@ -21,6 +21,9 @@ alwaysApply: false
 - Unidirectional state: immutable UI state, events in, a view model per screen.
 - Long-running work runs in coroutines with progress and cancellation surfaced
   in the UI. Never block the main thread (the browser has only one).
+- Core readers and analyses suspend at every progress report (ADR-0019), so
+  "never block" is satisfied by letting those reports through, not by moving
+  work to another thread. There is no worker on wasm.
 - Genotype grids and large tables must be virtualized (`LazyColumn`/
   `LazyRow` or canvas drawing). Never compose one node per genotype cell.
 - Heatmaps and scatter plots draw on `Canvas`; downsample before drawing when

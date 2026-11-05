@@ -60,13 +60,13 @@ val spin = operation<Unit, Int>(id = "spin") {
     }
 }
 
-/** Counts with a plain, non-suspending loop that only reports progress. */
+/** Counts with a plain loop whose only suspension point is the progress report. */
 val countBlocking = operation<Unit, Int>(id = "count-blocking") {
     val total by int(default = 10, range = 1..1000)
     run { _, progress -> countTo(total(), progress) }
 }
 
-private fun countTo(total: Int, progress: ProgressReporter): Int {
+private suspend fun countTo(total: Int, progress: ProgressReporter): Int {
     for (i in 1..total) progress.report(i, total)
     return total
 }

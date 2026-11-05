@@ -21,7 +21,7 @@ import kotlin.js.set
  */
 class BrowserResultFiles : ResultFiles {
     @OptIn(ExperimentalWasmJsInterop::class)
-    override suspend fun save(fileName: String, write: (Sink) -> Unit): Boolean {
+    override suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean {
         val buffer = Buffer()
         write(buffer)
         val parts = JsArray<JsAny?>()

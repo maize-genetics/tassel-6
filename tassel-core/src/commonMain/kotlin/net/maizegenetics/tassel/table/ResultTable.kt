@@ -109,6 +109,8 @@ class ResultTableBuilder(val title: String, val columnNames: List<String>) {
  *     row("Number of Taxa", taxaCount.toDouble())
  * }
  * ```
+ *
+ * Inlined so that [build] can report progress, which suspends (ADR-0019).
  */
-fun resultTable(title: String, columnNames: List<String>, build: ResultTableBuilder.() -> Unit): ResultTable =
+inline fun resultTable(title: String, columnNames: List<String>, build: ResultTableBuilder.() -> Unit): ResultTable =
     ResultTableBuilder(title, columnNames).apply(build).build()

@@ -79,9 +79,9 @@ class OperationCommand(
         // Bind before reading, so bad options are reported without first parsing a large file. The
         // engine binds again from the same text; that is the contract RunRequest carries.
         registry[descriptor.id]?.bind(supplied)
-        val genotypes = input?.let { readGenotypes(it.value, stderrProgress("Reading")) }
         val engine = LocalEngine(registry)
         runBlocking {
+            val genotypes = input?.let { readGenotypes(it.value, stderrProgress("Reading")) }
             val handle = genotypes?.let { engine.put(it) }
             val request = RunRequest(descriptor.id, handle, supplied)
             CliLog.info("running ${descriptor.id}")

@@ -60,7 +60,7 @@ class PrincipalComponentsResult internal constructor(
  * @see net.maizegenetics.analysis.data.PrincipalComponentsPlugin
  * @see net.maizegenetics.stats.PCA.PrinComp
  */
-fun principalComponents(
+suspend fun principalComponents(
     genotypes: GenotypeTable,
     numberOfComponents: Int = DEFAULT_COMPONENTS,
     useCovariance: Boolean = true,
@@ -103,7 +103,7 @@ fun principalComponents(
  * that is all [SymmetricEigenDecomposition] reads. Row-major, so `G[row, column]` is at
  * `row * nTaxa + column`.
  */
-private fun gramMatrix(
+private suspend fun gramMatrix(
     genotypes: GenotypeTable,
     probabilities: ReferenceProbability,
     useCovariance: Boolean,
@@ -123,7 +123,7 @@ private fun gramMatrix(
 }
 
 /** `V = A' U S^-1`: one row per site, holding the first [singular]`.size` eigenvectors. */
-private fun eigenvectorTable(
+private suspend fun eigenvectorTable(
     genotypes: GenotypeTable,
     probabilities: ReferenceProbability,
     eigen: SymmetricEigenDecomposition,
@@ -195,7 +195,7 @@ private fun principalComponentTable(
  * @see net.maizegenetics.stats.PCA.PrinComp.centerCols
  * @see net.maizegenetics.stats.PCA.PrinComp.scaleCenteredMatrix
  */
-private inline fun forEachColumn(
+private suspend inline fun forEachColumn(
     genotypes: GenotypeTable,
     probabilities: ReferenceProbability,
     useCovariance: Boolean,

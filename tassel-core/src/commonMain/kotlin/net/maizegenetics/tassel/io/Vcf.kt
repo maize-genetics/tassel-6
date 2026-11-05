@@ -46,7 +46,7 @@ object Vcf {
      *   position is not an integer, `GT` is not the first `FORMAT` field, a call names an allele the site does not
      *   list, or a line has the wrong number of genotypes.
      */
-    fun read(source: Source, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
+    suspend fun read(source: Source, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
         var line = source.readLine() ?: throw IllegalArgumentException("VCF input is empty")
         while (line.startsWith("##")) {
             line = source.readLine() ?: throw IllegalArgumentException("VCF input has no #CHROM header line")
@@ -295,5 +295,7 @@ object Vcf {
         line.take(EXCERPT_LENGTH) + if (line.length > EXCERPT_LENGTH) "..." else ""
 
     private const val EXCERPT_LENGTH = 25
-    private const val PROGRESS_SITES = 4096
+
+    /** Sites between progress reports, and so between suspension points; see `HapMap.PROGRESS_SITES`. */
+    private const val PROGRESS_SITES = 256
 }

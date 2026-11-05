@@ -91,7 +91,10 @@ internal class ReferenceProbability private constructor(
          * Reads [genotypes] once to find each site's major allele and each taxon's mean, which is
          * the first of the three passes PCA makes over the data.
          */
-        fun of(genotypes: GenotypeTable, progress: ProgressReporter = ProgressReporter.None): ReferenceProbability {
+        suspend fun of(
+            genotypes: GenotypeTable,
+            progress: ProgressReporter = ProgressReporter.None,
+        ): ReferenceProbability {
             val numberOfTaxa = genotypes.numberOfTaxa
             val numberOfSites = genotypes.numberOfSites
             val majorAlleles = ByteArray(numberOfSites)

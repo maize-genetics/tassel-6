@@ -39,7 +39,8 @@ interface GenotypeFiles {
 /**
  * Reads this file as HapMap, reporting progress.
  *
- * Parsing is CPU work with no suspension points, so callers decide which context it runs on; see `AppViewModel`.
+ * Parsing suspends at every progress report (ADR-0019), so a reporter that yields keeps a single-threaded caller
+ * responsive. Which context the parse runs on is still the caller's choice; see `AppViewModel`.
  */
 suspend fun GenotypeFile.readGenotypes(progress: ProgressReporter = ProgressReporter.None): GenotypeTable =
     open().use { HapMap.read(it, progress) }

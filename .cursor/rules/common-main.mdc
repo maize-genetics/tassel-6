@@ -36,7 +36,9 @@ table.siteBlocks(blockSize = 4096).forEach { block -> /* accumulate */ }
 - Genotypes are bytes, encoded as in TASSEL 5's `NucleotideAlignmentConstants`
   (diploid packed in one byte: high nibble and low nibble alleles, `0xFF`
   missing). Do not invent a second encoding.
-- Report progress and check cancellation in long loops (`ensureActive()`).
+- Report progress in long loops. `ProgressReporter.report` suspends
+  (ADR-0019), so one call is the cancellation check and the yield point too;
+  a kernel that reports needs no separate `ensureActive()` or `yield()`.
 
 # Porting
 

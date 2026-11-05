@@ -29,6 +29,12 @@ interface AnalysisEngine {
 
     /** The data behind [handle]. */
     suspend fun result(handle: DataHandle): Any
+
+    /**
+     * Frees the data behind [handle]. The app calls this when a dataset is closed; without it an engine holds
+     * every table a session ever loaded, which matters most for a remote engine paying for the memory.
+     */
+    suspend fun release(handle: DataHandle)
 }
 
 /** [AnalysisEngine] over the in-process [LocalEngine]. */
@@ -41,4 +47,6 @@ class LocalAnalysisEngine(private val engine: LocalEngine) : AnalysisEngine {
         engine.run(request, progress)
 
     override suspend fun result(handle: DataHandle): Any = engine.get(handle)
+
+    override suspend fun release(handle: DataHandle) = engine.release(handle)
 }

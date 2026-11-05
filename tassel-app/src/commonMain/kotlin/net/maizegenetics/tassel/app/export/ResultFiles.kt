@@ -16,7 +16,7 @@ interface ResultFiles {
      *
      * @return false when the user cancelled, so the caller can say nothing rather than claim a save.
      */
-    suspend fun save(fileName: String, write: (Sink) -> Unit): Boolean
+    suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean
 }
 
 /**
