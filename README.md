@@ -117,6 +117,7 @@ machine, use `./gradlew check -x macosArm64Test`. `linuxX64Test` is the native g
 ## Documentation
 
 - [Benchmarks](docs/poc/benchmarks.md) and the [demo walkthrough](docs/poc/demo.md)
+- [Changelog](CHANGELOG.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Porting ledger](docs/porting-ledger.md): what has been ported from TASSEL 5, and from where
 - [AGENTS.md](AGENTS.md): the rules this repository is developed under, by people and by agents
