@@ -44,7 +44,15 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'golden-update') }}
+          BASE: ${{ github.event.pull_request.base.ref }}
         run: |
+          # A release or hotfix PR into main replays commits that were already reviewed against
+          # develop, so its file list carries every golden added since the last release. Checking it
+          # again here would fail every release PR and say nothing about that PR.
+          if [[ "$BASE" == "main" ]]; then
+            echo "Base branch is main; the goldens in this PR were reviewed on their develop PRs."
+            exit 0
+          fi
           changed=$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
             --jq '.[] | .filename, (.previous_filename // empty)' | grep '^testdata/golden/' | sort -u || true)
           if [[ -z "$changed" ]]; then
