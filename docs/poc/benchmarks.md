@@ -128,7 +128,7 @@ TASSEL 6 stream.
 
 ## Cost of the responsive-UI change
 
-ADR-0019, proposed in [#56](https://github.com/maize-genetics/tassel-6/pull/56), makes
+ADR-0019, written in [#56](https://github.com/maize-genetics/tassel-6/pull/56) and since accepted, makes
 `ProgressReporter.report` a suspending function so that long-running core work yields to the event
 loop, which is what keeps the browser drawing. Yielding is not free, so it was measured on the JVM
 before and after:
@@ -148,15 +148,38 @@ small relative to the reported times, re-running after those merge should not mo
 
 ## The browser
 
-The same `commonMain` code compiled to WebAssembly, on the tutorial data. Measured against the
-production bundle (`./gradlew :tassel-app:wasmJsBrowserDistribution`) built from the ADR-0019
-branch, served over `http://localhost`, in Chrome on the same Mac, with the tab in the foreground.
+The same `commonMain` code compiled to WebAssembly, on the tutorial data. Measured on 2026-11-06
+against the production bundle (`./gradlew :tassel-app:wasmJsBrowserDistribution`) at `dd6e29f`,
+served over `http://127.0.0.1:8765`, in Chrome on the same Mac, with the tab in the foreground.
+That window's animation frames were 16.7 ms apart.
 
 Wall time is from the click to the result appearing. **Longest frame gap** is the longest interval
 between two `requestAnimationFrame` callbacks during that window, which is the number that decides
-whether the page feels alive: this display refreshes every 8 ms, and anything past about 100 ms
-reads as a freeze. Each step was run twice on a freshly loaded page; the two runs agreed to within
-6 ms, so one set is reported.
+whether the page feels alive: anything past about 100 ms reads as a freeze. Each step was run twice
+on a freshly loaded page. The two runs did not agree to a few milliseconds, so both are reported.
+
+| Step | Wall time | Longest frame gap | Frame gaps over 50 ms |
+|------|----------:|------------------:|----------------------:|
+| Load tutorial dataset, run 1 | 229 ms | 66 ms | 1 |
+| Load tutorial dataset, run 2 | 169 ms | 100 ms | 1 |
+| kinship, run 1 | 608 ms | 583 ms | 1 |
+| kinship, run 2 | 575 ms | 566 ms | 1 |
+| pca, run 1 | 638 ms | 583 ms | 1 |
+| pca, run 2 | 454 ms | 417 ms | 1 |
+
+Loading paints before the grid. A compositor frame between the click and the genotype grid showed
+"Opening mdp_genotype.hmp.txt" and an indeterminate progress bar, with the Load button disabled.
+The other frames in that window were 16.7 ms apart except for the one longer gap in the table.
+Four later loads of the same file, on pages that had already parsed it once, had longest gaps of
+50 ms, 33 ms, 17 ms, and 33 ms.
+
+Kinship and PCA do not. Each run is two or four animation frames and one gap that covers almost the
+whole analysis, so the browser does not get the thread back between progress reports. The yields
+are in the code; in this Chrome they do not become frames. That is the open limit, tracked for
+kinship by [#70](https://github.com/maize-genetics/tassel-6/issues/70) and for moving the work off
+the main thread by [#71](https://github.com/maize-genetics/tassel-6/issues/71).
+
+The table this remeasure replaced, taken before the running banner yielded after each report:
 
 | Step | Wall time | Longest frame gap | Frame gaps over 50 ms |
 |------|----------:|------------------:|----------------------:|
@@ -165,14 +188,8 @@ reads as a freeze. Each step was run twice on a freshly loaded page; the two run
 | kinship | 905 ms | 583 ms | 2 |
 | pca | 1,216 ms | 1,083 ms | 1 |
 
-Reading is now smooth, which is what ADR-0019 set out to fix: the HapMap reader reports every 256
-sites, and the engine yields at every report, so a 160 ms parse costs at most a dropped frame or two
-instead of locking the tab.
-
-The frame-gap table above was measured before two later changes: PCA reports every 256 sites inside
-each pass, and the running banner yields after it records a progress report, the same way the
-loading banner does. What was remeasured, on the tutorial file, is the time between progress
-reports, which is the stretch a yield can break up:
+What was measured between progress reports, which is the stretch a yield can break up if the
+browser actually paints there:
 
 | Path | Reports | Longest stretch between reports |
 |------|--------:|--------------------------------:|
@@ -183,26 +200,20 @@ reports, which is the stretch a yield can break up:
 | PCA eigensolver, JVM, warm | none | about 35 ms, inside the gap before the first eigenvector report |
 | PCA eigensolver, wasmJs on Node, warm | none | 139 ms, in that same gap |
 
-`centeredIbs` was already reporting inside the block: 31 times on this file, about every 100 sites,
-not once per 1,000-site block. A group of allele counts may run past the report fence, so a step
-lands a little over 100 sites. The 583 ms frame gap above is not one of those steps. The steps are
-about 22 ms on Wasm. The page stayed frozen because the running banner updated and then kept
-working on the same turn, so the browser never got the thread back between reports.
+`centeredIbs` reports inside the block: 31 times on this file, about every 100 sites, not once per
+1,000-site block. A group of allele counts may run past the report fence, so a step lands a little
+over 100 sites. On wasmJs under Node those steps are about 22 ms. The browser frame gap is not one
+of those steps. It is one interval of about 570 ms, so the paints are not landing between the reports.
 
-PCA was the opposite problem. Each of its three passes called `siteBlocks()` with the default block
-of 4,096 sites, and the tutorial file has 3,093, so each pass reported once, after it finished. On
-the JVM that was 16 ms, then 141 ms in the Gram pass, then 70 ms for the eigensolver plus the
-eigenvector pass. Reporting every 256 sites splits the Gram pass. It does not split the
-eigensolver: `SymmetricEigenDecomposition` has no progress report, and ADR-0019 does not give it
-one. On a warm Wasm run that stretch is 139 ms, which is past the 100 ms line and is the gap this
-change leaves in place.
-
-A `requestAnimationFrame` remeasure of the page still has to be done by someone who can click the
-canvas. The frame-gap table above is the one to replace when that happens.
+PCA's passes report every 256 sites. That splits the Gram pass on Node (17 ms). It does not split
+the eigensolver: `SymmetricEigenDecomposition` has no progress report, and ADR-0019 does not give it
+one. On a warm Wasm run under Node that stretch is 139 ms. In Chrome the whole PCA run is still one
+gap of 417 ms or 583 ms, so the per-report yields are not reaching the screen there either.
 
 For scale, the same two analyses on the same data through the JVM CLI take 0.15 s and 0.34 s of
-work, so WebAssembly is roughly 3x to 6x slower here. That is the expected cost of the target, not
-a regression. The extra PCA reports did not slow the JVM down: four warmed tutorial runs took 181
+work. The browser walls above are about 0.6 s for kinship and about 0.5 s for PCA, so kinship is
+about 4x the JVM work and PCA is under 2x. That is the expected cost of the target, not a
+regression. The extra PCA reports did not slow the JVM down: four warmed tutorial runs took 181
 to 193 ms (median 188 ms) with 39 reports, against 229 ms for one warmed run when each pass
 reported once.
 

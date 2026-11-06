@@ -147,16 +147,14 @@ because it is one implementation.
 
 Two things to say honestly while it runs:
 
-- **Loading is smooth.** The reader reports progress every 256 sites and the engine yields at every
-  report, so the page keeps drawing through the parse
-  (ADR-0019, [#56](https://github.com/maize-genetics/tassel-6/pull/56)). The tutorial file loads
-  in about 160 ms with no dropped frame longer than 33 ms.
-- **Kinship reports during the matrix, PCA reports during each pass, and the eigensolver does not.**
-  Centered IBS reports about every 100 sites (31 times on the tutorial file). Each PCA pass reports
-  every 256 sites. The decomposition between the Gram pass and the eigenvector pass still has no
-  report; on a warm Wasm run that stretch is about 140 ms. The frame gaps in
-  [`docs/poc/benchmarks.md`](benchmarks.md) were measured before the running banner yielded after
-  each report, so say that they are the previous measurement, not a number to quote as current.
+- **Loading paints.** The reader reports progress every 256 sites and the engine yields at every
+  report (ADR-0019). On a fresh page the tutorial file loads in 169 ms or 229 ms, with one frame
+  gap of 66 ms or 100 ms, and a frame before the grid shows "Opening mdp_genotype.hmp.txt".
+- **Kinship and PCA still occupy the thread for one long gap.** Centered IBS reports about every
+  100 sites (31 times on the tutorial file) and each PCA pass reports every 256 sites, but in
+  Chrome those yields do not become frames: kinship's longest gap is 566 ms or 583 ms, and PCA's
+  is 417 ms or 583 ms. The eigensolver still has no report; under Node that stretch is about 140 ms.
+  Quote the table in [`docs/poc/benchmarks.md`](benchmarks.md), not a single smoothed number.
 
 If someone asks about large files in the browser: the PoC has no web workers, so this is the single
 UI thread doing real work. That is a Phase 1 item, not a gap we are pretending does not exist.

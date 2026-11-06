@@ -1,6 +1,6 @@
 # ADR-0019: Progress reports suspend, putting a yield point inside long-running core work
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-05
 
 ## Context
