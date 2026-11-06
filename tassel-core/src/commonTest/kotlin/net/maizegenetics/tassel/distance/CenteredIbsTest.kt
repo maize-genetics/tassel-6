@@ -86,7 +86,14 @@ class CenteredIbsTest {
     fun reportsProgressOverEverySite() = runTest {
         val reports = mutableListOf<Progress>()
         centeredIbs(tutorial(), progress = ProgressReporter { reports += it })
-        assertTrue(reports.size > 1, "expected a report per run of sites, got ${reports.size}")
+        val steps = listOf(reports.first().completed) + reports.zipWithNext { previous, next ->
+            next.completed - previous.completed
+        }
+        // 3,093 sites, blocks of 1,000, ten reports a block: 31 reports, each about 100 sites.
+        // One allele-count group may run past the fence, so a step can land a little over 100.
+        // A report per block would be four steps of about 1,000 sites.
+        assertEquals(31, reports.size, "steps: $steps")
+        assertTrue(steps.all { it in 1..150 }, "a step left the ~100 site cadence: $steps")
         assertTrue(reports.all { it.total == tutorial().numberOfSites.toLong() })
         assertEquals(tutorial().numberOfSites.toLong(), reports.last().completed)
         assertEquals(reports.map { it.completed }.sorted(), reports.map { it.completed })
