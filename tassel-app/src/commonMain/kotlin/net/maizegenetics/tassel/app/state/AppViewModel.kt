@@ -18,6 +18,7 @@ import net.maizegenetics.tassel.app.data.GenotypeFile
 import net.maizegenetics.tassel.app.data.GenotypeFiles
 import net.maizegenetics.tassel.app.data.readGenotypes
 import net.maizegenetics.tassel.app.export.ResultFiles
+import net.maizegenetics.tassel.app.yieldToEventLoop
 import net.maizegenetics.tassel.engine.DataHandle
 import net.maizegenetics.tassel.engine.RunRequest
 import net.maizegenetics.tassel.genotype.GenotypeTable
@@ -161,9 +162,10 @@ class AppViewModel(
      * call to make (ADR-0004).
      *
      * The [yield] before the run lets the "Running" banner reach the screen before the operation starts.
-     * [runProgress] yields again after each report is written into that banner, so the new progress paints
-     * before the next slice of work. `LocalEngine` also yields when it forwards the report, which is what
-     * makes the run interruptible (ADR-0019).
+     * [runProgress] suspends again after each report is written into that banner. On the desktop that is a
+     * coroutine yield; in the browser it is a timer tick, because a yield there does not reach
+     * `requestAnimationFrame` (tassel-6#70). `LocalEngine` also yields when it forwards the report, which is
+     * what makes the run interruptible (ADR-0019).
      */
     private fun runAnalysis() {
         val form = state.value.form ?: return
@@ -257,11 +259,11 @@ class AppViewModel(
 
     /**
      * Pushes the operation's reports into [Activity.Running], ignoring them once the run has moved on.
-     * The [yield] is what lets that update reach the screen before the next slice of the analysis.
+     * [yieldToEventLoop] is what lets that update reach the screen before the next slice of the analysis.
      */
     private fun runProgress() = ProgressReporter { progress ->
         mutate { (activity as? Activity.Running)?.let { copy(activity = it.copy(progress = progress)) } ?: this }
-        yield()
+        yieldToEventLoop()
     }
 
     /** Replaces the state with the result of [change] applied to it, with the old state as the receiver. */
