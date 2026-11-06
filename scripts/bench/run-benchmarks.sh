@@ -7,15 +7,22 @@
 # on both tools under /usr/bin/time, reporting the median wall time and the peak resident set over
 # --runs runs after one warm-up.
 #
-# Both tools get the same -Xmx so neither wins on heap alone, and TASSEL 5 gets -maxThreads 4 for
-# the same reason scripts/generate-goldens.sh does: it fixes Centered IBS at 1,000-site blocks, so
-# the work does not depend on the host's core count. TASSEL 6 is single threaded today.
+# Both tools get the same -Xmx so neither wins on heap alone, and the pipeline rows pin TASSEL 5
+# at -maxThreads 4 for the same reason scripts/generate-goldens.sh does: it fixes Centered IBS at
+# 1,000-site blocks. kinship-kernel sweeps 1, 4, and 8 threads instead, and times TASSEL 6's
+# centeredIbs directly.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
 # JDK 25 through the Gradle toolchain.
 #
 # Usage: scripts/bench/run-benchmarks.sh [--runs N] [--heap 8g] [--million]
 #                                        [--only ANALYSIS] [--dataset NAME]
+#
+# ANALYSIS includes the pipeline rows (load, summary, filter-sites, filter-taxa, kinship, pca)
+# and kinship-kernel, which times centeredIbs alone and sweeps TASSEL 5 at 1, 4, and 8 threads.
+# synthetic-5k (5,000 taxa x 100,000 sites) and, with --million, synthetic-1m (1,000 x 1,000,000)
+# are part of that sweep. Both need --heap 16g. A smaller heap skips them, unless --dataset names
+# one, in which case the script stops. The 1,000,000-site HapMap is about 2 GB of text.
 set -euo pipefail
 
 TASSEL5_VERSION="5.2.98"
@@ -41,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     --million) MILLION=1; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -67,6 +74,23 @@ JAVA_MAJOR="$("$JAVA" -XshowSettings:properties -version 2>&1 |
   awk -F' = ' '/java\.specification\.version/ { print $2 }')"
 [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] && ((JAVA_MAJOR >= 21)) ||
   die "TASSEL $TASSEL5_VERSION needs Java 21 or newer; found '$JAVA_MAJOR'"
+# TASSEL 6 class files are JDK 25 (ADR-0011). The launcher uses JAVA_HOME and otherwise
+# `java` on PATH. TASSEL 5 keeps the JDK chosen above, which only has to be 21 or newer.
+if ((JAVA_MAJOR < 25)); then
+  JDK25_HOME=""
+  for candidate in "$HOME"/.gradle/jdks/*/jdk-*/Contents/Home; do
+    [[ -x "$candidate/bin/java" ]] || continue
+    major=$("$candidate/bin/java" -XshowSettings:properties -version 2>&1 |
+      awk -F' = ' '/java\.specification\.version/ { print $2; exit }')
+    if [[ "$major" == "25" ]]; then
+      JDK25_HOME="$candidate"
+      break
+    fi
+  done
+  [[ -n "$JDK25_HOME" ]] ||
+    die "TASSEL 6 needs JDK 25; found Java $JAVA_MAJOR and no toolchain JDK under ~/.gradle/jdks"
+  export JAVA_HOME="$JDK25_HOME"
+fi
 command -v /usr/bin/time >/dev/null || die "/usr/bin/time not found; it is what reports peak memory"
 
 mkdir -p "$CACHE" "$WORK"
@@ -157,6 +181,106 @@ simulate() {
   "$TASSEL6" --quiet dev simulate --taxa "$taxa" --sites "$sites" --seed 0 --output "$path" >>"$LOG" 2>&1 ||
     die "could not simulate $taxa x $sites; see $LOG"
 }
+
+heap_mib() {
+  local spec="$1"
+  local number="${spec%[GgMm]}"
+  case "$spec" in
+    *g|*G) echo $((number * 1024)) ;;
+    *m|*M) echo "$number" ;;
+    *) die "unrecognized heap '$spec'; use 8g or 512m" ;;
+  esac
+}
+
+require_heap() {
+  local need="$1" why="$2" have
+  have=$(heap_mib "$HEAP")
+  ((have >= need)) ||
+    die "$why needs --heap $((need / 1024))g or more (currently --heap $HEAP)"
+}
+
+# Times centeredIbs, then TASSEL 5's kinship pipeline at 1, 4, and 8 threads.
+# TASSEL 5's numbers include JVM startup and the file read; TASSEL 6's do not.
+run_kinship_kernel() {
+  local sets=() name
+  kernel_wanted() { [[ -z "$DATASET" || "$DATASET" == "$1" ]]; }
+  kernel_wanted tutorial && sets+=("tutorial|$TUTORIAL|1024")
+  if kernel_wanted synthetic-100k; then
+    local path="$WORK/sim_1000x100000.hmp.txt"
+    simulate 1000 100000 "$path"
+    sets+=("synthetic-100k|$path|1024")
+  fi
+  if kernel_wanted synthetic-5k; then
+    if (( $(heap_mib "$HEAP") < 16384 )); then
+      [[ -z "$DATASET" ]] || die "synthetic-5k needs --heap 16g (5,000 taxa x 100,000 sites; currently --heap $HEAP)"
+      echo "skipping synthetic-5k: needs --heap 16g (currently --heap $HEAP)"
+    else
+      local path="$WORK/sim_5000x100000.hmp.txt"
+      simulate 5000 100000 "$path"
+      sets+=("synthetic-5k|$path|16384")
+    fi
+  fi
+  if ((MILLION)) && kernel_wanted synthetic-1m; then
+    if (( $(heap_mib "$HEAP") < 16384 )); then
+      [[ -z "$DATASET" ]] ||
+        die "synthetic-1m needs --heap 16g (1,000 taxa x 1,000,000 sites, about 2 GB of HapMap text; currently --heap $HEAP)"
+      echo "skipping synthetic-1m: needs --heap 16g (currently --heap $HEAP)"
+    else
+      local path="$WORK/sim_1000x1000000.hmp.txt"
+      simulate 1000 1000000 "$path"
+      sets+=("synthetic-1m|$path|16384")
+    fi
+  fi
+  ((${#sets[@]})) || die "no kinship-kernel datasets selected; --dataset was '$DATASET'"
+
+  echo
+  echo "Host:    $(uname -srm)"
+  echo "Java:    $("$JAVA" -version 2>&1 | head -1)"
+  echo "TASSEL5: $TASSEL5_VERSION at -maxThreads 1, 4, and 8 (pipeline, startup included)"
+  echo "TASSEL6: kinship-bench median of $RUNS after one warm-up, file read not included"
+  echo "Heap:    -Xmx$HEAP"
+  echo
+  printf '| Dataset | T6 kernel median | T6 peak | T5 1 thread | T5 4 threads | T5 8 threads | Kernel line |\n'
+  printf '|---------|-----------------:|--------:|------------:|-------------:|-------------:|:------------|\n'
+
+  local entry dataset input need stats out rss median threads five line
+  for entry in "${sets[@]}"; do
+    dataset="${entry%%|*}"
+    input="${entry#*|}"; input="${input%|*}"
+    need="${entry##*|}"
+    require_heap "$need" "$dataset"
+    stats="$WORK/.time"
+    out="$WORK/kernel.out"
+    /usr/bin/time $TIME_FLAG "$TASSEL6" --quiet dev kinship-bench --input "$input" --runs "$RUNS" \
+      >"$out" 2>"$stats" || die "kinship-bench failed on $dataset; see $LOG"
+    cat "$stats" >>"$LOG"
+    if [[ "$TIME_FLAG" == "-l" ]]; then
+      rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+    else
+      rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+    fi
+    line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+    median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+    [[ -n "$median" ]] || die "kinship-bench wrote no median for $dataset: $(cat "$out")"
+    local -a thread_times=()
+    for threads in 1 4 8; do
+      CMD=("$JAVA" "-Xmx$HEAP" -cp "$T5/sTASSEL.jar" net.maizegenetics.pipeline.TasselPipeline \
+        -maxThreads "$threads" -h "$input" -KinshipPlugin -method Centered_IBS -endPlugin \
+        -export "$WORK/t5_${dataset}_k$threads" -exportType SqrMatrix)
+      five=$(repeat_measure "${CMD[@]}")
+      thread_times+=("${five%% *}")
+    done
+    printf '| %s | %s s | %s MiB | %s s | %s s | %s s | `%s` |\n' \
+      "$dataset" "$median" "${rss:-0}" "${thread_times[0]}" "${thread_times[1]}" "${thread_times[2]}" "$line"
+  done
+  echo
+  echo "TASSEL 5 columns are the full pipeline (startup included). Full tool output: $LOG"
+}
+
+if [[ "$ONLY" == "kinship-kernel" ]]; then
+  run_kinship_kernel
+  exit 0
+fi
 
 DATASETS=()
 wanted() { [[ -z "$DATASET" || "$DATASET" == "$1" ]]; }

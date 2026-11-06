@@ -24,8 +24,9 @@ and subcommands each row runs.
 
 Both tools get the same heap so neither wins on memory configuration alone. TASSEL 5 is pinned to
 four threads for the same reason `scripts/generate-goldens.sh` pins it: it fixes Centered IBS at
-1,000-site blocks, so results do not depend on the host's core count. **TASSEL 6 is single threaded
-today**, which matters for one row below and is called out there.
+1,000-site blocks, so results do not depend on the host's core count. The pipeline table below was
+measured when TASSEL 6 was single threaded. The kinship kernel section later in this document is
+the blocked product, which uses every core the JVM dispatcher has.
 
 Datasets are the tutorial HapMap (281 taxa x 3,093 sites) and a synthetic 1,000 taxa x 100,000
 sites HapMap from `tassel dev simulate --seed 0`. The 1,000 x 1,000,000 set the roadmap also asks
@@ -73,34 +74,67 @@ honest comparison of the analyses themselves.
 
 ### Parity
 
-For `load`, `filter-sites`, `filter-taxa`, and `kinship` on the tutorial data, the two tools' output
-files are **byte-for-byte identical**, including the `##Centered_IBS.SumPk=918.7297856754799` header
-on the kinship matrix. This is the same property the golden tests enforce (see
-[ADR-0009](../adr/0009-strict-golden-parity.md)); the benchmark run is an independent check of it
-at the command-line level.
+For `load`, `filter-sites`, and `filter-taxa` on the tutorial data, the two tools' output files are
+**byte-for-byte identical**. Kinship from the default kernel agrees with
+`golden/kinship/centered_ibs.txt` within `abs 8e-6`, and `Centered_IBS.SumPk` within `abs 1e-4`
+([ADR-0020](../adr/0020-kinship-numerics.md)). The retained TASSEL 5-order kernel is still
+byte-identical, including the `SumPk` text. That split is what `CenteredIbsTest` enforces.
+
+## Kinship kernel baseline
+
+`centeredIbs` on its own, after one discarded warm-up, median of 3. The file is read before the
+clock starts. TASSEL 5 is the whole kinship pipeline, so its columns include JVM startup (about
+5.3 s on this host; see the startup row above) and the HapMap read. Reproduce with:
+
+```bash
+scripts/bench/run-benchmarks.sh --only kinship-kernel --dataset tutorial --runs 3
+scripts/bench/run-benchmarks.sh --only kinship-kernel --dataset synthetic-100k --runs 3
+scripts/bench/run-benchmarks.sh --only kinship-kernel --dataset synthetic-5k --heap 16g --runs 3
+scripts/bench/run-benchmarks.sh --only kinship-kernel --dataset synthetic-1m --heap 16g --million --runs 3
+```
+
+`synthetic-5k` is 5,000 taxa x 100,000 sites and `synthetic-1m` is 1,000 x 1,000,000. Both need
+`--heap 16g`. A smaller heap skips them, unless `--dataset` names one, in which case the script
+stops. The 1,000,000-site HapMap is about 2 GB of text. Neither of those two sizes was run for the
+table below.
+
+| | |
+|---|---|
+| Host | Apple M2 Max, 12 cores, 64 GiB, Darwin 27.0.0 arm64 |
+| TASSEL 6 JDK | Eclipse Temurin 25.0.4.1+1, `-Xmx8g` (Gradle toolchain; the CLI is JDK 25) |
+| TASSEL 5 JDK | Eclipse Temurin 21.0.7, `-Xmx8g` |
+| TASSEL 6 | `tassel dev kinship-bench`, median of 3 after one warm-up |
+| TASSEL 5 | v5.2.98 pipeline, median of 3 after one warm-up |
+
+| Dataset | T6 kernel median | T6 peak | T5 1 thread | T5 4 threads | T5 8 threads |
+|---------|-----------------:|--------:|------------:|-------------:|-------------:|
+| tutorial (281 x 3,093) | 0.025 s | 146 MiB | 5.55 s | 5.52 s | 5.52 s |
+| synthetic-100k (1,000 x 100,000) | 3.207 s | 845 MiB | 14.55 s | 8.11 s | 7.11 s |
+
+On 1,000 x 100,000 the kernel is 3.2 s. The PoC kernel on the same shape was 19.3 s of work, and
+TASSEL 5's 4-thread pipeline was 8.13 s of wall time, about 2.8 s of work after startup. Tutorial
+rows do not separate thread counts: TASSEL 5's startup is the whole measurement.
+
+The kernel line for the 100,000-site run was
+`taxa=1000 sites=100000 panelColumns=524 panelSites=524 min=3.193361 median=3.206955`.
+The tutorial run was
+`taxa=281 sites=3093 panelColumns=1865 panelSites=100 min=0.021417 median=0.024996`.
+
+On the tutorial file the written `SumPk` is `918.729785675474`, against the golden
+`918.7297856754799` (absolute difference 5.9e-12). The largest absolute difference in the matrix
+is 6.0e-7, inside the `abs 8e-6` contract.
 
 ## Known limits
 
-### Centered IBS at scale is slower, and most of that is threading
+### Centered IBS at scale
 
-The one row where TASSEL 6 loses is `synthetic-100k kinship`: 19.51 s against 8.13 s. Breaking it
-down, with startup subtracted and TASSEL 5 re-measured at one thread:
-
-| Configuration | Kinship work on 1000 x 100K |
-|---------------|----------------------------:|
-| TASSEL 5, 4 threads | 2.8 s |
-| TASSEL 5, 1 thread | 9.1 s |
-| TASSEL 6, 1 thread | 19.3 s |
-
-TASSEL 5's `EndelmanDistanceMatrix` runs a parallel `Stream` over a site spliterator, which buys it
-3.2x here. The remaining 2.1x is single-threaded throughput: TASSEL 5 accumulates over packed
-two-bit allele-presence words, while the ported `centeredIbs` walks sites through the site-block
-API. Neither gap is a correctness problem, and the tutorial-sized row shows the ported kernel is
-competitive when the parallel stream has too little work to help.
-
-Parallelism is deliberately absent from the PoC: `commonMain` has no threads on wasm, so adding
-them means a platform-specific execution strategy, which is Phase 1 work rather than something to
-improvise here.
+The PoC kernel was single-threaded and took 19.3 s of work on 1,000 x 100,000 sites, against 2.8 s
+for TASSEL 5 at 4 threads. The default kernel is now the blocked dosage product in
+`distance.centeredIbs` (ADR-0020), parallel on the JVM and on Native, and the baseline above is the
+number to beat. `distance.centeredIbsTassel5Order` keeps the bit-exact port for tests. wasmJs stays
+one thread. JVM SIMD and a native BLAS were not faster paths we shipped; see
+[kinship-jvm-fast-path.md](kinship-jvm-fast-path.md) and
+[kinship-native-fast-path.md](kinship-native-fast-path.md).
 
 ### The eigensolver is the PoC's slowest primitive
 
@@ -173,11 +207,19 @@ The other frames in that window were 16.7 ms apart except for the one longer gap
 Four later loads of the same file, on pages that had already parsed it once, had longest gaps of
 50 ms, 33 ms, 17 ms, and 33 ms.
 
-Kinship and PCA do not. Each run is two or four animation frames and one gap that covers almost the
-whole analysis, so the browser does not get the thread back between progress reports. The yields
-are in the code; in this Chrome they do not become frames. That is the open limit, tracked for
-kinship by [#70](https://github.com/maize-genetics/tassel-6/issues/70) and for moving the work off
-the main thread by [#71](https://github.com/maize-genetics/tassel-6/issues/71).
+Kinship and PCA did not, in that build. Each run was two or four animation frames and one gap that
+covered almost the whole analysis. `yield()` on wasm resumes as a microtask, so Chrome did not run
+`requestAnimationFrame` between reports even though `centeredIbs` already reports about every 100
+sites.
+
+The wasm UI reporter now suspends with `delay(1)` (`yieldToEventLoop`), which is a timer and
+therefore a macrotask. Desktop stays on `yield()` so JVM kinship time does not pick up a sleep.
+A foreground remeasure of the table above is still required: an automated tab in this session
+throttled `requestAnimationFrame` to about 300 ms, which is not the 16.7 ms cadence of the
+foreground Chrome window, so it cannot replace the 566–583 ms kinship gaps. The same production
+bundle did load the tutorial file and draw the Centered IBS heatmap and the matrix, so the
+analysis runs to completion in the page. The worker question is in
+[wasm-worker-spike.md](wasm-worker-spike.md).
 
 The table this remeasure replaced, taken before the running banner yielded after each report:
 
@@ -223,6 +265,9 @@ reported once.
 
 - **1,000 x 1,000,000 sites.** Behind `--million`. TASSEL 5's PCA will not fit in a reasonable heap
   at that size, so the row would compare TASSEL 6 against a failure.
-- **Native targets.** `linuxX64` and `macosArm64` run the same `commonMain` code and the same
-  golden tests, but there is no native CLI yet to time (Phase 1).
-- **Multi-threaded TASSEL 6.** See the Centered IBS limit above.
+- **Native targets.** `linuxX64` and `macosArm64` compile the same `commonMain` code. There is no
+  native CLI yet to time (Phase 1). `linuxX64Test` does not run on a Mac, and linking
+  `macosArm64Test` on this machine failed in `xcrun xcodebuild -version` (exit 72), so native
+  timings are in [kinship-native-fast-path.md](kinship-native-fast-path.md).
+- **5,000 taxa and 1,000,000 sites.** The kinship-kernel commands are above. They were not run for
+  this table.
