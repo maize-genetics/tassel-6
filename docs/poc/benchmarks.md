@@ -182,10 +182,11 @@ small relative to the reported times, re-running after those merge should not mo
 
 ## The browser
 
-The same `commonMain` code compiled to WebAssembly, on the tutorial data. Measured on 2026-11-06
-against the production bundle (`./gradlew :tassel-app:wasmJsBrowserDistribution`) at `dd6e29f`,
-served over `http://127.0.0.1:8765`, in Chrome on the same Mac, with the tab in the foreground.
-That window's animation frames were 16.7 ms apart.
+The same `commonMain` code compiled to WebAssembly, on the tutorial data. Load and PCA were measured
+on 2026-11-06 against the production bundle (`./gradlew :tassel-app:wasmJsBrowserDistribution`) at
+`dd6e29f`. Kinship was measured again the same day, after the heatmap was painted in slices, against
+a fresh production bundle served the same way: `http://127.0.0.1:8765`, Chrome on the same Mac, tab
+in the foreground. That window's animation frames were 16.7 ms apart.
 
 Wall time is from the click to the result appearing. **Longest frame gap** is the longest interval
 between two `requestAnimationFrame` callbacks during that window, which is the number that decides
@@ -196,8 +197,8 @@ on a freshly loaded page. The two runs did not agree to a few milliseconds, so b
 |------|----------:|------------------:|----------------------:|
 | Load tutorial dataset, run 1 | 229 ms | 66 ms | 1 |
 | Load tutorial dataset, run 2 | 169 ms | 100 ms | 1 |
-| kinship, run 1 | 608 ms | 583 ms | 1 |
-| kinship, run 2 | 575 ms | 566 ms | 1 |
+| kinship, run 1 | 632 ms | 65 ms | 1 |
+| kinship, run 2 | 502 ms | 34 ms | 0 |
 | pca, run 1 | 638 ms | 583 ms | 1 |
 | pca, run 2 | 454 ms | 417 ms | 1 |
 
@@ -207,18 +208,19 @@ The other frames in that window were 16.7 ms apart except for the one longer gap
 Four later loads of the same file, on pages that had already parsed it once, had longest gaps of
 50 ms, 33 ms, 17 ms, and 33 ms.
 
-Kinship and PCA did not, in that build. Each run was two or four animation frames and one gap that
-covered almost the whole analysis. `yield()` on wasm resumes as a microtask, so Chrome did not run
-`requestAnimationFrame` between reports even though `centeredIbs` already reports about every 100
-sites.
+Kinship was remeasured on 2026-11-06 in a foreground Chrome window whose idle frames were 16.7 ms
+apart (the tab `document.visibilityState` was `visible`). Load and PCA in the table are still the
+earlier numbers; PCA was not part of this remeasure. Before the heatmap change below, the same
+window spent kinship in one 317 ms gap: `centeredIbs` was already reporting about every 100 sites
+and those reports were reaching the screen (the frames during the matrix stayed within 33 ms), and
+the 317 ms was the first paint of the 281 by 281 heatmap, one rect per taxon pair. The heatmap is
+now painted 24 rows at a time into a bitmap, yielding between slices (`yieldToEventLoop`). The two
+kinship rows above are that build. Wall time is from the Run click to the last frame gap over 22 ms,
+which is when the heatmap had finished and the matrix was on screen. Both gaps are under 100 ms.
 
-The wasm UI reporter now suspends with `delay(1)` (`yieldToEventLoop`), which is a timer and
-therefore a macrotask. Desktop stays on `yield()` so JVM kinship time does not pick up a sleep.
-A foreground remeasure of the table above is still required: an automated tab in this session
-throttled `requestAnimationFrame` to about 300 ms, which is not the 16.7 ms cadence of the
-foreground Chrome window, so it cannot replace the 566–583 ms kinship gaps. The same production
-bundle did load the tutorial file and draw the Centered IBS heatmap and the matrix, so the
-analysis runs to completion in the page. The worker question is in
+`yield()` on wasm resumes as a microtask, so the wasm UI reporter suspends with `delay(1)`
+(`yieldToEventLoop`), a timer and therefore a macrotask. Desktop stays on `yield()` so JVM kinship
+time does not pick up a sleep. The worker question is in
 [wasm-worker-spike.md](wasm-worker-spike.md).
 
 The table this remeasure replaced, taken before the running banner yielded after each report:
@@ -242,10 +244,13 @@ browser actually paints there:
 | PCA eigensolver, JVM, warm | none | about 35 ms, inside the gap before the first eigenvector report |
 | PCA eigensolver, wasmJs on Node, warm | none | 139 ms, in that same gap |
 
-`centeredIbs` reports inside the block: 31 times on this file, about every 100 sites, not once per
-1,000-site block. A group of allele counts may run past the report fence, so a step lands a little
-over 100 sites. On wasmJs under Node those steps are about 22 ms. The browser frame gap is not one
-of those steps. It is one interval of about 570 ms, so the paints are not landing between the reports.
+`centeredIbs` reports 31 times on this file, about every 100 sites. On wasmJs under Node those steps
+are about 22 ms. In the foreground Chrome window those reports already became frames; the gap that
+used to cover the whole kinship run was the heatmap drawing every taxon pair in one task, and the
+sliced bitmap is what brought that gap under 100 ms. The block size of the retained TASSEL 5-order
+kernel, not its reporting interval, still fixes that kernel's summation order. The default kernel's
+panel size was not changed, so its `Double` grouping stays the one ADR-0020 fixes from the table
+shape.
 
 PCA's passes report every 256 sites. That splits the Gram pass on Node (17 ms). It does not split
 the eigensolver: `SymmetricEigenDecomposition` has no progress report, and ADR-0019 does not give it

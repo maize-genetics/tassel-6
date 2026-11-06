@@ -150,10 +150,10 @@ Two things to say honestly while it runs:
 - **Loading paints.** The reader reports progress every 256 sites and the engine yields at every
   report (ADR-0019). On a fresh page the tutorial file loads in 169 ms or 229 ms, with one frame
   gap of 66 ms or 100 ms, and a frame before the grid shows "Opening mdp_genotype.hmp.txt".
-- **Kinship and PCA still occupy the thread for one long gap.** Centered IBS reports about every
-  100 sites (31 times on the tutorial file) and each PCA pass reports every 256 sites, but in
-  Chrome those yields do not become frames: kinship's longest gap is 566 ms or 583 ms, and PCA's
-  is 417 ms or 583 ms. The eigensolver still has no report; under Node that stretch is about 140 ms.
+- **Kinship keeps drawing.** Centered IBS reports about every 100 sites (31 times on the tutorial
+  file), and the heatmap is painted a few rows at a time, so the longest kinship frame gap is 65 ms
+  or 34 ms. PCA still occupies the thread for one long gap, 417 ms or 583 ms: its passes report
+  every 256 sites, but the eigensolver reports nothing, and under Node that stretch is about 140 ms.
   Quote the table in [`docs/poc/benchmarks.md`](benchmarks.md), not a single smoothed number.
 
 If someone asks about large files in the browser: the PoC has no web workers, so this is the single
