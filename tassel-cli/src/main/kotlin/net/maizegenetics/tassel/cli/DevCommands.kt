@@ -4,11 +4,17 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.restrictTo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import net.maizegenetics.tassel.distance.centeredIbs
+import net.maizegenetics.tassel.distance.centeredIbsPanelColumns
+import net.maizegenetics.tassel.distance.centeredIbsPanelSites
 import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
@@ -18,6 +24,7 @@ import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.position.PositionList
 import net.maizegenetics.tassel.taxa.TaxaList
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /** Developer tools. These are not analyses, so they are hand-written rather than generated. */
 class Dev : CliktCommand(name = "dev") {
@@ -67,6 +74,51 @@ class Simulate : CliktCommand(name = "simulate") {
         val table = simulateGenotypes(taxa, sites, minMaf, maxMaf, missingRate, seed)
         runBlocking { writeResult(table, output, stderrProgress()) }
     }
+}
+
+/**
+ * Times [net.maizegenetics.tassel.distance.centeredIbs] after the file has been read, so the number
+ * is the kernel and not JVM startup or the matrix write. Not an analysis: hand-written, like [Simulate].
+ */
+class KinshipBench : CliktCommand(name = "kinship-bench") {
+    override fun help(context: Context): String = "Time the Centered IBS kernel on one genotype file"
+
+    private val input by option("--input", help = "HapMap or VCF to read once, then time", metavar = "PATH").required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+
+    override fun run() = cliRun {
+        runBlocking {
+            val table = readGenotypes(input)
+            val panelColumns = centeredIbsPanelColumns(table.numberOfTaxa)
+            val panelSites = centeredIbsPanelSites(table.numberOfTaxa, table.numberOfSites)
+            val seconds = DoubleArray(runs)
+            repeat(runs + 1) { iteration ->
+                val started = TimeSource.Monotonic.markNow()
+                // The kernel inherits its caller's dispatcher. The CLI and the desktop app run on
+                // Dispatchers.Default, which is the parallelism this number is meant to include.
+                withContext(Dispatchers.Default) { centeredIbs(table) }
+                val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                if (iteration > 0) seconds[iteration - 1] = elapsed
+            }
+            seconds.sort()
+            // Same rank as scripts/bench/run-benchmarks.sh: 1-based int((n + 1) / 2).
+            val medianAt = (runs + 1) / 2 - 1
+            echo(
+                "taxa=${table.numberOfTaxa} sites=${table.numberOfSites} " +
+                    "panelColumns=$panelColumns panelSites=$panelSites " +
+                    "min=${formatSeconds(seconds.first())} median=${formatSeconds(seconds[medianAt])}",
+            )
+        }
+    }
+}
+
+/** Six digits after the decimal, so a tutorial-sized kernel does not round to 0.00. */
+private fun formatSeconds(seconds: Double): String {
+    val micros = (seconds * 1_000_000.0).toLong()
+    val whole = micros / 1_000_000
+    val fraction = (micros % 1_000_000).toString().padStart(6, '0')
+    return "$whole.$fraction"
 }
 
 /**

@@ -30,6 +30,7 @@ class Tassel : CliktCommand(name = "tassel") {
 }
 
 /** The root command with every subcommand: one per registered operation (ADR-0002), then `dev`. */
-fun tasselCommand(): CliktCommand = Tassel().subcommands(operationCommands() + Dev().subcommands(Simulate()))
+fun tasselCommand(): CliktCommand =
+    Tassel().subcommands(operationCommands() + Dev().subcommands(Simulate(), KinshipBench()))
 
 fun main(args: Array<String>) = tasselCommand().main(args)
