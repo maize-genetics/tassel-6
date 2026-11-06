@@ -160,10 +160,10 @@ class AppViewModel(
      * report into a cancellation check, and the operation stops at its next report. There is no separate cancel
      * call to make (ADR-0004).
      *
-     * The [yield] before the run lets the "Running" banner reach the screen before the operation starts, which
-     * matters on the browser's one thread because the first progress report only arrives after the first site
-     * block. From there `LocalEngine` yields at every report, so the run is interruptible and the page keeps
-     * drawing (ADR-0019).
+     * The [yield] before the run lets the "Running" banner reach the screen before the operation starts.
+     * [runProgress] yields again after each report is written into that banner, so the new progress paints
+     * before the next slice of work. `LocalEngine` also yields when it forwards the report, which is what
+     * makes the run interruptible (ADR-0019).
      */
     private fun runAnalysis() {
         val form = state.value.form ?: return
@@ -246,17 +246,22 @@ class AppViewModel(
      * Pushes the reader's reports into [Activity.Loading], ignoring them once the load has moved on.
      *
      * The [yield] after the state change is what makes the banner visible on the browser's one thread: the reader
-     * suspends here (ADR-0019), Compose gets the thread, draws the new progress, and hands it back. The run path
-     * needs no equivalent because `LocalEngine` yields around every report it forwards.
+     * suspends here (ADR-0019), Compose gets the thread, draws the new progress, and hands it back. [runProgress]
+     * does the same for an analysis. `LocalEngine` yields before it forwards the report, which checks cancellation
+     * but returns to the kernel in the same turn as the banner update, so the paint needs this second yield.
      */
     private fun loadProgress() = ProgressReporter { progress ->
         mutate { (activity as? Activity.Loading)?.let { copy(activity = it.copy(progress = progress)) } ?: this }
         yield()
     }
 
-    /** Pushes the operation's reports into [Activity.Running], ignoring them once the run has moved on. */
+    /**
+     * Pushes the operation's reports into [Activity.Running], ignoring them once the run has moved on.
+     * The [yield] is what lets that update reach the screen before the next slice of the analysis.
+     */
     private fun runProgress() = ProgressReporter { progress ->
         mutate { (activity as? Activity.Running)?.let { copy(activity = it.copy(progress = progress)) } ?: this }
+        yield()
     }
 
     /** Replaces the state with the result of [change] applied to it, with the old state as the receiver. */

@@ -151,10 +151,12 @@ Two things to say honestly while it runs:
   report, so the page keeps drawing through the parse
   (ADR-0019, [#56](https://github.com/maize-genetics/tassel-6/pull/56)). The tutorial file loads
   in about 160 ms with no dropped frame longer than 33 ms.
-- **The analyses still stutter.** Kinship blocks the page for roughly half a second and PCA for
-  about a second, because those kernels report progress only once per site block and the eigensolver
-  not at all. It is a known limit with a known fix, and it is written down in
-  [`docs/poc/benchmarks.md`](benchmarks.md) rather than hidden.
+- **Kinship reports during the matrix, PCA reports during each pass, and the eigensolver does not.**
+  Centered IBS reports about every 100 sites (31 times on the tutorial file). Each PCA pass reports
+  every 256 sites. The decomposition between the Gram pass and the eigenvector pass still has no
+  report; on a warm Wasm run that stretch is about 140 ms. The frame gaps in
+  [`docs/poc/benchmarks.md`](benchmarks.md) were measured before the running banner yielded after
+  each report, so say that they are the previous measurement, not a number to quote as current.
 
 If someone asks about large files in the browser: the PoC has no web workers, so this is the single
 UI thread doing real work. That is a Phase 1 item, not a gap we are pretending does not exist.

@@ -169,17 +169,42 @@ Reading is now smooth, which is what ADR-0019 set out to fix: the HapMap reader 
 sites, and the engine yields at every report, so a 160 ms parse costs at most a dropped frame or two
 instead of locking the tab.
 
-**The analyses still block, and this is a known limit, not a fixed problem.** `centeredIbs` reports
-progress once per 1,000-site block, which is four reports for the tutorial's 3,093 sites, and the
-eigensolver inside PCA reports nothing at all. A traced kinship run spends its 905 ms in two
-uninterrupted stretches of roughly 533 ms and 307 ms rather than in four short ones. Reporting more
-often inside these kernels does not change any result, because the block size and not the reporting
-interval is what fixes the summation order that golden parity depends on, but it is a change to the
-kernels and so is out of scope for the benchmarks task. It should be its own issue.
+The frame-gap table above was measured before two later changes: PCA reports every 256 sites inside
+each pass, and the running banner yields after it records a progress report, the same way the
+loading banner does. What was remeasured, on the tutorial file, is the time between progress
+reports, which is the stretch a yield can break up:
+
+| Path | Reports | Longest stretch between reports |
+|------|--------:|--------------------------------:|
+| `centeredIbs`, JVM, warm | 31 | 3 ms (about 60 ms for the whole matrix) |
+| `centeredIbs`, wasmJs on Node, warm | 31 | 22 ms (604 ms for the whole matrix) |
+| PCA Gram pass, JVM, warm | 13 | 11 ms |
+| PCA Gram pass, wasmJs on Node, warm | 13 | 17 ms |
+| PCA eigensolver, JVM, warm | none | about 35 ms, inside the gap before the first eigenvector report |
+| PCA eigensolver, wasmJs on Node, warm | none | 139 ms, in that same gap |
+
+`centeredIbs` was already reporting inside the block: 31 times on this file, about every 100 sites,
+not once per 1,000-site block. A group of allele counts may run past the report fence, so a step
+lands a little over 100 sites. The 583 ms frame gap above is not one of those steps. The steps are
+about 22 ms on Wasm. The page stayed frozen because the running banner updated and then kept
+working on the same turn, so the browser never got the thread back between reports.
+
+PCA was the opposite problem. Each of its three passes called `siteBlocks()` with the default block
+of 4,096 sites, and the tutorial file has 3,093, so each pass reported once, after it finished. On
+the JVM that was 16 ms, then 141 ms in the Gram pass, then 70 ms for the eigensolver plus the
+eigenvector pass. Reporting every 256 sites splits the Gram pass. It does not split the
+eigensolver: `SymmetricEigenDecomposition` has no progress report, and ADR-0019 does not give it
+one. On a warm Wasm run that stretch is 139 ms, which is past the 100 ms line and is the gap this
+change leaves in place.
+
+A `requestAnimationFrame` remeasure of the page still has to be done by someone who can click the
+canvas. The frame-gap table above is the one to replace when that happens.
 
 For scale, the same two analyses on the same data through the JVM CLI take 0.15 s and 0.34 s of
 work, so WebAssembly is roughly 3x to 6x slower here. That is the expected cost of the target, not
-a regression.
+a regression. The extra PCA reports did not slow the JVM down: four warmed tutorial runs took 181
+to 193 ms (median 188 ms) with 39 reports, against 229 ms for one warmed run when each pass
+reported once.
 
 ![TASSEL 6 running Centered IBS on the tutorial data in a browser](../images/browser-kinship.png)
 

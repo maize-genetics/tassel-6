@@ -81,6 +81,8 @@ suspend fun principalComponents(
 
     val probabilities = ReferenceProbability.of(genotypes, progress)
     val gram = gramMatrix(genotypes, probabilities, useCovariance, progress)
+    // The decomposition does not report progress, so it is one uninterrupted stretch between the Gram
+    // pass and the eigenvector pass. ADR-0019 yields at reports, and this call has none.
     val eigen = SymmetricEigenDecomposition.of(numberOfTaxa) { row, column -> gram[row * numberOfTaxa + column] }
 
     // Round-off can push the smallest eigenvalues of a positive-semidefinite matrix below zero.
@@ -207,6 +209,7 @@ private suspend inline fun forEachColumn(
     val numberOfTaxa = column.size
     val multiplier = 1.0 / sqrt((numberOfTaxa - 1).toDouble())
     var done = 0
+    val numberOfSites = genotypes.numberOfSites
     genotypes.siteBlocks().forEach { block ->
         for (site in block.sites) {
             probabilities.column(block, site, column)
@@ -222,11 +225,16 @@ private suspend inline fun forEachColumn(
             }
             for (taxon in 0 until numberOfTaxa) column[taxon] *= multiplier
             body(site)
+            done++
+            // The default block is 4,096 sites and the tutorial file has 3,093, so a report at the
+            // end of the block would arrive after the pass. Same interval as the HapMap reader.
+            if (done % PROGRESS_SITES == 0 || done == numberOfSites) progress.report(done, numberOfSites, message)
         }
-        done += block.sites.count()
-        progress.report(done, genotypes.numberOfSites, message)
     }
 }
+
+/** Sites between progress reports. See `HapMap.PROGRESS_SITES`. */
+private const val PROGRESS_SITES = 256
 
 private const val GRAM_MESSAGE = "PCA: taxa covariance"
 private const val EIGENVECTOR_MESSAGE = "PCA: eigenvectors"
