@@ -70,7 +70,9 @@ is small enough that the duplicate would not be the problem. A 1,000 x 100,000 t
 
 The reports were already about every 100 sites. They did not become frames because `yield()` on
 wasm is a microtask and Chrome runs `requestAnimationFrame` on a later turn. `delay(1)` in the wasm
-`yieldToEventLoop` actual is a timer, which is that turn. If the longest kinship frame gap on the
-tutorial file is under 100 ms with that change, a worker does not fix a freeze. It buys a place to
+`yieldToEventLoop` actual is a timer, which is that turn. With that yield, the tutorial kinship
+frames stay inside the reports; the gap that remained was the heatmap drawing every taxon pair at
+once. Painting that bitmap in slices brings the longest kinship gap to 65 ms or 34 ms
+([benchmarks.md](benchmarks.md)), so a worker does not fix the tutorial freeze. It buys a place to
 run longer analyses off the UI thread later. That is worth a follow-up issue, not a default in this
 change.
