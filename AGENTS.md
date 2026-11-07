@@ -28,7 +28,7 @@ with later tasks:
 | `tassel-core/` | Pure Kotlin model, I/O, and analyses. Targets jvm, wasmJs, macosArm64, linuxX64. |
 | `tassel-cli/` | Clikt CLI generated from operation specs (JVM first, Native later). |
 | `tassel-app/` | Compose Multiplatform UI: shared code plus `desktopMain` and `wasmJsMain`. |
-| `testdata/` | Tutorial inputs and TASSEL 5 golden outputs (`testdata/golden/`). |
+| `testdata/` | Tutorial inputs, TASSEL 5 golden outputs (`testdata/golden/`), and the htslib 1.25 oracle for compressed and indexed VCF (`testdata/htslib/`, ADR-0021). |
 | `reference/` | Git-ignored shallow clone of TASSEL 5 source, read-only, for porting. |
 | `docs/` | ADRs, porting ledger, handoffs, PoC notes. |
 
