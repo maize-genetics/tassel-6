@@ -124,6 +124,65 @@ On the tutorial file the written `SumPk` is `918.729785675474`, against the gold
 `918.7297856754799` (absolute difference 5.9e-12). The largest absolute difference in the matrix
 is 6.0e-7, inside the `abs 8e-6` contract.
 
+## VCF reading
+
+Whole-file VCF reads at a size both tools can load with `--heap 8g`, plus htslib on that file and on a
+bgzipped wheat VCF larger than 2 GiB. Reproduce with:
+
+```bash
+scripts/bench/run-benchmarks.sh --only vcf --runs 3
+```
+
+The script writes the VCFs under `build/bench/work/` with
+[`scripts/bench/generate-wheat-vcf.sh`](../../scripts/bench/generate-wheat-vcf.sh) and reuses them
+when the taxa, site count, and seed match. Contig lengths are IWGSC RefSeq v2.1 (the same 21
+chromosomes as the htslib fixtures, `chr1A` through `chr7D`). Every chromosome has sites, and
+positions run from 1 through that chromosome's length. Genotypes are biallelic `A/C` calls from
+Park-Miller seed 81. Nothing under `build/bench/` is committed.
+
+| | |
+|---|---|
+| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1 (26A434), Darwin 27.0.0 arm64 |
+| JDK | Eclipse Temurin 25.0.4.1+1, `-Xmx8g` for TASSEL 5 and TASSEL 6 |
+| TASSEL 5 | v5.2.98, `-maxThreads 4` |
+| TASSEL 6 | 6.0.0-dev at commit `b519ec3` |
+| htslib | 1.25 (`bgzip`, `bcftools`) |
+| Runs | Median of 3, after one warm-up run that is discarded |
+
+The loadable file is 1,000 taxa by 1,000,000 sites. Both tools finish it at `--heap 8g`. Plain text
+is 4,033,841,662 bytes (3.76 GiB); `bgzip -c -@ 1` is 524,156,980 bytes (0.49 GiB).
+
+The region file is 1,000 taxa by 5,110,342 sites, streamed into `bgzip -c -@ 1` and indexed with
+`bcftools index -c`. The site count comes from a 100,000-site sample of the same generator, which
+compressed to 52,527,890 bytes (525.28 bytes per site), so this count would land near 2.5 GiB. The
+file is 2,674,378,477 bytes (2.49 GiB), past 2 GiB. `tabix` is not used: sites on `chr3B` pass 2^29,
+which a TBI cannot store.
+
+TASSEL 6's plain row is `tassel --quiet filter-sites` with no filters, which reads the VCF and
+writes HapMap. That is the whole-file path the CLI has. TASSEL 5 is `-vcf` and `-exportType Hapmap`
+on the plain file and on the bgzipped file. Those rows include JVM startup and the HapMap write.
+The TASSEL 6 `.vcf.gz` row is the same `filter-sites` command and was not run: the CLI rejects
+`.vcf.gz`. Decompression is `bgzip -d -@ N -o /dev/null` at 1 thread and at 4, so the peak is
+bgzip's. Parsing is `bcftools view -Ou -o /dev/null`. Region rows are `bcftools view -H -r` on the
+large file for `chr3B:1-1000000` (1 Mbp), `chr3B:1-50000000` (50 Mbp), and `chr3B` (the whole
+contig, 851,934,019 bp).
+
+| Tool | Read | Input | Median | Peak |
+|------|------|-------|-------:|-----:|
+| TASSEL 6 | whole-file read | loadable .vcf | 22.91 s | 3202 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | — | — |
+| TASSEL 5 | whole-file read | loadable .vcf | 39.04 s | 6061 MiB |
+| TASSEL 5 | whole-file read | loadable .vcf.gz | 39.04 s | 4184 MiB |
+| htslib | decompress, 1 thread | loadable .vcf.gz | 1.87 s | 6 MiB |
+| htslib | decompress, 4 threads | loadable .vcf.gz | 0.57 s | 8 MiB |
+| htslib | decompress and parse | loadable .vcf.gz | 17.76 s | 8 MiB |
+| htslib | region `chr3B:1-1000000` | region .vcf.gz | 0.22 s | 107 MiB |
+| htslib | region `chr3B:1-50000000` | region .vcf.gz | 0.80 s | 108 MiB |
+| htslib | region `chr3B` | region .vcf.gz | 10.39 s | 108 MiB |
+
+Later VCF performance tasks add TASSEL 6 rows here, including the `.vcf.gz` cell, rather than
+starting a new table.
+
 ## Known limits
 
 ### Centered IBS at scale
