@@ -44,6 +44,9 @@ Later modules: `tassel-server/`, `legacy/tassel5-bridge/`, `bindings/{capi,r,pyt
 3. **Never edit files under `testdata/golden/`** unless the issue says so. These
    are the parity oracle; changing them to make a test pass is a failure, not a
    fix. Golden changes need the `golden-update` label and owner review.
+   `testdata/htslib/` (ADR-0021) is the htslib oracle for compressed and indexed
+   VCF and follows the same never-edit-by-hand rule; it is not a TASSEL 5 golden
+   and does not use the `golden-update` label.
 4. **Do not change frozen contracts** (`GenotypeTable`, the operation DSL,
    `Engine`) without an ADR. If a contract blocks you, stop and say so.
 5. **Stay inside the issue's scope.** Note related problems in the handoff; do
