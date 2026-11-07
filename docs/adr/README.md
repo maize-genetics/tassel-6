@@ -29,3 +29,4 @@ sequentially; use a short kebab-case title.
 | [0018](0018-string-parameters-in-the-operation-dsl.md) | String and string-list parameters in the operation DSL | Accepted |
 | [0019](0019-suspending-progress-reports.md) | Progress reports suspend, putting a yield point inside long-running core work | Accepted |
 | [0020](0020-kinship-numerics.md) | Kinship numerics, tolerance parity, and parallelism | Accepted |
+| [0021](0021-pure-kotlin-compressed-indexed-vcf.md) | Pure-Kotlin compressed and indexed VCF reading | Accepted |
