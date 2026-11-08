@@ -12,10 +12,10 @@
 # 1,000-site blocks. kinship-kernel sweeps 1, 4, and 8 threads instead, and times TASSEL 6's
 # centeredIbs directly.
 #
-# --only vcf times wheat-scale VCF reads (tassel-6#81). It generates a loadable plain VCF and a
-# bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the TASSEL 6
-# CLI on the plain file, TASSEL 5 -vcf on the plain and bgzipped files, and htslib. The TASSEL 6
-# .vcf.gz row is printed and not run. vcf needs --heap 8g, plus bgzip and bcftools from htslib 1.25.
+# --only vcf times wheat-scale VCF reads (tassel-6#81, tassel-6#89). It generates a loadable plain
+# VCF and a bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the
+# TASSEL 6 CLI on the plain and bgzipped files, TASSEL 5 -vcf on both, BGZF inflate at 1 worker and
+# at the host worker count, and htslib. vcf needs --heap 8g, plus bgzip and bcftools from htslib 1.25.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
 # JDK 25 through the Gradle toolchain. --only vcf also requires htslib 1.25.
@@ -294,9 +294,10 @@ run_kinship_kernel() {
   echo "TASSEL 5 columns are the full pipeline (startup included). Full tool output: $LOG"
 }
 
-# Whole-file VCF reads, then htslib on the same loadable file and on a >2 GiB region file.
-# TASSEL 6's row is filter-sites with defaults: read the VCF and write HapMap, which is the
-# CLI path. The .vcf.gz row is left blank because the CLI rejects that extension.
+# Whole-file VCF reads, BGZF inflate, then htslib on the same loadable file and on a >2 GiB region
+# file. TASSEL 6's whole-file row is filter-sites with defaults: read the VCF and write HapMap.
+# The .vcf.gz row uses the parallel BGZF reader. Inflate rows are `dev bgzf-bench`: the scan only,
+# after one warm-up, JVM startup excluded. htslib inflate is the whole `bgzip -d` process.
 run_vcf() {
   require_heap 8192 "vcf"
   command -v bgzip >/dev/null || die "bgzip not found; brew install htslib"
@@ -354,7 +355,11 @@ run_vcf() {
   vcf_row "TASSEL 6" "whole-file read" "loadable .vcf" "$result" "$command"
 
   command="$TASSEL6 --quiet filter-sites --input $load_gz --output $WORK/t6_vcf_gz"
-  vcf_row "TASSEL 6" "whole-file read" "loadable .vcf.gz" "-" "$command"
+  result=$(repeat_measure "$TASSEL6" --quiet filter-sites --input "$load_gz" --output "$WORK/t6_vcf_gz")
+  vcf_row "TASSEL 6" "whole-file read" "loadable .vcf.gz" "$result" "$command"
+
+  bgzf_bench_row "$load_gz" 1
+  bgzf_bench_row "$load_gz" ""
 
   command="$JAVA -Xmx$HEAP -cp $T5/sTASSEL.jar net.maizegenetics.pipeline.TasselPipeline -maxThreads 4 -vcf $load -export $WORK/t5_vcf_load -exportType Hapmap"
   result=$(repeat_measure "$JAVA" "-Xmx$HEAP" -cp "$T5/sTASSEL.jar" net.maizegenetics.pipeline.TasselPipeline \
@@ -386,8 +391,37 @@ run_vcf() {
   done
 
   echo
-  echo "TASSEL rows are the CLI path: read the VCF, write HapMap, JVM startup included."
-  echo "TASSEL 6 was not run on .vcf.gz. Full tool output: $LOG"
+  echo "TASSEL whole-file rows are the CLI path: read the VCF, write HapMap, JVM startup included."
+  echo "TASSEL 6 decompress rows are dev bgzf-bench: inflate only, one warm-up discarded, startup excluded."
+  echo "Full tool output: $LOG"
+}
+
+# One dev bgzf-bench invocation. [workers] empty means the host count. Prints a table row.
+bgzf_bench_row() {
+  local input="$1" workers="$2"
+  local -a args=(--quiet dev bgzf-bench --input "$input" --runs "$RUNS")
+  if [[ -n "$workers" ]]; then
+    args+=(--workers "$workers")
+  fi
+  local stats="$WORK/.time" out="$WORK/bgzf-bench.out" rss line median count label command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "bgzf-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  count=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "workers") print p[2] } }' <<<"$line")
+  [[ -n "$median" && -n "$count" ]] || die "bgzf-bench wrote no median: $(cat "$out")"
+  label="decompress, $count worker"
+  if [[ "$count" != "1" ]]; then
+    label="decompress, $count workers"
+  fi
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "$label" "loadable .vcf.gz" "$median" "${rss:-0}" "$command"
 }
 
 file_bytes() {
@@ -404,12 +438,8 @@ file_bytes_human() {
 
 vcf_row() {
   local tool="$1" what="$2" input="$3" result="$4" command="$5"
-  if [[ "$result" == "-" ]]; then
-    printf '| %s | %s | %s | — | — | `%s` (not run: the CLI rejects .vcf.gz) |\n' "$tool" "$what" "$input" "$command"
-  else
-    printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
-      "$tool" "$what" "$input" "${result%% *}" "${result##* }" "$command"
-  fi
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "$tool" "$what" "$input" "${result%% *}" "${result##* }" "$command"
 }
 
 if [[ "$ONLY" == "kinship-kernel" ]]; then

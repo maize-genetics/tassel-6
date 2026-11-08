@@ -19,6 +19,10 @@ import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
+import net.maizegenetics.tassel.io.BgzfReader
+import net.maizegenetics.tassel.io.RandomAccessSource
+import net.maizegenetics.tassel.io.bgzfWorkerCount
+import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.position.Chromosome
 import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.position.PositionList
@@ -111,6 +115,60 @@ class KinshipBench : CliktCommand(name = "kinship-bench") {
             )
         }
     }
+}
+
+/**
+ * Times a full BGZF inflate of one file, without parsing records.
+ *
+ * Not an analysis: hand-written, like [KinshipBench]. The printed median is the scan after one discarded
+ * warm-up. Omit `--workers` to use [bgzfWorkerCount].
+ */
+class BgzfBench : CliktCommand(name = "bgzf-bench") {
+    override fun help(context: Context): String = "Time BGZF inflation of one file, at 1 worker or at the host count"
+
+    private val input by option("--input", help = "bgzipped file to inflate", metavar = "PATH").required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+    private val workers by option(
+        "--workers",
+        help = "Inflate workers. Omit for one worker per processor.",
+        metavar = "INT",
+    ).int().restrictTo(min = 1)
+
+    override fun run() = cliRun {
+        val count = workers ?: bgzfWorkerCount()
+        runBlocking {
+            openRandomAccessSource(input).use { source ->
+                val seconds = DoubleArray(runs)
+                var bytes = 0L
+                repeat(runs + 1) { iteration ->
+                    val started = TimeSource.Monotonic.markNow()
+                    bytes = scanBgzf(source, count)
+                    val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                    if (iteration > 0) seconds[iteration - 1] = elapsed
+                }
+                seconds.sort()
+                val medianAt = (runs + 1) / 2 - 1
+                echo(
+                    "bytes=$bytes workers=$count min=${formatSeconds(seconds.first())} " +
+                        "median=${formatSeconds(seconds[medianAt])}",
+                )
+            }
+        }
+    }
+}
+
+private suspend fun scanBgzf(source: RandomAccessSource, workers: Int): Long {
+    var total = 0L
+    BgzfReader(source, workers = workers).use { reader ->
+        val chunk = ByteArray(64 * 1024)
+        while (true) {
+            val count = reader.read(chunk, 0, chunk.size)
+            if (count == 0) break
+            total += count
+        }
+    }
+    return total
 }
 
 /** Six digits after the decimal, so a tutorial-sized kernel does not round to 0.00. */

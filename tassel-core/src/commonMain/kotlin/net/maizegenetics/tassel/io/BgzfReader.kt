@@ -1,5 +1,6 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.coroutines.Job
 import net.maizegenetics.tassel.io.deflate.BGZF_MAX_BLOCK
 import net.maizegenetics.tassel.io.deflate.BGZF_MAX_UNCOMPRESSED
 import net.maizegenetics.tassel.io.deflate.Crc32
@@ -13,6 +14,7 @@ import net.maizegenetics.tassel.io.deflate.parseGzipMemberHeader
 import net.maizegenetics.tassel.io.deflate.truncatedBgzf
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.ops.report
+import kotlin.coroutines.coroutineContext
 
 /**
  * Seekable BGZF reader over a [RandomAccessSource] (SAMv1 section 4.1).
@@ -29,21 +31,55 @@ import net.maizegenetics.tassel.ops.report
  * there is no more inflated data. The parser stays source-free. A region read seeks here, fills that window,
  * and stops when [tell] reaches the chunk's end. This reader does not parse VCF.
  *
- * One decoder inflates blocks as they are needed. Parallel workers (#89) can replace that one call without
- * changing [seek] or [tell]. Recently inflated blocks are cached, because adjacent index chunks often share
- * a block, and a sequential run is read from the file in one batch rather than one read per block.
+ * One worker inflates on the caller. More workers prefetch on [kotlinx.coroutines.Dispatchers.Default]: one
+ * reader copies compressed blocks, and each worker owns one decoder. Inflated blocks come back in file order.
+ * At most twice the worker count are in flight (copied, not yet returned), so the window does not grow with
+ * the file. [seek] and [tell] do not change. A bad CRC fails the read with that block's compressed offset and
+ * cancels the other workers. Cancelling the caller cancels the workers. Recently inflated blocks are cached,
+ * because adjacent index chunks often share a block, and a sequential run is read from the file in one batch
+ * rather than one read per block.
  *
  * [progress] is reported every few blocks, which is the suspension point a wasm read needs (ADR-0019).
  * A missing terminal EOF block is recorded on [warnings] with [MISSING_BGZF_EOF] and the bytes already
  * inflated are kept (ADR-0021). CRC32 and ISIZE are checked for every block.
  *
  * [close] does not close [source]. The caller owns the source and must keep it open while reading.
- * Not safe for concurrent calls.
+ * [close] cancels inflate workers. Not safe for concurrent calls.
+ *
+ * @param workers inflate width. The default is [bgzfWorkerCount]: one on wasmJs, the processor count on
+ * the JVM and on Native. Bytes do not depend on it. This is not an operation-spec parameter.
  */
-class BgzfReader(
+class BgzfReader internal constructor(
     private val source: RandomAccessSource,
-    private val progress: ProgressReporter = ProgressReporter.None,
+    private val progress: ProgressReporter,
+    private val workers: Int,
+    private val maxBlocksInFlight: Int,
+    private val beforeInflate: suspend (Long) -> Unit,
 ) : AutoCloseable {
+    /**
+     * @param workers inflate width. The default is [bgzfWorkerCount]. See the class description for the
+     * bound on blocks in flight.
+     */
+    constructor(
+        source: RandomAccessSource,
+        workers: Int = bgzfWorkerCount(),
+        progress: ProgressReporter = ProgressReporter.None,
+    ) : this(
+        source,
+        progress,
+        workers.coerceAtLeast(1),
+        bgzfMaxBlocksInFlight(workers.coerceAtLeast(1)),
+        { _ -> },
+    )
+
+    /** Test seam: [beforeInflate] runs on each worker before that block is inflated. */
+    internal constructor(
+        source: RandomAccessSource,
+        workers: Int,
+        maxBlocksInFlight: Int,
+        beforeInflate: suspend (Long) -> Unit,
+    ) : this(source, ProgressReporter.None, workers, maxBlocksInFlight, beforeInflate)
+
     private val recordedWarnings = ArrayList<String>(1)
 
     /** Empty until a read passes the end of the file without a terminal EOF block. */
@@ -67,6 +103,19 @@ class BgzfReader(
     private var eofNoted = false
     private var blocksPassed = 0
     private var closed = false
+    private var window: BgzfDecodeWindow? = null
+    private var windowNext = -1L
+
+    /** Members copied and not yet returned. Zero when this reader is inflating on the caller. */
+    internal val blocksInFlight: Int get() = window?.blocksInFlight ?: 0
+
+    /** Largest [blocksInFlight] of the current window. */
+    internal val peakBlocksInFlight: Int get() = window?.peakBlocksInFlight ?: 0
+
+    init {
+        require(workers >= 1) { "workers must be positive: $workers" }
+        require(maxBlocksInFlight >= 1) { "blocks in flight must be positive: $maxBlocksInFlight" }
+    }
 
     /**
      * Virtual offset of the next unread byte.
@@ -154,6 +203,7 @@ class BgzfReader(
 
     override fun close() {
         closed = true
+        abandonWindow()
     }
 
     private suspend fun ensureCurrent(): Boolean {
@@ -234,10 +284,60 @@ class BgzfReader(
     /**
      * Inflates the block at [address], or returns the cached copy.
      *
-     * This is the one-worker decode step. #89 can run it on a worker per block; [seek] and [tell] stay.
+     * One worker inflates here. More workers take the block from a window that runs ahead on
+     * [kotlinx.coroutines.Dispatchers.Default]. A cache hit drops that window: the next miss starts
+     * again at the address the caller asked for. [seek] and [tell] stay.
      */
     private suspend fun blockAt(address: Long, virtualOffset: Long): InflatedBlock {
-        cache[address]?.let { return it }
+        cache[address]?.let { block ->
+            if (window != null) abandonWindow()
+            return block
+        }
+        val block = if (workers == 1) inflateAt(address, virtualOffset) else inflateAhead(address, virtualOffset)
+        cache.put(block)
+        return block
+    }
+
+    private suspend fun inflateAhead(address: Long, virtualOffset: Long): InflatedBlock {
+        if (window == null || windowNext != address) startWindow(address)
+        val block = takeFromWindow(virtualOffset)
+        check(block.address == address) { "BGZF pipeline delivered ${block.address}, expected $address" }
+        windowNext = block.nextAddress
+        return block
+    }
+
+    private suspend fun startWindow(address: Long) {
+        abandonWindow()
+        window = BgzfDecodeWindow(
+            source,
+            workers,
+            maxBlocksInFlight,
+            address,
+            beforeInflate,
+            coroutineContext[Job],
+        )
+        windowNext = address
+    }
+
+    private fun abandonWindow() {
+        window?.cancel()
+        window = null
+        windowNext = -1L
+    }
+
+    private suspend fun takeFromWindow(virtualOffset: Long): InflatedBlock {
+        try {
+            val decoded = window!!.take()
+            return InflatedBlock(decoded.address, decoded.data, decoded.length, decoded.nextAddress)
+        } catch (e: IllegalArgumentException) {
+            abandonWindow()
+            if (e.message?.startsWith(BGZF_BLOCK_FAILURE) == true) throw e
+            notABlockStart(virtualOffset)
+        }
+    }
+
+    /** One decoder, on the caller. A CRC or ISIZE failure names [address]. */
+    private suspend fun inflateAt(address: Long, virtualOffset: Long): InflatedBlock {
         val header = try {
             readHeader(address)
         } catch (_: IllegalArgumentException) {
@@ -247,11 +347,13 @@ class BgzfReader(
         val compressed = header.blockSize + 1
         val index = ensureBlock(address, compressed)
         val payload = parseBgzfPayload(ahead, index, header)
-        val written = inflateBgzf(decoder, crc, ahead, payload, scratch)
+        val written = try {
+            inflateBgzf(decoder, crc, ahead, payload, scratch)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("$BGZF_BLOCK_FAILURE $address: ${e.message}", e)
+        }
         val data = if (written == 0) EMPTY else scratch.copyOf(written)
-        val block = InflatedBlock(address, data, written, address + compressed)
-        cache.put(block)
-        return block
+        return InflatedBlock(address, data, written, address + compressed)
     }
 
     private suspend fun readHeader(address: Long): GzipMemberHeader {
