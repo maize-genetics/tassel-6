@@ -17,15 +17,15 @@ TASSEL 5's own output, byte for byte where the format allows it.
 | | CLI | Desktop | Browser |
 |---|---|---|---|
 | Read HapMap | yes | yes | yes |
-| Read VCF (the `GT` field only, uncompressed) | yes | no | no |
+| Read VCF (the `GT` field only; bgzip on the CLI) | yes | no | no |
 | `summary`, `filter-sites`, `filter-taxa` | yes | yes | yes |
 | `kinship` (Centered IBS) | yes | yes | yes |
 | `pca` (scores, eigenvalues, eigenvectors) | yes | yes | yes |
 | Write TASSEL 5-readable output | yes | yes | yes |
 
 The desktop and browser apps are the same Compose Multiplatform code, and both compute locally. The
-browser does not send data anywhere. Compressed input (`.vcf.gz`) is not supported on any target
-yet; decompress first.
+browser does not send data anywhere. The CLI reads bgzipped VCF and HapMap (`.vcf.gz`, `.hmp.txt.gz`).
+The desktop and browser apps do not read compressed input yet.
 
 ## Quick start
 

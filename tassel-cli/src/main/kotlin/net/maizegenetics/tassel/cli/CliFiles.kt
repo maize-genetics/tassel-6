@@ -12,6 +12,7 @@ import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.io.Vcf
+import net.maizegenetics.tassel.io.decompressing
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.table.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
@@ -25,33 +26,41 @@ const val TEXT_EXTENSION: String = ".txt"
 /** Plain-text VCF, which `--input` reads. */
 const val VCF_EXTENSION: String = ".vcf"
 
-/** bgzip-compressed VCF, which nothing can decompress yet. */
+/** bgzip-compressed VCF. The bytes are detected by content; this suffix only selects the VCF reader. */
 const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
 
 /**
  * Reads a genotype file. `tassel-core` takes a `kotlinx.io.Source` and knows nothing about paths
  * (ADR-0017), so opening the file is the CLI's job.
  *
- * The format comes from the extension, as in TASSEL 5: `$VCF_EXTENSION` is read as VCF and
- * everything else as HapMap.
+ * The format comes from the extension, as in TASSEL 5: [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are
+ * read as VCF, and everything else, including a gzipped HapMap, as HapMap. `.vcf.gz` does not end
+ * with `.vcf`, so the gzipped suffix is matched on its own. Gzip itself is detected from the first
+ * two bytes. A missing BGZF EOF block is a warning on standard error.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
- * @throws IllegalArgumentException if it is not a file, or is in a format nothing can read yet.
+ * @throws IllegalArgumentException if it is not a file, or the bytes are not a format the reader accepts.
  */
 suspend fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
     val file = Path(path)
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
-    require(!path.endsWith(VCF_GZIP_EXTENSION)) {
-        "bgzip-compressed VCF is not supported yet (tassel-6#14 reads plain $VCF_EXTENSION only); " +
-            "decompress it first: $path"
-    }
     CliLog.info("reading $path")
-    return SystemFileSystem.source(file).buffered().use { source ->
-        if (path.endsWith(VCF_EXTENSION)) Vcf.read(source, progress) else HapMap.read(source, progress)
+    return SystemFileSystem.source(file).buffered().use { raw ->
+        val opened = raw.decompressing()
+        try {
+            val table = if (isVcfPath(path)) Vcf.read(opened.source, progress) else HapMap.read(opened.source, progress)
+            opened.warnings.forEach(CliLog::warn)
+            table
+        } finally {
+            if (opened.source !== raw) opened.source.close()
+        }
     }
 }
+
+/** `.vcf.gz` does not end with `.vcf`, so the gzipped suffix has to be tested on its own. */
+private fun isVcfPath(path: String): Boolean = path.endsWith(VCF_GZIP_EXTENSION) || path.endsWith(VCF_EXTENSION)
 
 /**
  * One file an operation's result turns into. TASSEL 5 writes a multi-dataset result as several
