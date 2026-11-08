@@ -95,10 +95,22 @@ class OperationCommandTest {
         for (operation in registry.operations) {
             for (parameter in operation.parameters) {
                 assertTrue(
-                    parameter.name !in setOf("input", "output"),
+                    parameter.name !in RESERVED_NAMES,
                     "'${operation.id}' declares '${parameter.name}', which the CLI uses for its own option",
                 )
             }
+        }
+    }
+
+    @Test
+    fun genotypeCommandsOfferRegionAndIndex() {
+        for (operation in registry.operations) {
+            if (operation.descriptor.inputType != "GenotypeTable") continue
+            val text = help(operation.id)
+            assertContains(text, "--region", message = operation.id)
+            assertContains(text, "--index", message = operation.id)
+            assertContains(text, "chr3B:600000000-650000000", message = operation.id)
+            assertContains(text, ".csi, then .tbi", message = operation.id)
         }
     }
 
