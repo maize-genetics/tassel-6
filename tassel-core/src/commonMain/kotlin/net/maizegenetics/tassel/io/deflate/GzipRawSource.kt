@@ -35,8 +35,8 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
     private val decoder = InflateDecoder()
     private val crc = Crc32()
     private val pending = Buffer()
-    private val member = ByteArray(MAX_BLOCK)
-    private val inflated = ByteArray(MAX_UNCOMPRESSED)
+    private val member = ByteArray(BGZF_MAX_BLOCK)
+    private val inflated = ByteArray(BGZF_MAX_UNCOMPRESSED)
     private val ahead = ByteArray(AHEAD_FILL + RETURNED_ROOM)
     private val one = ByteArray(1)
 
@@ -104,68 +104,32 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
      *   or `null` at a clean end of input.
      */
     private fun readMember(): Int? {
-        val header = readExact(0, FIXED_HEADER)
+        val header = readExact(0, GZIP_FIXED_HEADER)
         if (header == 0) return null
-        if (header < FIXED_HEADER) truncated("gzip header")
-        if (u8(0) != GZIP_ID1 || u8(1) != GZIP_ID2) truncated("gzip magic")
-        if (u8(2) != METHOD_DEFLATE) {
-            throw IllegalArgumentException("gzip compression method is not DEFLATE")
-        }
-        val flags = u8(3)
-        if (flags and RESERVED != 0) {
-            throw IllegalArgumentException("gzip header has reserved flags")
-        }
-        var cursor = FIXED_HEADER
-        var blockSize = -1
-        if (flags and FEXTRA != 0) {
-            if (readExact(cursor, 2) < 2) truncated("gzip extra length")
+        if (header < GZIP_FIXED_HEADER) truncatedBgzf("gzip header")
+        checkGzipFixedHeader(member, 0, GZIP_FIXED_HEADER)
+        val flags = member[3].toInt() and 0xFF
+        var cursor = GZIP_FIXED_HEADER
+        if (flags and GZIP_FEXTRA != 0) {
+            if (readExact(cursor, 2) < 2) truncatedBgzf("gzip extra length")
             val extraLength = u16(cursor)
             cursor += 2
-            if (extraLength > MAX_BLOCK - cursor) truncated("gzip extra field")
-            if (readExact(cursor, extraLength) < extraLength) truncated("gzip extra field")
-            val extraEnd = cursor + extraLength
-            var sub = cursor
-            while (sub + 4 <= extraEnd) {
-                val id1 = u8(sub)
-                val id2 = u8(sub + 1)
-                val subLength = u16(sub + 2)
-                val next = sub + 4 + subLength
-                if (next > extraEnd) truncated("gzip extra subfield")
-                if (id1 == ID_B && id2 == ID_C && subLength == 2) blockSize = u16(sub + 4)
-                sub = next
-            }
-            cursor = extraEnd
+            if (extraLength > BGZF_MAX_BLOCK - cursor) truncatedBgzf("gzip extra field")
+            if (readExact(cursor, extraLength) < extraLength) truncatedBgzf("gzip extra field")
+            cursor += extraLength
         }
-        if (blockSize < 0) {
-            beginPlain(flags, cursor)
+        val parsed = parseGzipMemberHeader(member, 0, cursor)
+        if (parsed.blockSize < 0) {
+            beginPlain(parsed.flags, parsed.extraEnd)
             return 0
         }
         sawBgzf = true
-        val total = blockSize + 1
-        if (total > MAX_BLOCK || total < cursor + TRAILER) truncated("BGZF block size")
+        val total = parsed.blockSize + 1
+        if (total > BGZF_MAX_BLOCK || total < cursor + GZIP_TRAILER) truncatedBgzf("BGZF block size")
         val rest = total - cursor
-        if (readExact(cursor, rest) < rest) truncated("BGZF block")
+        if (readExact(cursor, rest) < rest) truncatedBgzf("BGZF block")
 
-        val deflateEnd = total - TRAILER
-        val deflateAt = findDeflateStart(flags, cursor, deflateEnd)
-        if (deflateAt > deflateEnd) truncated("BGZF block")
-        val expectedCrc = u32(deflateEnd)
-        val expectedSize = u32(deflateEnd + 4)
-        if (expectedSize !in 0..MAX_UNCOMPRESSED) truncated("BGZF uncompressed size")
-
-        val written = try {
-            decoder.inflate(member, deflateAt, deflateEnd, inflated, 0, expectedSize)
-        } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("truncated BGZF block (${e.message})")
-        }
-        crc.reset()
-        crc.update(inflated, 0, written)
-        if (crc.value != expectedCrc) {
-            throw IllegalArgumentException("gzip CRC32 does not match the inflated bytes")
-        }
-        if (written != expectedSize) {
-            throw IllegalArgumentException("gzip ISIZE does not match the inflated bytes")
-        }
+        val written = inflateBgzf(decoder, crc, member, parseBgzfPayload(member, 0, parsed), inflated)
         sawMember = true
         lastWasEmpty = written == 0
         if (written > 0) {
@@ -182,9 +146,9 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
     private fun beginPlain(flags: Int, headerEnd: Int) {
         crc.reset()
         crc.update(member, 0, headerEnd)
-        if (flags and FNAME != 0) skipPlainText()
-        if (flags and FCOMMENT != 0) skipPlainText()
-        if (flags and FHCRC != 0) {
+        if (flags and GZIP_FNAME != 0) skipPlainText()
+        if (flags and GZIP_FCOMMENT != 0) skipPlainText()
+        if (flags and GZIP_FHCRC != 0) {
             val stored = readU16Plain()
             if (stored != (crc.value and 0xFFFF)) {
                 throw IllegalArgumentException("gzip header CRC does not match")
@@ -222,7 +186,7 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
     }
 
     private fun finishPlainTrailer() {
-        if (readExact(0, TRAILER) < TRAILER) plainTruncated("trailer")
+        if (readExact(0, GZIP_TRAILER) < GZIP_TRAILER) plainTruncated("trailer")
         val expectedCrc = u32(0)
         val expectedSize = u32(4)
         if (crc.value != expectedCrc) {
@@ -233,26 +197,6 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
         }
         plainActive = false
         lastWasEmpty = plainSize == 0L
-    }
-
-    private fun findDeflateStart(flags: Int, from: Int, limit: Int): Int {
-        var cursor = from
-        if (flags and FNAME != 0) cursor = skipCString(cursor, limit)
-        if (flags and FCOMMENT != 0) cursor = skipCString(cursor, limit)
-        if (flags and FHCRC != 0) {
-            if (cursor + 2 > limit) truncated("gzip header CRC")
-            cursor += 2
-        }
-        return cursor
-    }
-
-    private fun skipCString(from: Int, limit: Int): Int {
-        var cursor = from
-        while (cursor < limit) {
-            if (member[cursor].toInt() == 0) return cursor + 1
-            cursor++
-        }
-        truncated("gzip header text")
     }
 
     private fun skipPlainText() {
@@ -356,27 +300,11 @@ internal class GzipRawSource(private val upstream: RawSource) : RawSource {
 
     private fun u32(at: Int): Int = u16(at) or (u16(at + 2) shl 16)
 
-    private fun truncated(where: String): Nothing = throw IllegalArgumentException("truncated BGZF block ($where)")
-
     private fun plainTruncated(where: String): Nothing =
         throw IllegalArgumentException("truncated gzip member ($where)")
 
     private companion object {
-        const val MAX_BLOCK = 65536
-        const val MAX_UNCOMPRESSED = 65536
         const val AHEAD_FILL = 16 * 1024
         const val RETURNED_ROOM = 16
-        const val FIXED_HEADER = 10
-        const val TRAILER = 8
-        const val GZIP_ID1 = 0x1F
-        const val GZIP_ID2 = 0x8B
-        const val METHOD_DEFLATE = 8
-        const val FHCRC = 2
-        const val FEXTRA = 4
-        const val FNAME = 8
-        const val FCOMMENT = 16
-        const val RESERVED = 0xE0
-        const val ID_B = 'B'.code
-        const val ID_C = 'C'.code
     }
 }
