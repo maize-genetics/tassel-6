@@ -15,7 +15,8 @@
 # --only vcf times wheat-scale VCF reads (tassel-6#81, tassel-6#89). It generates a loadable plain
 # VCF and a bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the
 # TASSEL 6 CLI on the plain and bgzipped files, TASSEL 5 -vcf on both, BGZF inflate at 1 worker and
-# at the host worker count, and htslib. vcf needs --heap 8g, plus bgzip and bcftools from htslib 1.25.
+# at the host worker count, htslib, and indexed region reads of chr3B (tassel-6#90). vcf needs
+# --heap 8g, plus bgzip and bcftools from htslib 1.25.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
 # JDK 25 through the Gradle toolchain. --only vcf also requires htslib 1.25.
@@ -383,8 +384,10 @@ run_vcf() {
   result=$(repeat_measure bcftools view -Ou -o /dev/null "$load_gz")
   vcf_row "htslib" "decompress and parse" "loadable .vcf.gz" "$result" "$command"
 
-  local region_query
+  local region_query region_index="${region}.csi"
+  [[ -f "$region_index" ]] || die "no CSI beside $region"
   for region_query in "chr3B:1-1000000" "chr3B:1-50000000" "chr3B"; do
+    vcf_region_row "$region" "$region_index" "$region_query"
     command="bcftools view -H -r $region_query -o /dev/null $region"
     result=$(repeat_measure bcftools view -H -r "$region_query" -o /dev/null "$region")
     vcf_row "htslib" "region $region_query" "region .vcf.gz" "$result" "$command"
@@ -393,6 +396,7 @@ run_vcf() {
   echo
   echo "TASSEL whole-file rows are the CLI path: read the VCF, write HapMap, JVM startup included."
   echo "TASSEL 6 decompress rows are dev bgzf-bench: inflate only, one warm-up discarded, startup excluded."
+  echo "TASSEL 6 region rows are dev vcf-region-bench: one region, one warm-up discarded, startup excluded."
   echo "Full tool output: $LOG"
 }
 
@@ -422,6 +426,26 @@ bgzf_bench_row() {
   command="$TASSEL6 ${args[*]}"
   printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
     "TASSEL 6" "$label" "loadable .vcf.gz" "$median" "${rss:-0}" "$command"
+}
+
+# One dev vcf-region-bench invocation. The median excludes JVM startup. Prints a table row.
+vcf_region_row() {
+  local input="$1" index="$2" query="$3"
+  local -a args=(--quiet dev vcf-region-bench --input "$input" --index "$index" --region "$query" --runs "$RUNS")
+  local stats="$WORK/.time" out="$WORK/vcf-region-bench.out" rss line median command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "vcf-region-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  [[ -n "$median" ]] || die "vcf-region-bench wrote no median: $(cat "$out")"
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "region $query" "region .vcf.gz" "$median" "${rss:-0}" "$command"
 }
 
 file_bytes() {

@@ -67,9 +67,12 @@ class GenomicIndex internal constructor(
 
         val minOff = minimumOffset(reference, beg)
         val maxOff = maximumOffset(reference, end)
+        val queryEnd = if (end > maximumCoordinate) maximumCoordinate else end
         val collected = ArrayList<BgzfChunk>()
-        for (bin in reg2bins(beg, end, minShift, depth)) {
-            val stored = reference.bins[bin] ?: continue
+        // Walk bins the index actually stores. reg2bins would list every bin in the coordinate
+        // space, and a depth-8 CSI queried over the whole contig is 2^24 leaves.
+        for ((bin, stored) in reference.bins) {
+            if (!binOverlapsQuery(bin, beg, queryEnd)) continue
             for (chunk in stored.chunks) {
                 if (unsignedLess(minOff, chunk.end) && unsignedLess(chunk.start, maxOff)) {
                     val start = if (unsignedLess(chunk.start, minOff)) minOff else chunk.start
@@ -121,6 +124,19 @@ class GenomicIndex internal constructor(
             }
         }
         return minOff
+    }
+
+    /** True when [bin]'s interval overlaps `[beg], [endExclusive)`, the same set [reg2bins] names. */
+    private fun binOverlapsQuery(bin: Long, beg: Long, endExclusive: Long): Boolean {
+        val level = binLevel(bin)
+        if (level > depth) return false
+        val shift = minShift + 3 * (depth - level)
+        if (shift !in 0..62) return false
+        val offset = bin - binFirst(level)
+        if (offset < 0 || offset > (Long.MAX_VALUE ushr shift)) return false
+        val start = offset shl shift
+        val stop = start + (1L shl shift)
+        return start < endExclusive && stop > beg
     }
 
     /** A virtual offset from the first existing bin to the right of [end], or every remaining byte. */

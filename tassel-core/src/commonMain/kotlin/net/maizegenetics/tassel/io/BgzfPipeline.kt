@@ -48,6 +48,10 @@ internal class BgzfDecodeWindow(
     private val workers: Int,
     private val maxBlocksInFlight: Int,
     startAddress: Long,
+    /** Exclusive compressed offset of the chunk end, or -1 when the window may run to the end of the file. */
+    private val chunkEndCoff: Long,
+    /** Uncompressed offset of the chunk end. Zero means the chunk ends on a block boundary. */
+    private val chunkEndUoff: Int,
     private val beforeInflate: suspend (Long) -> Unit,
     parent: Job?,
 ) {
@@ -132,7 +136,15 @@ internal class BgzfDecodeWindow(
 
     private suspend fun produce(startAddress: Long) {
         var address = startAddress
+        var spilled = false
         while (address < source.size) {
+            if (chunkEndCoff >= 0) {
+                val pastEnd = address > chunkEndCoff || (address == chunkEndCoff && chunkEndUoff == 0)
+                if (pastEnd) {
+                    if (spilled) break
+                    spilled = true
+                }
+            }
             coroutineContext.ensureActive()
             permits.acquire()
             val member = try {

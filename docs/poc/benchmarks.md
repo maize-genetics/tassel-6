@@ -145,7 +145,7 @@ Park-Miller seed 81. Nothing under `build/bench/` is committed.
 | Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
 | JDK | TASSEL 6: 25.0.4.1. TASSEL 5: 21.0.7. Both `-Xmx8g` |
 | TASSEL 5 | v5.2.98, `-maxThreads 4` |
-| TASSEL 6 | 6.0.0-dev on `feature/89-parallel-bgzf` (parent `0226e9d`) |
+| TASSEL 6 | 6.0.0-dev on `feature/90-indexed-vcf-region` (parent `1a12c3a`) |
 | htslib | 1.25 (`bgzip`, `bcftools`) |
 | Runs | Median of 3, after one warm-up run that is discarded |
 
@@ -166,29 +166,36 @@ the HapMap write.
 TASSEL 6 decompression is `tassel dev bgzf-bench`: inflate only, one warm-up discarded, JVM startup
 excluded. `--workers 1` is the single-worker row. Omitting `--workers` uses the processor count, 12
 on this host. htslib decompression is `bgzip -d -@ N -o /dev/null` at 1 thread and at 4, process
-startup included. Parsing is `bcftools view -Ou -o /dev/null`. Region rows are `bcftools view -H -r`
-on the large file for `chr3B:1-1000000` (1 Mbp), `chr3B:1-50000000` (50 Mbp), and `chr3B` (the whole
-contig, 851,934,019 bp).
+startup included. Parsing is `bcftools view -Ou -o /dev/null`. htslib region rows are
+`bcftools view -H -r` on the large file for `chr3B:1-1000000` (1 Mbp), `chr3B:1-50000000` (50 Mbp),
+and `chr3B` (the whole contig, 851,934,019 bp), process startup included. TASSEL 6 region rows are
+`tassel dev vcf-region-bench` on the same queries. The header and index are opened before the clock
+starts, one warm-up is discarded, and JVM startup is excluded.
 
-Inflate at 12 workers is 1.38 s, against 10.44 s at one worker. The whole-file `.vcf.gz` read is
-20.58 s, next to 21.13 s for the plain file, so that read is no longer waiting on inflate.
+Inflate at 12 workers is 1.29 s, against 10.40 s at one worker. The whole-file `.vcf.gz` read is
+20.93 s, next to 21.26 s for the plain file, so that read is no longer waiting on inflate. A 1 Mbp
+region is 0.03 s once the file is open, against 0.22 s for `bcftools` including process startup.
+The 50 Mbp region is 1.03 s, and all of `chr3B` is 16.87 s, against 0.81 s and 10.45 s for
+`bcftools`. The whole-contig row builds an in-memory table; `bcftools` streams the lines and
+discards them.
 
 | Tool | Read | Input | Median | Peak |
 |------|------|-------|-------:|-----:|
-| TASSEL 6 | whole-file read | loadable .vcf | 21.13 s | 3445 MiB |
-| TASSEL 6 | whole-file read | loadable .vcf.gz | 20.58 s | 3836 MiB |
-| TASSEL 6 | decompress, 1 worker | loadable .vcf.gz | 10.44 s | 694 MiB |
-| TASSEL 6 | decompress, 12 workers | loadable .vcf.gz | 1.38 s | 715 MiB |
-| TASSEL 5 | whole-file read | loadable .vcf | 41.76 s | 5442 MiB |
-| TASSEL 5 | whole-file read | loadable .vcf.gz | 42.48 s | 4149 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf | 21.26 s | 3455 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | 20.93 s | 3831 MiB |
+| TASSEL 6 | decompress, 1 worker | loadable .vcf.gz | 10.40 s | 694 MiB |
+| TASSEL 6 | decompress, 12 workers | loadable .vcf.gz | 1.29 s | 710 MiB |
+| TASSEL 5 | whole-file read | loadable .vcf | 41.67 s | 5698 MiB |
+| TASSEL 5 | whole-file read | loadable .vcf.gz | 42.25 s | 4050 MiB |
 | htslib | decompress, 1 thread | loadable .vcf.gz | 1.88 s | 6 MiB |
 | htslib | decompress, 4 threads | loadable .vcf.gz | 0.57 s | 8 MiB |
-| htslib | decompress and parse | loadable .vcf.gz | 17.80 s | 8 MiB |
-| htslib | region `chr3B:1-1000000` | region .vcf.gz | 0.22 s | 107 MiB |
-| htslib | region `chr3B:1-50000000` | region .vcf.gz | 0.80 s | 107 MiB |
-| htslib | region `chr3B` | region .vcf.gz | 10.39 s | 108 MiB |
-
-Later VCF performance tasks add TASSEL 6 region rows here, rather than starting a new table.
+| htslib | decompress and parse | loadable .vcf.gz | 17.86 s | 8 MiB |
+| TASSEL 6 | region `chr3B:1-1000000` | region .vcf.gz | 0.03 s | 747 MiB |
+| htslib | region `chr3B:1-1000000` | region .vcf.gz | 0.22 s | 108 MiB |
+| TASSEL 6 | region `chr3B:1-50000000` | region .vcf.gz | 1.03 s | 1187 MiB |
+| htslib | region `chr3B:1-50000000` | region .vcf.gz | 0.81 s | 107 MiB |
+| TASSEL 6 | region `chr3B` | region .vcf.gz | 16.87 s | 3487 MiB |
+| htslib | region `chr3B` | region .vcf.gz | 10.45 s | 107 MiB |
 
 ## Known limits
 

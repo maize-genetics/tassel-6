@@ -19,6 +19,7 @@ import net.maizegenetics.tassel.taxa.TaxaList
  *
  * [read] of a [kotlinx.io.Source] does not decompress: hand it an already-inflated source. [read] of a
  * [RandomAccessSource] inflates BGZF itself, in parallel when the host has more than one worker.
+ * A region of an indexed file is [IndexedVcf].
  *
  * @see net.maizegenetics.dna.snp.io.BuilderFromVCF
  */
@@ -75,39 +76,20 @@ object Vcf {
         progress: ProgressReporter,
         fill: suspend (window: ByteArray, offset: Int, length: Int) -> Int,
     ): GenotypeTable {
-        val taxa = TaxaList.of(header.taxaNames)
+        val sites = VcfSites(TaxaList.of(header.taxaNames), progress)
         val parser = VcfRecordParser(header)
-        val calls = ByteArray(taxa.size)
-        val positions = ArrayList<Position>()
-        var packed = ByteArray(0)
-        var packedUsed = 0
 
         var window = ByteArray(RECORD_BUFFER_BYTES)
         var start = 0
         var end = 0
         var eof = false
         while (true) {
-            when (val parsed = parser.tryParse(window, start, end, eof, calls)) {
+            when (val parsed = parser.tryParse(window, start, end, eof, sites.calls)) {
                 is VcfParse.End -> break
                 is VcfParse.Skip -> start += parsed.consumed
                 is VcfParse.Site -> {
                     start += parsed.consumed
-                    val sites = positions.size + 1
-                    require(sites.toLong() * taxa.size <= Int.MAX_VALUE) {
-                        "VCF file is too large to hold in memory: $sites sites x ${taxa.size} taxa"
-                    }
-                    val needed = packedUsed + calls.size
-                    if (needed > packed.size) {
-                        var grown = maxOf(packed.size, calls.size).coerceAtLeast(1)
-                        while (grown < needed) {
-                            grown = if (grown > Int.MAX_VALUE / 2) needed else grown * 2
-                        }
-                        packed = packed.copyOf(grown)
-                    }
-                    calls.copyInto(packed, packedUsed)
-                    packedUsed = needed
-                    positions.add(parsed.position)
-                    if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, "Reading VCF")
+                    sites.add(parsed.position)
                 }
                 VcfParse.Incomplete -> {
                     check(!eof) { "VCF parser asked for more bytes at EOF" }
@@ -123,7 +105,51 @@ object Vcf {
                 }
             }
         }
+        return sites.finish()
+    }
 
+    /**
+     * Reads the header and leaves [source] positioned at the first record.
+     *
+     * The record parser takes this header and a window of bytes, so it can start at any later record.
+     */
+    internal fun readHeader(source: Source): VcfHeader = readVcfHeader(source)
+
+    /** Bytes pulled from the source at a time. A record longer than this is carried across fills. */
+    private const val RECORD_BUFFER_BYTES = 64 * 1024
+}
+
+/**
+ * Sites accumulated by [Vcf.read] and [IndexedVcf.read], packed and sorted the same way.
+ *
+ * [calls] is filled in place by [VcfRecordParser]. [add] copies it before the next record overwrites it.
+ */
+internal class VcfSites(private val taxa: TaxaList, private val progress: ProgressReporter) {
+    val calls = ByteArray(taxa.size)
+    private val positions = ArrayList<Position>()
+    private var packed = ByteArray(0)
+    private var packedUsed = 0
+
+    suspend fun add(position: Position) {
+        val sites = positions.size + 1
+        require(sites.toLong() * taxa.size <= Int.MAX_VALUE) {
+            "VCF file is too large to hold in memory: $sites sites x ${taxa.size} taxa"
+        }
+        val needed = packedUsed + calls.size
+        if (needed > packed.size) {
+            var grown = maxOf(packed.size, calls.size).coerceAtLeast(1)
+            while (grown < needed) {
+                grown = if (grown > Int.MAX_VALUE / 2) needed else grown * 2
+            }
+            packed = packed.copyOf(grown)
+        }
+        calls.copyInto(packed, packedUsed)
+        packedUsed = needed
+        positions.add(position)
+        if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, "Reading VCF")
+    }
+
+    suspend fun finish(): GenotypeTable {
         val sorted = (1 until positions.size).all { positions[it - 1] <= positions[it] }
         val exact = if (packedUsed == packed.size) packed else packed.copyOf(packedUsed)
         val combined: ByteArray
@@ -144,18 +170,10 @@ object Vcf {
         return InMemoryGenotypeTable.wrap(taxa, PositionList(ordered), combined)
     }
 
-    /**
-     * Reads the header and leaves [source] positioned at the first record.
-     *
-     * The record parser takes this header and a window of bytes, so it can start at any later record.
-     */
-    internal fun readHeader(source: Source): VcfHeader = readVcfHeader(source)
-
-    /** Bytes pulled from the source at a time. A record longer than this is carried across fills. */
-    private const val RECORD_BUFFER_BYTES = 64 * 1024
-
-    /** Sites between progress reports, and so between suspension points; see `HapMap.PROGRESS_SITES`. */
-    private const val PROGRESS_SITES = 256
+    private companion object {
+        /** Sites between progress reports, and so between suspension points; see `HapMap.PROGRESS_SITES`. */
+        const val PROGRESS_SITES = 256
+    }
 }
 
 /** A bgzipped VCF and the warnings found while inflating it. */

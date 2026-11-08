@@ -20,9 +20,11 @@ import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.io.BgzfReader
+import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.RandomAccessSource
 import net.maizegenetics.tassel.io.bgzfWorkerCount
 import net.maizegenetics.tassel.io.openRandomAccessSource
+import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.position.Chromosome
 import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.position.PositionList
@@ -153,6 +155,52 @@ class BgzfBench : CliktCommand(name = "bgzf-bench") {
                     "bytes=$bytes workers=$count min=${formatSeconds(seconds.first())} " +
                         "median=${formatSeconds(seconds[medianAt])}",
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Times one indexed region read.
+ *
+ * Not an analysis: hand-written, like [BgzfBench]. The printed median is the read after one discarded
+ * warm-up, so it does not include JVM startup. `--region` uses the same syntax as `bcftools view -r`.
+ */
+class VcfRegionBench : CliktCommand(name = "vcf-region-bench") {
+    override fun help(context: Context): String = "Time one indexed VCF region, after the header and index are open"
+
+    private val input by option("--input", help = "bgzipped VCF", metavar = "PATH").required()
+    private val indexPath by option("--index", help = "CSI or TBI index", metavar = "PATH").required()
+    private val region by option(
+        "--region",
+        help = "One region, as bcftools view -r reads it",
+        metavar = "REGION",
+    ).required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+
+    override fun run() = cliRun {
+        val parsed = parseVcfRegion(region)
+        runBlocking {
+            openRandomAccessSource(input).use { data ->
+                openRandomAccessSource(indexPath).use { index ->
+                    IndexedVcf.open(data, index).use { vcf ->
+                        val seconds = DoubleArray(runs)
+                        var sites = 0
+                        repeat(runs + 1) { iteration ->
+                            val started = TimeSource.Monotonic.markNow()
+                            sites = vcf.read(parsed).table.numberOfSites
+                            val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                            if (iteration > 0) seconds[iteration - 1] = elapsed
+                        }
+                        seconds.sort()
+                        val medianAt = (runs + 1) / 2 - 1
+                        echo(
+                            "sites=$sites region=$region min=${formatSeconds(seconds.first())} " +
+                                "median=${formatSeconds(seconds[medianAt])}",
+                        )
+                    }
+                }
             }
         }
     }

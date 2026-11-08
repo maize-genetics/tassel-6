@@ -1,6 +1,7 @@
 package net.maizegenetics.tassel.io
 
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import net.maizegenetics.tassel.io.deflate.BGZF_MAX_BLOCK
 import net.maizegenetics.tassel.io.deflate.BGZF_MAX_UNCOMPRESSED
 import net.maizegenetics.tassel.io.deflate.Crc32
@@ -106,6 +107,16 @@ class BgzfReader internal constructor(
     private var window: BgzfDecodeWindow? = null
     private var windowNext = -1L
 
+    /**
+     * When set, each compressed member is read by itself. Header parsing uses this so a parallel
+     * window cannot pull the rest of the file before the first record.
+     */
+    private var exactBlocks = false
+
+    /** Compressed offset of the active chunk end, or -1 when a window may read through EOF. */
+    private var chunkEndCoff = -1L
+    private var chunkEndUoff = 0
+
     /** Members copied and not yet returned. Zero when this reader is inflating on the caller. */
     internal val blocksInFlight: Int get() = window?.blocksInFlight ?: 0
 
@@ -125,6 +136,33 @@ class BgzfReader internal constructor(
     fun tell(): Long {
         ensureOpen()
         return bgzfVirtualOffset(blockAddress, blockOffset)
+    }
+
+    /**
+     * Reads one compressed member at a time, with no parallel prefetch.
+     *
+     * [IndexedVcf] sets this while it reads the header. A region query then clears it and uses
+     * [chunkLimit] so a long region still inflates in parallel inside its own chunks.
+     */
+    internal fun exactBlocks(enabled: Boolean) {
+        ensureOpen()
+        if (exactBlocks == enabled) return
+        exactBlocks = enabled
+        abandonWindow()
+    }
+
+    /**
+     * Stops a parallel window one block after [endVirtual].
+     *
+     * The block that contains the chunk end is read, plus the next block so a line can finish.
+     * This is not a shorter [RandomAccessSource.size]: pretending the file ended there would record
+     * a missing BGZF EOF marker in the middle of the file.
+     */
+    internal fun chunkLimit(endVirtual: Long) {
+        ensureOpen()
+        chunkEndCoff = bgzfCoffset(endVirtual)
+        chunkEndUoff = bgzfUoffset(endVirtual)
+        abandonWindow()
     }
 
     /**
@@ -293,14 +331,18 @@ class BgzfReader internal constructor(
             if (window != null) abandonWindow()
             return block
         }
-        val block = if (workers == 1) inflateAt(address, virtualOffset) else inflateAhead(address, virtualOffset)
+        val block = if (workers == 1 || exactBlocks) {
+            inflateAt(address, virtualOffset)
+        } else {
+            inflateAhead(address, virtualOffset)
+        }
         cache.put(block)
         return block
     }
 
     private suspend fun inflateAhead(address: Long, virtualOffset: Long): InflatedBlock {
         if (window == null || windowNext != address) startWindow(address)
-        val block = takeFromWindow(virtualOffset)
+        val block = takeFromWindow(virtualOffset) ?: return inflateAt(address, virtualOffset)
         check(block.address == address) { "BGZF pipeline delivered ${block.address}, expected $address" }
         windowNext = block.nextAddress
         return block
@@ -313,6 +355,8 @@ class BgzfReader internal constructor(
             workers,
             maxBlocksInFlight,
             address,
+            chunkEndCoff,
+            chunkEndUoff,
             beforeInflate,
             coroutineContext[Job],
         )
@@ -325,10 +369,13 @@ class BgzfReader internal constructor(
         windowNext = -1L
     }
 
-    private suspend fun takeFromWindow(virtualOffset: Long): InflatedBlock {
+    private suspend fun takeFromWindow(virtualOffset: Long): InflatedBlock? {
         try {
             val decoded = window!!.take()
             return InflatedBlock(decoded.address, decoded.data, decoded.length, decoded.nextAddress)
+        } catch (e: ClosedReceiveChannelException) {
+            abandonWindow()
+            return null
         } catch (e: IllegalArgumentException) {
             abandonWindow()
             if (e.message?.startsWith(BGZF_BLOCK_FAILURE) == true) throw e
@@ -392,7 +439,8 @@ class BgzfReader internal constructor(
             }
         }
         if (position >= source.size || source.size - position < length) truncatedBgzf("BGZF block")
-        val want = minOf(ahead.size.toLong(), source.size - position).toInt()
+        val bounded = exactBlocks || chunkEndCoff >= 0
+        val want = if (bounded) length else minOf(ahead.size.toLong(), source.size - position).toInt()
         val got = source.readAt(position, ahead, 0, want)
         if (got < length) truncatedBgzf("BGZF block")
         aheadFrom = position

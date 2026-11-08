@@ -82,8 +82,15 @@ internal class VcfRecordParser(private val header: VcfHeader) {
         }
         val text = field(window, from, header.positionColumn)
         val site = snpId ?: "$chromosome:$text"
-        val position = text.toIntOrNull()
+        val asLong = text.toLongOrNull()
             ?: throw IllegalArgumentException("VCF position must be an integer: [${text.trim()}] in $site")
+        // The index and BGZF layers keep Long. Position is the GenotypeTable boundary (ADR-0021).
+        if (asLong !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+            throw IllegalArgumentException(
+                "VCF position $asLong is past TASSEL's position limit of ${Int.MAX_VALUE} in $site",
+            )
+        }
+        val position = asLong.toInt()
         val variants = splitVariants(
             variantsOf(field(window, from, header.referenceColumn), field(window, from, header.alternateColumn)),
             site,
