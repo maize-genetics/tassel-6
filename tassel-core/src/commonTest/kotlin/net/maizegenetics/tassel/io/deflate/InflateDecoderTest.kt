@@ -157,11 +157,140 @@ class InflateDecoderTest {
     }
 
     @Test
+    fun streamingMatchesOneShotForEveryBlockKind() {
+        val samples = listOf(
+            storedBlock(byteArrayOf(), last = true),
+            storedBlock("hi".encodeToByteArray(), last = true),
+            storedBlock(ByteArray(1_000) { (it * 3).toByte() }, last = true),
+            fixedBlock("Hi".encodeToByteArray(), last = true),
+            fixedBlock(byteArrayOf('a'.code.toByte()), last = true, match = Match(3, 1)),
+            twoBlocks(),
+            dynamicLiteralA(),
+            distance32768(),
+            overlappingRun(40_000),
+        )
+        for (input in samples) {
+            val expected = oneShot(input)
+            assertContentEquals(expected, stream(input, inputChunk = 1, outputChunk = expected.size.coerceAtLeast(1)))
+            assertContentEquals(expected, stream(input, inputChunk = input.size.coerceAtLeast(1), outputChunk = 1))
+            assertContentEquals(expected, stream(input, inputChunk = 1, outputChunk = 1))
+            assertContentEquals(expected, stream(input, inputChunk = 3, outputChunk = 5))
+        }
+    }
+
+    @Test
+    fun streamingGivesBackBytesThatFollowTheDeflateStream() {
+        val input = byteArrayOf(0x03, 0x00, 0x11, 0x22, 0x33, 0x44)
+        val trailer = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+        for (chunk in intArrayOf(1, 2, input.size)) {
+            val (output, unread) = streamWithRest(input, inputChunk = chunk, outputChunk = 8)
+            assertEquals(0, output.size, "chunk $chunk")
+            assertContentEquals(trailer, unread, "chunk $chunk")
+        }
+    }
+
+    @Test
+    fun streamingWaitsForInputAndThenRejectsAShortStream() {
+        val decoder = InflateDecoder()
+        decoder.resetStream()
+        val waiting = decoder.inflateSome(byteArrayOf(0x03), 0, 1, ByteArray(4), 0, 4, endOfInput = false)
+        assertEquals(false, waiting.finished)
+        assertEquals(1, waiting.consumed)
+        val failure = assertFailsWith<IllegalArgumentException> {
+            decoder.inflateSome(ByteArray(0), 0, 0, ByteArray(4), 0, 4, endOfInput = true)
+        }
+        assertTrue(failure.message?.contains("truncated input") == true, failure.message)
+    }
+
+    @Test
+    fun streamingFailureThenOneShotOnTheSameDecoder() {
+        val decoder = InflateDecoder()
+        decoder.resetStream()
+        assertFailsWith<IllegalArgumentException> {
+            decoder.inflateSome(byteArrayOf(0x07), 0, 1, ByteArray(4), 0, 4, endOfInput = true)
+        }
+        val stored = storedBlock("xy".encodeToByteArray(), last = true)
+        val out = ByteArray(2)
+        assertEquals(2, decoder.inflate(stored, 0, stored.size, out, 0, 2))
+        assertContentEquals("xy".encodeToByteArray(), out)
+        assertContentEquals("xy".encodeToByteArray(), stream(stored, 1, 1, decoder))
+    }
+
+    @Test
     fun rejectsARangeOutsideEitherArray() {
         val failure = assertFailsWith<IllegalArgumentException> {
             InflateDecoder().inflate(byteArrayOf(0x03, 0x00), 0, 3, ByteArray(1), 0, 1)
         }
         assertEquals(true, failure.message?.contains("invalid inflate range"), failure.message)
+    }
+
+    private fun oneShot(input: ByteArray): ByteArray = inflate(input, capacity = 64_000)
+
+    private fun stream(
+        input: ByteArray,
+        inputChunk: Int,
+        outputChunk: Int,
+        decoder: InflateDecoder = InflateDecoder(),
+    ): ByteArray {
+        val (output, unread) = streamWithRest(input, inputChunk, outputChunk, decoder)
+        assertEquals(0, unread.size, "deflate stream left ${unread.size} unread bytes")
+        return output
+    }
+
+    private fun streamWithRest(
+        input: ByteArray,
+        inputChunk: Int,
+        outputChunk: Int,
+        decoder: InflateDecoder = InflateDecoder(),
+    ): Pair<ByteArray, ByteArray> {
+        decoder.resetStream()
+        val out = ArrayList<Byte>()
+        val outBuf = ByteArray(outputChunk)
+        var pos = 0
+        while (true) {
+            val end = if (pos >= input.size) pos else minOf(input.size, pos + inputChunk)
+            val step = decoder.inflateSome(input, pos, end, outBuf, 0, outBuf.size, endOfInput = pos >= input.size)
+            repeat(step.written) { out.add(outBuf[it]) }
+            pos += step.consumed
+            if (step.finished) {
+                val returned = ByteArray(step.returned) { decoder.returnedBytes[it] }
+                return ByteArray(out.size) { out[it] } to returned + input.copyOfRange(pos, input.size)
+            }
+            if (step.consumed == 0 && step.written == 0) {
+                error("inflateSome made no progress at $pos of ${input.size}")
+            }
+        }
+    }
+
+    private fun twoBlocks(): ByteArray {
+        val writer = BitWriter()
+        writeStored(writer, "ab".encodeToByteArray(), last = false)
+        writeFixed(writer, "c".encodeToByteArray(), last = true)
+        return writer.toByteArray()
+    }
+
+    private fun distance32768(): ByteArray {
+        val lead = ByteArray(32_768) { ((it * 31) + 7).toByte() }
+        val writer = BitWriter()
+        writeFixed(writer, lead, last = true, match = Match(258, 32_768))
+        return writer.toByteArray()
+    }
+
+    private fun overlappingRun(count: Int): ByteArray {
+        val writer = BitWriter()
+        writer.writeLsb(1, 1)
+        writer.writeLsb(1, 2)
+        val (literal, literalBits) = fixedLiteralCode('a'.code)
+        writer.writeMsb(literal, literalBits)
+        var produced = 1
+        while (produced < count) {
+            val length = minOf(258, count - produced)
+            writeFixedMatch(writer, length, 1)
+            produced += length
+        }
+        val (endCode, endBits) = fixedLiteralCode(256)
+        writer.writeMsb(endCode, endBits)
+        return writer.toByteArray()
     }
 
     private fun inflate(
