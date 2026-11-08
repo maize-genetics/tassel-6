@@ -7,6 +7,7 @@ import kotlinx.io.buffered
 import kotlinx.io.readByteArray
 import kotlinx.io.readString
 import kotlinx.io.writeString
+import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.Nucleotide
 import net.maizegenetics.tassel.io.deflate.Crc32
 import net.maizegenetics.tassel.io.deflate.bgzfBlocks
@@ -79,9 +80,61 @@ class GzipSourceTest {
     }
 
     @Test
-    fun rejectsPlainGzip() {
-        assertFailure(PLAIN, "tassel-6#85")
-        assertFailure(CONCATENATED, "tassel-6#85")
+    fun readsPlainAndConcatenatedGzip() = runTest {
+        val plainVcf = TestData.readBytes(SOURCE)
+        val expected = Vcf.read(Buffer().also { it.write(plainVcf) })
+        for (path in listOf(PLAIN, CONCATENATED)) {
+            val opened = open(path)
+            assertContentEquals(plainVcf, opened.source.readByteArray())
+            assertEquals(emptyList(), opened.warnings, path)
+            assertSameTable(expected, Vcf.read(open(path).source))
+        }
+    }
+
+    @Test
+    fun readsPlainGzipOneByteAtATime() {
+        val compressed = TestData.readBytes(PLAIN)
+        val opened = OneByteRawSource(compressed).buffered().decompressing()
+        assertContentEquals(TestData.readBytes(SOURCE), opened.source.readByteArray())
+        assertEquals(emptyList(), opened.warnings)
+    }
+
+    @Test
+    fun readsPlainHeaderFieldsAndChecksTheHeaderCrc() {
+        val text = "hello".encodeToByteArray()
+        val gz = plainMember(text, name = "sample", comment = "note", extra = byteArrayOf(1, 2), headerCrc = true)
+        val (bytes, warnings) = inflated(gz)
+        assertContentEquals(text, bytes)
+        assertEquals(emptyList(), warnings)
+    }
+
+    @Test
+    fun readsPlainMembersOnEitherSideOfBgzf() {
+        val text = "abcdefghij".encodeToByteArray()
+        val forward = bgzfMember(text.copyOfRange(0, 3)) +
+            plainMember(text.copyOfRange(3, 7)) +
+            bgzfMember(text.copyOfRange(7, text.size)) +
+            bgzfMember(ByteArray(0))
+        val backward = plainMember(text.copyOfRange(0, 4)) +
+            bgzfMember(text.copyOfRange(4, 8)) +
+            plainMember(text.copyOfRange(8, text.size))
+        val (forwardBytes, forwardWarnings) = inflated(forward)
+        val (backwardBytes, backwardWarnings) = inflated(backward)
+        assertContentEquals(text, forwardBytes)
+        assertContentEquals(text, backwardBytes)
+        assertEquals(emptyList(), forwardWarnings)
+        assertEquals(emptyList(), backwardWarnings)
+    }
+
+    @Test
+    fun rejectsAPlainHeaderCrcTrailerCrcAndAShortMember() {
+        val text = "hello".encodeToByteArray()
+        assertPlainFailure(plainMember(text, headerCrc = true, corruptHeaderCrc = true), "header CRC")
+        assertPlainFailure(plainMember(text, trailerCrc = 1), "CRC32")
+        assertPlainFailure(plainMember(text, trailerSize = text.size + 1), "ISIZE")
+        assertPlainFailure(plainMember(text).copyOf(12), "truncated")
+        val reserved = plainMember(text).also { it[3] = (it[3].toInt() or 0x20).toByte() }
+        assertPlainFailure(reserved, "reserved")
     }
 
     @Test
@@ -160,6 +213,20 @@ class GzipSourceTest {
         return opened.source.readByteArray() to opened.warnings
     }
 
+    private fun assertSameTable(expected: GenotypeTable, actual: GenotypeTable) {
+        assertEquals(expected.taxa.names, actual.taxa.names)
+        assertEquals(expected.numberOfTaxa, actual.numberOfTaxa)
+        assertEquals(expected.numberOfSites, actual.numberOfSites)
+        for (site in 0 until expected.numberOfSites) {
+            assertContentEquals(expected.siteGenotypes(site), actual.siteGenotypes(site), "site $site")
+        }
+    }
+
+    private fun assertPlainFailure(bytes: ByteArray, snippet: String) {
+        val failure = assertFailsWith<IllegalArgumentException> { inflated(bytes) }
+        assertContains(failure.message ?: "", snippet)
+    }
+
     private fun assertFailure(path: String, snippet: String) {
         val failure = assertFailsWith<IllegalArgumentException> { inflated(path) }
         assertContains(failure.message ?: "", snippet)
@@ -235,6 +302,70 @@ class GzipSourceTest {
         return block
     }
 
+    private fun plainMember(
+        data: ByteArray,
+        name: String? = null,
+        comment: String? = null,
+        extra: ByteArray? = null,
+        headerCrc: Boolean = false,
+        corruptHeaderCrc: Boolean = false,
+        trailerCrc: Int? = null,
+        trailerSize: Int? = null,
+    ): ByteArray {
+        val stored = ByteArray(5 + data.size)
+        stored[0] = 1
+        stored[1] = (data.size and 0xFF).toByte()
+        stored[2] = ((data.size ushr 8) and 0xFF).toByte()
+        val complement = data.size xor 0xFFFF
+        stored[3] = (complement and 0xFF).toByte()
+        stored[4] = ((complement ushr 8) and 0xFF).toByte()
+        data.copyInto(stored, 5)
+
+        val nameBytes = name?.encodeToByteArray()?.plus(0.toByte()) ?: ByteArray(0)
+        val commentBytes = comment?.encodeToByteArray()?.plus(0.toByte()) ?: ByteArray(0)
+        val extraBytes = extra ?: ByteArray(0)
+        val headerBody = ByteArray(
+            10 + (if (extra != null) 2 + extraBytes.size else 0) + nameBytes.size + commentBytes.size,
+        )
+        headerBody[0] = 0x1F
+        headerBody[1] = 0x8B.toByte()
+        headerBody[2] = 8
+        var flags = 0
+        if (extra != null) flags = flags or 4
+        if (name != null) flags = flags or 8
+        if (comment != null) flags = flags or 16
+        if (headerCrc) flags = flags or 2
+        headerBody[3] = flags.toByte()
+        var cursor = 10
+        if (extra != null) {
+            headerBody[cursor] = (extraBytes.size and 0xFF).toByte()
+            headerBody[cursor + 1] = ((extraBytes.size ushr 8) and 0xFF).toByte()
+            extraBytes.copyInto(headerBody, cursor + 2)
+            cursor += 2 + extraBytes.size
+        }
+        nameBytes.copyInto(headerBody, cursor)
+        cursor += nameBytes.size
+        commentBytes.copyInto(headerBody, cursor)
+
+        val crc16 = Crc32().also { it.update(headerBody, 0, headerBody.size) }.value and 0xFFFF
+        val storedCrc = if (corruptHeaderCrc) crc16 xor 0xFF else crc16
+        val headerCrcBytes = if (headerCrc) {
+            byteArrayOf((storedCrc and 0xFF).toByte(), ((storedCrc ushr 8) and 0xFF).toByte())
+        } else {
+            ByteArray(0)
+        }
+        val checksum = trailerCrc ?: Crc32().also { it.update(data, 0, data.size) }.value
+        val size = trailerSize ?: data.size
+        val block = ByteArray(headerBody.size + headerCrcBytes.size + stored.size + 8)
+        headerBody.copyInto(block)
+        headerCrcBytes.copyInto(block, headerBody.size)
+        stored.copyInto(block, headerBody.size + headerCrcBytes.size)
+        val trailerAt = block.size - 8
+        putU32(block, trailerAt, checksum)
+        putU32(block, trailerAt + 4, size)
+        return block
+    }
+
     private fun u32(file: ByteArray, at: Int): Int {
         fun u16(index: Int) = (file[index].toInt() and 0xFF) or ((file[index + 1].toInt() and 0xFF) shl 8)
         return u16(at) or (u16(at + 2) shl 16)
@@ -245,6 +376,20 @@ class GzipSourceTest {
         dest[at + 1] = ((value ushr 8) and 0xFF).toByte()
         dest[at + 2] = ((value ushr 16) and 0xFF).toByte()
         dest[at + 3] = ((value ushr 24) and 0xFF).toByte()
+    }
+
+    private class OneByteRawSource(private val data: ByteArray) : RawSource {
+        private var position = 0
+
+        override fun readAtMostTo(sink: Buffer, byteCount: Long): Long {
+            if (byteCount == 0L) return 0L
+            if (position >= data.size) return -1L
+            sink.write(byteArrayOf(data[position]))
+            position++
+            return 1L
+        }
+
+        override fun close() = Unit
     }
 
     private class CountingRawSource(private val data: ByteArray) : RawSource {

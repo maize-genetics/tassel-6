@@ -27,9 +27,10 @@ class Decompressed internal constructor(val source: Source, private val gzip: Gz
  * they are.
  *
  * Detection is the bytes, so a caller never decides compression from a file name. A BGZF member is
- * inflated one block at a time, and CRC32 and ISIZE are checked for every member. A member without
- * the BGZF `BC` subfield fails; plain gzip is tassel-6#85. A missing terminal EOF block is recorded
- * on [Decompressed.warnings] once the inflated stream is exhausted.
+ * inflated one block at a time. A plain gzip member, including one longer than a BGZF block, is inflated
+ * as bytes arrive, and plain and BGZF members may alternate. CRC32 and ISIZE are checked for every member.
+ * A missing terminal BGZF EOF block is recorded on [Decompressed.warnings] once the inflated stream is
+ * exhausted, and only when every member was BGZF.
  *
  * The returned source does not close [this]. Keep [this] open while reading, and close it afterwards.
  *
