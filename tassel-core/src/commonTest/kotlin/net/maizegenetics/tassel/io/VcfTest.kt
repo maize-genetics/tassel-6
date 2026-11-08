@@ -2,18 +2,21 @@ package net.maizegenetics.tassel.io
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.Buffer
+import kotlinx.io.readLine
 import kotlinx.io.readString
 import kotlinx.io.writeString
 import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.Nucleotide
+import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.testing.GoldenManifest
 import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.Tolerance
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -247,6 +250,109 @@ class VcfTest {
     }
 
     @Test
+    fun keepsContigIdsAndOptionalLengthsInOrder() = runTest {
+        val sample = "##SAMPLE=<ID=T1,FATHER=T1>"
+        val lines = arrayOf(
+            "##contig=<ID=1,length=100,assembly=ref>",
+            sample,
+            "##contig=<length=9>",
+            "##contig=<ID=2>",
+            "##contig=<ID=\"chr 3\",length=12>",
+            header("T1"),
+            site("s1", "A", "C", "0/1"),
+        )
+        val bytes = lines.joinToString("\n").plus("\n").encodeToByteArray()
+        val source = Buffer().also { it.write(bytes) }
+        val parsed = Vcf.readHeader(source)
+        assertEquals(
+            listOf(VcfContig("1", 100L), VcfContig("2", null), VcfContig("chr 3", 12L)),
+            parsed.contigs,
+        )
+        // The header reader stops on the #CHROM line, so the next line is the first record.
+        assertEquals(site("s1", "A", "C", "0/1"), source.readLine())
+
+        val table = Vcf.read(Buffer().also { it.write(bytes) })
+        assertEquals(listOf("T1"), table.taxa.names)
+        assertEquals(Genotype.of(Allele.A, Allele.C), table.genotype(0, 0))
+    }
+
+    @Test
+    fun parsesARecordSplitAtEveryByteOffset() = runTest {
+        // `\n` and `\r\n` both end a line. A split on the `\r` of `\r\n` has no line break yet.
+        for (lineBreak in listOf("\n", "\r\n")) {
+            val text = header("T1", "T2") + lineBreak + site("s1", "A", "C", "0/1", "1/1") + lineBreak
+            val bytes = text.encodeToByteArray()
+            val headerEnd = text.indexOf(lineBreak) + lineBreak.length
+            val record = bytes.copyOfRange(headerEnd, bytes.size)
+            val parsedHeader = Vcf.readHeader(Buffer().also { it.write(bytes, endIndex = headerEnd) })
+            val table = Vcf.read(Buffer().also { it.write(bytes) })
+            val expected = parseRecords(parsedHeader, record, 0, record.size).single()
+            assertEquals(table.positions[0], expected.position, "whole read, break ${lineBreak.length}")
+            assertContentEquals(table.siteGenotypes(0), expected.calls, "whole read, break ${lineBreak.length}")
+            val newline = record.indexOf('\n'.code.toByte())
+            for (split in 0..record.size) {
+                val parser = VcfRecordParser(parsedHeader)
+                val calls = ByteArray(parsedHeader.taxaNames.size)
+                val first = parser.tryParse(record, 0, split, eof = false, calls)
+                val actual = if (split <= newline) {
+                    assertTrue(first is VcfParse.Incomplete, "split $split should need another refill")
+                    parser.tryParse(record, 0, record.size, eof = true, calls)
+                } else {
+                    first
+                }
+                val site = actual as VcfParse.Site
+                assertEquals(expected.position, site.position, "position at split $split")
+                assertEquals(expected.position.knownVariants, site.position.knownVariants)
+                assertContentEquals(expected.calls, calls, "genotypes at split $split")
+            }
+        }
+    }
+
+    @Test
+    fun parserStartedAtAMiddleRecordMatchesTheRestOfTheFile() = runTest {
+        val lines = arrayOf(
+            header("T1", "T2"),
+            site("s1", "A", "C", "0/0", "1/1", position = "10"),
+            site("s2", "A", "G", "0/1", "1/1", position = "20"),
+            site("s3", "C", "T", "1/1", "0/0", position = "30"),
+        )
+        val text = lines.joinToString("\n") + "\n"
+        val bytes = text.encodeToByteArray()
+        val headerEnd = text.indexOf('\n') + 1
+        val secondSite = text.indexOf('\n', headerEnd) + 1
+
+        val whole = read(*lines)
+        val suffix = Vcf.read(
+            Buffer().also {
+                it.write(bytes, endIndex = headerEnd)
+                it.write(bytes, startIndex = secondSite)
+            },
+        )
+        val parsedHeader = Vcf.readHeader(Buffer().also { it.write(bytes, endIndex = headerEnd) })
+        val parsed = parseRecords(parsedHeader, bytes, secondSite, bytes.size)
+
+        assertEquals(listOf("s2", "s3"), parsed.map { it.position.name })
+        assertEquals(suffix.positions.map { it.name }, parsed.map { it.position.name })
+        assertEquals(whole.positions.drop(1).map { it.name }, parsed.map { it.position.name })
+        parsed.forEachIndexed { index, site ->
+            assertEquals(suffix.positions[index].knownVariants, site.position.knownVariants)
+            assertEquals(whole.positions[index + 1].knownVariants, site.position.knownVariants)
+            repeat(suffix.numberOfTaxa) { taxon ->
+                assertEquals(suffix.genotype(taxon, index), site.calls[taxon], "suffix taxon $taxon")
+                assertEquals(whole.genotype(taxon, index + 1), site.calls[taxon], "whole taxon $taxon")
+            }
+        }
+    }
+
+    @Test
+    fun readsARecordLongerThanTheFillBuffer() = runTest {
+        val info = "N".repeat(70_000)
+        val table = read(header("T1"), "1\t10\ts1\tA\tC\t.\tPASS\t$info\tGT\t0/1")
+        assertEquals("s1", table.positions[0].name)
+        assertEquals(Genotype.of(Allele.A, Allele.C), table.genotype(0, 0))
+    }
+
+    @Test
     fun readsBackWhatHapMapWrote() = runTest {
         val written = Buffer().also { HapMap.write(tutorial(), it) }.readString()
         val reread = HapMap.read(Buffer().also { it.writeString(written) })
@@ -270,6 +376,26 @@ class VcfTest {
     ) = (
         listOf(chromosome, position, snpId, reference, alternate, ".", "PASS", "NS=1", format) + calls.toList()
         ).joinToString("\t")
+
+    private fun parseRecords(header: VcfHeader, window: ByteArray, from: Int, until: Int): List<ParsedRecord> {
+        val parser = VcfRecordParser(header)
+        val calls = ByteArray(header.taxaNames.size)
+        val records = ArrayList<ParsedRecord>()
+        var at = from
+        while (true) {
+            when (val parsed = parser.tryParse(window, at, until, eof = true, calls)) {
+                is VcfParse.End -> return records
+                is VcfParse.Skip -> at += parsed.consumed
+                is VcfParse.Site -> {
+                    records.add(ParsedRecord(parsed.position, calls.copyOf()))
+                    at += parsed.consumed
+                }
+                VcfParse.Incomplete -> error("a full window at EOF should hold complete lines")
+            }
+        }
+    }
+
+    private class ParsedRecord(val position: Position, val calls: ByteArray)
 
     private fun reportLineDifference(line: Int, expected: String, actual: String): Nothing {
         val column = expected.commonPrefixWith(actual).length
