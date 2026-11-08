@@ -49,6 +49,21 @@ internal fun readVcfHeader(source: Source): VcfHeader {
 }
 
 /**
+ * [readVcfHeader] for a reader that yields lines instead of a [Source].
+ *
+ * BGZF uses this so header parsing suspends with the block reader. Line breaks match [BgzfReader.readLine].
+ */
+internal suspend fun readVcfHeaderLines(nextLine: suspend () -> String?): VcfHeader {
+    val contigs = ArrayList<VcfContig>()
+    var line = nextLine() ?: throw IllegalArgumentException("VCF input is empty")
+    while (line.startsWith("##")) {
+        contigOrNull(line.encodeToByteArray())?.let { contigs.add(it) }
+        line = nextLine() ?: throw IllegalArgumentException("VCF input has no #CHROM header line")
+    }
+    return headerFrom(line, contigs)
+}
+
+/**
  * One line, without its `\n` or the `\r` of a `\r\n`. A final line with no break is returned whole, including a
  * bare `\r`, matching [kotlinx.io.readLine]. Returns null when [this] is already exhausted.
  */

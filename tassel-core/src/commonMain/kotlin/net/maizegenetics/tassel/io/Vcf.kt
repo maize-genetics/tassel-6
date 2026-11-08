@@ -17,7 +17,8 @@ import net.maizegenetics.tassel.taxa.TaxaList
  * two are indistinguishable afterwards, because the genotype byte has no phase bit. Every other `FORMAT` field,
  * including `AD`, `DP`, `GQ`, and `PL`, is skipped, so read depth does not survive (tassel-6#14 scope).
  *
- * Compression is not handled here: hand [read] an already-decompressed [Source].
+ * [read] of a [kotlinx.io.Source] does not decompress: hand it an already-inflated source. [read] of a
+ * [RandomAccessSource] inflates BGZF itself, in parallel when the host has more than one worker.
  *
  * @see net.maizegenetics.dna.snp.io.BuilderFromVCF
  */
@@ -44,6 +45,36 @@ object Vcf {
      */
     suspend fun read(source: Source, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
         val header = readHeader(source)
+        return readRecords(header, progress) { window, offset, length ->
+            source.readAtMostTo(window, offset, offset + length)
+        }
+    }
+
+    /**
+     * Reads a bgzipped VCF from [source].
+     *
+     * Inflation uses [BgzfReader], so blocks decompress on more than one worker when the host has them.
+     * [VcfRead.warnings] carries a missing terminal BGZF EOF block. Plain gzip is not a BGZF source;
+     * that path stays on [kotlinx.io.Source].
+     */
+    suspend fun read(source: RandomAccessSource, progress: ProgressReporter = ProgressReporter.None): VcfRead {
+        val reader = BgzfReader(source, progress = progress)
+        try {
+            val header = readVcfHeaderLines { reader.readLine() }
+            val table = readRecords(header, progress) { window, offset, length ->
+                reader.read(window, offset, length)
+            }
+            return VcfRead(table, reader.warnings.toList())
+        } finally {
+            reader.close()
+        }
+    }
+
+    private suspend fun readRecords(
+        header: VcfHeader,
+        progress: ProgressReporter,
+        fill: suspend (window: ByteArray, offset: Int, length: Int) -> Int,
+    ): GenotypeTable {
         val taxa = TaxaList.of(header.taxaNames)
         val parser = VcfRecordParser(header)
         val calls = ByteArray(taxa.size)
@@ -87,7 +118,7 @@ object Vcf {
                         end = pending
                     }
                     if (end == window.size) window = window.copyOf(window.size * 2)
-                    val read = source.readAtMostTo(window, end, window.size)
+                    val read = fill(window, end, window.size - end)
                     if (read <= 0) eof = true else end += read
                 }
             }
@@ -126,3 +157,6 @@ object Vcf {
     /** Sites between progress reports, and so between suspension points; see `HapMap.PROGRESS_SITES`. */
     private const val PROGRESS_SITES = 256
 }
+
+/** A bgzipped VCF and the warnings found while inflating it. */
+class VcfRead(val table: GenotypeTable, val warnings: List<String>)

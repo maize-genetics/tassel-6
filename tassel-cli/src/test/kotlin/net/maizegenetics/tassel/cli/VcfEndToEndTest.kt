@@ -57,6 +57,17 @@ class VcfEndToEndTest {
     }
 
     @Test
+    fun readsPlainGzipVcfOnTheSequentialPath() {
+        val directory = tempDirectory("tassel-vcf-plain-gzip")
+        val input = testDataPath("htslib/variants/plain.vcf.gz")
+        val result = tasselCommand().test("--quiet summary --input $input --output ${directory.resolve("run")}")
+        assertEquals(0, result.statusCode, result.output)
+        val overview = outputText(directory.resolve("run.overview.txt"))
+        assertContains(overview, "Number of Taxa\t2")
+        assertContains(overview, "Number of Sites\t2")
+    }
+
+    @Test
     fun warnsWhenABgzippedVcfHasNoEofBlock() {
         val directory = tempDirectory("tassel-vcf-no-eof")
         val input = testDataPath("htslib/variants/no-eof.vcf.gz")

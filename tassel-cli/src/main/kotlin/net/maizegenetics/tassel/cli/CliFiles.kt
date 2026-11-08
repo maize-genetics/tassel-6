@@ -13,6 +13,8 @@ import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.decompressing
+import net.maizegenetics.tassel.io.isBgzf
+import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.table.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
@@ -35,8 +37,10 @@ const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
  *
  * The format comes from the extension, as in TASSEL 5: [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are
  * read as VCF, and everything else, including a gzipped HapMap, as HapMap. `.vcf.gz` does not end
- * with `.vcf`, so the gzipped suffix is matched on its own. Gzip itself is detected from the first
- * two bytes. A missing BGZF EOF block is a warning on standard error.
+ * with `.vcf`, so the gzipped suffix is matched on its own. A `.vcf.gz` whose first member is BGZF
+ * is read from a random-access source, so inflate can use more than one worker. Plain gzip stays on
+ * the sequential source. Gzip itself is detected from the first bytes. A missing BGZF EOF block is a
+ * warning on standard error.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
  * @throws IllegalArgumentException if it is not a file, or the bytes are not a format the reader accepts.
@@ -47,6 +51,15 @@ suspend fun readGenotypes(path: String, progress: ProgressReporter = ProgressRep
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
     CliLog.info("reading $path")
+    if (path.endsWith(VCF_GZIP_EXTENSION)) {
+        openRandomAccessSource(path).use { random ->
+            if (random.isBgzf()) {
+                val read = Vcf.read(random, progress)
+                read.warnings.forEach(CliLog::warn)
+                return read.table
+            }
+        }
+    }
     return SystemFileSystem.source(file).buffered().use { raw ->
         val opened = raw.decompressing()
         try {

@@ -142,10 +142,10 @@ Park-Miller seed 81. Nothing under `build/bench/` is committed.
 
 | | |
 |---|---|
-| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1 (26A434), Darwin 27.0.0 arm64 |
-| JDK | Eclipse Temurin 25.0.4.1+1, `-Xmx8g` for TASSEL 5 and TASSEL 6 |
+| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
+| JDK | TASSEL 6: 25.0.4.1. TASSEL 5: 21.0.7. Both `-Xmx8g` |
 | TASSEL 5 | v5.2.98, `-maxThreads 4` |
-| TASSEL 6 | 6.0.0-dev at commit `b519ec3` |
+| TASSEL 6 | 6.0.0-dev on `feature/89-parallel-bgzf` (parent `0226e9d`) |
 | htslib | 1.25 (`bgzip`, `bcftools`) |
 | Runs | Median of 3, after one warm-up run that is discarded |
 
@@ -158,30 +158,37 @@ compressed to 52,527,890 bytes (525.28 bytes per site), so this count would land
 file is 2,674,378,477 bytes (2.49 GiB), past 2 GiB. `tabix` is not used: sites on `chr3B` pass 2^29,
 which a TBI cannot store.
 
-TASSEL 6's plain row is `tassel --quiet filter-sites` with no filters, which reads the VCF and
-writes HapMap. That is the whole-file path the CLI has. TASSEL 5 is `-vcf` and `-exportType Hapmap`
-on the plain file and on the bgzipped file. Those rows include JVM startup and the HapMap write.
-The TASSEL 6 `.vcf.gz` row is the same `filter-sites` command and was not run: the CLI rejects
-`.vcf.gz`. Decompression is `bgzip -d -@ N -o /dev/null` at 1 thread and at 4, so the peak is
-bgzip's. Parsing is `bcftools view -Ou -o /dev/null`. Region rows are `bcftools view -H -r` on the
-large file for `chr3B:1-1000000` (1 Mbp), `chr3B:1-50000000` (50 Mbp), and `chr3B` (the whole
+TASSEL 6's whole-file rows are `tassel --quiet filter-sites` with no filters, which reads the VCF
+and writes HapMap. The `.vcf.gz` row goes through the parallel BGZF reader. TASSEL 5 is `-vcf` and
+`-exportType Hapmap` on the plain file and on the bgzipped file. Those rows include JVM startup and
+the HapMap write.
+
+TASSEL 6 decompression is `tassel dev bgzf-bench`: inflate only, one warm-up discarded, JVM startup
+excluded. `--workers 1` is the single-worker row. Omitting `--workers` uses the processor count, 12
+on this host. htslib decompression is `bgzip -d -@ N -o /dev/null` at 1 thread and at 4, process
+startup included. Parsing is `bcftools view -Ou -o /dev/null`. Region rows are `bcftools view -H -r`
+on the large file for `chr3B:1-1000000` (1 Mbp), `chr3B:1-50000000` (50 Mbp), and `chr3B` (the whole
 contig, 851,934,019 bp).
+
+Inflate at 12 workers is 1.38 s, against 10.44 s at one worker. The whole-file `.vcf.gz` read is
+20.58 s, next to 21.13 s for the plain file, so that read is no longer waiting on inflate.
 
 | Tool | Read | Input | Median | Peak |
 |------|------|-------|-------:|-----:|
-| TASSEL 6 | whole-file read | loadable .vcf | 22.91 s | 3202 MiB |
-| TASSEL 6 | whole-file read | loadable .vcf.gz | — | — |
-| TASSEL 5 | whole-file read | loadable .vcf | 39.04 s | 6061 MiB |
-| TASSEL 5 | whole-file read | loadable .vcf.gz | 39.04 s | 4184 MiB |
-| htslib | decompress, 1 thread | loadable .vcf.gz | 1.87 s | 6 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf | 21.13 s | 3445 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | 20.58 s | 3836 MiB |
+| TASSEL 6 | decompress, 1 worker | loadable .vcf.gz | 10.44 s | 694 MiB |
+| TASSEL 6 | decompress, 12 workers | loadable .vcf.gz | 1.38 s | 715 MiB |
+| TASSEL 5 | whole-file read | loadable .vcf | 41.76 s | 5442 MiB |
+| TASSEL 5 | whole-file read | loadable .vcf.gz | 42.48 s | 4149 MiB |
+| htslib | decompress, 1 thread | loadable .vcf.gz | 1.88 s | 6 MiB |
 | htslib | decompress, 4 threads | loadable .vcf.gz | 0.57 s | 8 MiB |
-| htslib | decompress and parse | loadable .vcf.gz | 17.76 s | 8 MiB |
+| htslib | decompress and parse | loadable .vcf.gz | 17.80 s | 8 MiB |
 | htslib | region `chr3B:1-1000000` | region .vcf.gz | 0.22 s | 107 MiB |
-| htslib | region `chr3B:1-50000000` | region .vcf.gz | 0.80 s | 108 MiB |
+| htslib | region `chr3B:1-50000000` | region .vcf.gz | 0.80 s | 107 MiB |
 | htslib | region `chr3B` | region .vcf.gz | 10.39 s | 108 MiB |
 
-Later VCF performance tasks add TASSEL 6 rows here, including the `.vcf.gz` cell, rather than
-starting a new table.
+Later VCF performance tasks add TASSEL 6 region rows here, rather than starting a new table.
 
 ## Known limits
 
