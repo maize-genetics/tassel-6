@@ -95,6 +95,8 @@ class IndexedVcfTest {
             openIndexed(bytes, TestData.readBytes("$TUTORIAL.tbi")).use { tbi ->
                 assertEquals(TestData.readText(TUTORIAL_NAMES).trimEnd().lines(), csi.contigs.map { it.name })
                 assertEquals(csi.contigs.map { it.name }, tbi.contigs.map { it.name })
+                assertEquals(emptyList(), csi.headerContigIds)
+                assertEquals(emptyList(), tbi.headerContigIds)
                 assertTrue(csi.contigs.all { it.length == null })
                 for (stem in TUTORIAL_EQUAL) {
                     val expected = oracle(header, "htslib/tutorial/regions/$stem.record.txt")
@@ -112,6 +114,8 @@ class IndexedVcfTest {
         val header = headerText(bytes)
         openIndexed(bytes, TestData.readBytes("$WHEAT.csi")).use { indexed ->
             assertEquals(WHEAT_NAMES, indexed.contigs.map { it.name })
+            assertEquals(WHEAT_HEADER, indexed.headerContigIds)
+            assertTrue(indexed.contigs.all { it.name in indexed.headerContigIds })
             assertEquals(851_934_019L, indexed.contigs.first { it.name == "chr3B" }.length)
             assertNull(indexed.contigs.find { it.name == "chr6D" })
             for (stem in WHEAT_EQUAL) {
@@ -334,6 +338,15 @@ class IndexedVcfTest {
         const val WHEAT = "htslib/wheat/wheat.vcf.gz"
         const val LARGE = "htslib/large-pos/large_pos.vcf.gz"
         val WHEAT_NAMES = listOf("chr1A", "chr2A", "chr3B", "chr7B", "chr7D")
+        val WHEAT_HEADER = listOf(
+            "chr1A", "chr1B", "chr1D",
+            "chr2A", "chr2B", "chr2D",
+            "chr3A", "chr3B", "chr3D",
+            "chr4A", "chr4B", "chr4D",
+            "chr5A", "chr5B", "chr5D",
+            "chr6A", "chr6B", "chr6D",
+            "chr7A", "chr7B", "chr7D",
+        )
         val TUTORIAL_EQUAL = listOf(
             "1_157104_157104",
             "1_157104_10068726",

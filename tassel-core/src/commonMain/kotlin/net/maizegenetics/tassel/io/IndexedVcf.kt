@@ -27,6 +27,11 @@ class IndexedVcf internal constructor(
     private val header: VcfHeader,
     /** Index contig names, in index order, with `##contig` lengths where the header has that id. */
     val contigs: List<Contig>,
+    /**
+     * `##contig` ids, in header order. Empty when the header lists none, which is the tutorial VCF.
+     * An index may name a subset of these: wheat declares `chr6D` and then leaves it out of the CSI.
+     */
+    val headerContigIds: List<String>,
 ) : AutoCloseable {
     /**
      * One contig the index names.
@@ -119,7 +124,13 @@ class IndexedVcf internal constructor(
                 reader.exactBlocks(true)
                 val header = readVcfHeaderLines { reader.readLine() }
                 reader.exactBlocks(false)
-                return IndexedVcf(reader, genomic, header, contigsOf(header, genomic))
+                return IndexedVcf(
+                    reader,
+                    genomic,
+                    header,
+                    contigsOf(header, genomic),
+                    header.contigs.map { it.id },
+                )
             } catch (e: Throwable) {
                 reader.close()
                 throw e
