@@ -64,7 +64,8 @@ private suspend fun pickFiles(): List<File>? = suspendCancellableCoroutine { con
     val input = document.createElement("input") as HTMLInputElement
     input.type = "file"
     input.multiple = true
-    input.accept = ".vcf,.vcf.gz,.hmp.txt,.hmp.txt.gz,.txt,.csi,.tbi"
+    // Unfiltered. The dialog matches the extension after the last dot, so `accept=".vcf.gz"` hid every gzipped VCF
+    // while a plain `.vcf` stayed selectable. Pairing and the reader reject a file that is not a genotype file.
     input.style.display = "none"
     document.body?.appendChild(input)
 

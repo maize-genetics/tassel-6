@@ -43,7 +43,7 @@ internal class BlobRandomAccessSource(private val blob: Blob) : RandomAccessSour
         }
         if (length == 0 || position >= cachedSize) return 0
         val count = minOf(length.toLong(), cachedSize - position).toInt()
-        val slice = sliceBlob(blob, position.toDouble(), (position + count).toDouble()) as Blob
+        val slice = sliceBlob(blob, position.toDouble(), (position + count).toDouble())
         val bytes = readBlobBytes(slice, "blob")
         val copied = minOf(bytes.size, count)
         if (copied > 0) bytes.copyInto(destination, destinationOffset, 0, copied)
@@ -63,7 +63,7 @@ internal class BlobRandomAccessSource(private val blob: Blob) : RandomAccessSour
 private fun blobByteSize(blob: JsAny): Double = js("Number(blob.size)")
 
 /** `blob.slice(start, end)` with Double offsets, past the `Int` limit of the kotlinx-browser binding. */
-private fun sliceBlob(blob: JsAny, start: Double, end: Double): JsAny = js("blob.slice(start, end)")
+private fun sliceBlob(blob: JsAny, start: Double, end: Double): Blob = js("blob.slice(start, end)")
 
 /**
  * Reads [blob] as bytes. `readAsText` would replace anything that is not UTF-8.

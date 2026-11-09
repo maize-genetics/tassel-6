@@ -4,6 +4,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
 import net.maizegenetics.tassel.app.data.RegionSource
+import net.maizegenetics.tassel.app.data.storedGzip
+import net.maizegenetics.tassel.app.testing.ByteGenotypeFile
 import net.maizegenetics.tassel.app.testing.FakeGenotypeFiles
 import net.maizegenetics.tassel.app.testing.NamedGenotypeFile
 import net.maizegenetics.tassel.app.testing.RecordingResultFiles
@@ -11,6 +13,7 @@ import net.maizegenetics.tassel.app.testing.testEngine
 import net.maizegenetics.tassel.app.testing.testTable
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.IndexedVcf
+import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.VcfRegion
 import net.maizegenetics.tassel.ops.ProgressReporter
 import kotlin.test.Test
@@ -22,22 +25,20 @@ import kotlin.test.assertTrue
 /** The region step: pairing failures, validation before a read, and cancel. */
 class RegionLoadTest {
     @Test
-    fun aBgzippedVcfWithoutAnIndexIsReportedAndDismissible() = runTest {
-        val files = FakeGenotypeFiles(chosen = NamedGenotypeFile("wheat.vcf.gz"))
+    fun aGzippedVcfWithoutAnIndexLoadsWhole() = runTest {
+        val header = (Vcf.FIXED_COLUMNS + listOf("B73")).joinToString("\t")
+        val site = listOf("1", "1", "s1", "A", "C", ".", "PASS", ".", "GT", "0/0").joinToString("\t")
+        val gzipped = storedGzip("$header\n$site\n".encodeToByteArray())
+        val files = FakeGenotypeFiles(chosen = ByteGenotypeFile("sample.vcf.gz", gzipped))
         val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
 
         viewModel.handle(AppEvent.OpenFile)
         testScheduler.advanceUntilIdle()
 
-        val failed = viewModel.state.value.activity
-        assertIs<Activity.Failed>(failed)
-        assertEquals("wheat.vcf.gz", failed.name)
-        assertTrue(failed.message.contains("index"))
-        assertTrue(viewModel.state.value.datasets.isEmpty())
-        assertNull(viewModel.state.value.region)
-
-        viewModel.handle(AppEvent.DismissFailure)
         assertEquals(Activity.Idle, viewModel.state.value.activity)
+        assertEquals("sample.vcf.gz", viewModel.state.value.selected?.name)
+        assertEquals(1, viewModel.state.value.selected?.table?.numberOfSites)
+        assertNull(viewModel.state.value.region)
     }
 
     @Test

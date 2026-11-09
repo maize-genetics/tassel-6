@@ -175,7 +175,7 @@ private fun vcfSite(taxa: List<String>, calls: List<String>, snpId: String, posi
  * A one-member gzip file whose deflate body is a single stored block. No compressor: the dispatch tests only need
  * bytes that [net.maizegenetics.tassel.io.decompressing] accepts.
  */
-private fun storedGzip(plain: ByteArray): ByteArray {
+internal fun storedGzip(plain: ByteArray): ByteArray {
     require(plain.size <= 0xFFFF) { "a stored block holds at most 65535 bytes" }
     val stored = ByteArray(5 + plain.size)
     stored[0] = 1

@@ -32,12 +32,9 @@ class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
         // picks HapMap or VCF from the file name.
         val picked = pick("Open genotype file") ?: return@withContext null
         if (!picked.name.endsWith(VCF_GZIP_EXTENSION)) return@withContext listOf(picked)
-        val sibling = siblingIndex(picked.path.toString())
-        if (sibling != null) return@withContext listOf(picked.withIndex(PathGenotypeFile(Path(sibling))))
-        // No .csi and no .tbi beside the VCF. Ask, and if the user cancels, hand back the VCF alone so the shared
-        // pairing reports a missing index instead of reading a file that may not fit in memory.
-        val index = pick("Open index") ?: return@withContext listOf(picked)
-        listOf(picked.withIndex(index))
+        // A sibling index opens the region step. Without one, the gzipped VCF is read whole, same as a plain VCF.
+        val sibling = siblingIndex(picked.path.toString()) ?: return@withContext listOf(picked)
+        listOf(picked.withIndex(PathGenotypeFile(Path(sibling))))
     }
 
     /** One native dialog. Null when the user cancels. */

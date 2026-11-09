@@ -33,9 +33,10 @@ internal sealed interface OpenPlan {
  * Pairs a bgzipped VCF with its index, or keeps a single genotype file on the whole-file path.
  *
  * Names are case-sensitive and the list order does not matter. A [GenotypeFile.index] already set on the `.vcf.gz`
- * wins, even when that index has some other name: desktop's second dialog and the CLI's `--index` both work that
- * way. Otherwise the index must be named `<data>.csi` or `<data>.tbi`. When both are picked, `.csi` wins and the
- * `.tbi` is ignored (ADR-0021). Anything else is a mismatch, and a `.vcf.gz` with no index is not read whole.
+ * wins, even when that index has some other name: that is the desktop sibling lookup and the CLI's `--index`.
+ * Otherwise the index must be named `<data>.csi` or `<data>.tbi`. When both are picked, `.csi` wins and the `.tbi`
+ * is ignored (ADR-0021). A `.vcf.gz` with no index is read whole, the same way a plain `.vcf` is. An unrelated extra
+ * file is a mismatch.
  */
 internal fun resolveOpen(files: List<GenotypeFile>): OpenPlan {
     if (files.isEmpty()) return OpenPlan.Rejected("", "No file was selected.")
@@ -62,8 +63,7 @@ internal fun resolveOpen(files: List<GenotypeFile>): OpenPlan {
     if (csi.size > 1 || tbi.size > 1) {
         return OpenPlan.Rejected(data.name, "More than one index was picked for ${data.name}.")
     }
-    val index = csi.firstOrNull() ?: tbi.firstOrNull()
-        ?: return OpenPlan.Rejected(data.name, missingIndex(data.name))
+    val index = csi.firstOrNull() ?: tbi.firstOrNull() ?: return OpenPlan.WholeFile(data)
     return OpenPlan.Indexed(data, index)
 }
 
@@ -252,9 +252,6 @@ private fun mismatch(data: GenotypeFile, other: GenotypeFile): OpenPlan.Rejected
     "${data.name} and ${other.name} do not belong together. " +
         "The index must be named ${data.name}.csi or ${data.name}.tbi.",
 )
-
-private fun missingIndex(name: String): String =
-    "No index found for $name. Pick the .csi or .tbi file that belongs with it."
 
 /** `chr3B`, `chr3B:1000-2000`, `chr3B:1000-`, or `chr3B:1000`, the forms [parseVcfRegion] accepts. */
 private fun VcfRegion.describe(): String = when {
