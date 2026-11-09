@@ -46,8 +46,10 @@ fun parseVcfRegion(text: String): VcfRegion {
  * The comparison is exact and case-sensitive first. If that misses, both sides are compared with
  * [Chromosome.of]. One normalized hit is used, and the name returned is the index's own spelling.
  * Zero hits lists [names]. Two or more hits names those index contigs.
+ *
+ * The app calls this before [IndexedVcf.read] so a typo is shown without reading the region.
  */
-internal fun resolveContigName(query: String, names: List<String>): String {
+fun resolveContigName(query: String, names: List<String>): String {
     val exact = names.indexOf(query)
     if (exact >= 0) return names[exact]
     val normalized = normalizedName(query)

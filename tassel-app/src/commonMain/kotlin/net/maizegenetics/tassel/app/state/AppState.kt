@@ -22,6 +22,16 @@ data class Dataset(val id: Long, val name: String, val table: GenotypeTable) {
  */
 data class AnalysisResult(val id: Long, val datasetId: Long, val operationId: String, val parts: List<ResultPart>)
 
+/** One contig the region step can offer. [length] is null when the VCF header has no `##contig` length. */
+data class ContigRow(val name: String, val length: Long?)
+
+/**
+ * The region step, shown after a bgzipped VCF and its index are open and before any region is read.
+ *
+ * [message] is blank-field guidance or a validation error. Null means [text] is a region Load may read.
+ */
+data class RegionPrompt(val fileName: String, val contigs: List<ContigRow>, val text: String, val message: String?)
+
 /** What the app is doing besides showing the tree. */
 sealed interface Activity {
     /** Nothing in flight. */
@@ -55,6 +65,7 @@ sealed interface Showing {
  *
  * @property operations what the engine can run, which is where forms come from. Empty until the engine answers.
  * @property form the open analysis form, or null when none is open.
+ * @property region the open region step, or null when none is open.
  */
 data class AppState(
     val datasets: List<Dataset> = emptyList(),
@@ -62,6 +73,7 @@ data class AppState(
     val operations: List<OperationDescriptor> = emptyList(),
     val showing: Showing = Showing.Nothing,
     val form: AnalysisForm? = null,
+    val region: RegionPrompt? = null,
     val activity: Activity = Activity.Idle,
 ) {
     /** The dataset the grid shows, or the one a result was run on, or null. */
@@ -92,8 +104,20 @@ sealed interface AppEvent {
     /** Read the bundled tutorial dataset. */
     data object OpenTutorial : AppEvent
 
-    /** Ask the platform for a file and read it. */
+    /** Ask the platform for a file and read it, or open the region step when it is a bgzipped VCF with an index. */
     data object OpenFile : AppEvent
+
+    /** Replace the region step's text and validate it. Does not read. */
+    data class SetRegion(val text: String) : AppEvent
+
+    /** Put a contig name in the region field, which reads that whole contig once Load is pressed. */
+    data class UseContig(val name: String) : AppEvent
+
+    /** Read the region in the open prompt. */
+    data object ConfirmRegion : AppEvent
+
+    /** Close the region step without reading. */
+    data object CancelRegion : AppEvent
 
     /** Show the dataset with this id in the grid. */
     data class Select(val id: Long) : AppEvent
@@ -116,7 +140,10 @@ sealed interface AppEvent {
     /** Run the open form against the selected dataset. */
     data object Run : AppEvent
 
-    /** Cancel the running operation by cancelling the coroutine driving it (ADR-0004). */
+    /**
+     * Cancel the load or the running operation by cancelling the coroutine driving it (ADR-0004).
+     * A region read stops at its next progress report, and in the browser at its next slice.
+     */
     data object Cancel : AppEvent
 
     /** Show pane [part] of the result with this id. */

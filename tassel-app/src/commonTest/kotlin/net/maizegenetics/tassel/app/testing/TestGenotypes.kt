@@ -93,7 +93,18 @@ class FakeGenotypeFiles(
 
     override suspend fun tutorial(): GenotypeFile = tutorial.also { tutorialRequests++ }
 
-    override suspend fun choose(): GenotypeFile? = chosen.also { chooseRequests++ }
+    override suspend fun choose(): List<GenotypeFile>? {
+        chooseRequests++
+        return chosen?.let { listOf(it) }
+    }
+}
+
+/**
+ * A [GenotypeFile] that is only a name, and optionally an [index]. Region-step tests never open it: pairing and the
+ * fake indexed opener run first.
+ */
+class NamedGenotypeFile(override val name: String, override val index: GenotypeFile? = null) : GenotypeFile {
+    override suspend fun open(): Source = error("$name was opened")
 }
 
 /** Three taxa, two sites: enough to tell that a file was parsed and not invented. */

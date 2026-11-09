@@ -16,13 +16,19 @@ import net.maizegenetics.tassel.app.analysis.resultParts
 import net.maizegenetics.tassel.app.analysis.withProblems
 import net.maizegenetics.tassel.app.data.GenotypeFile
 import net.maizegenetics.tassel.app.data.GenotypeFiles
+import net.maizegenetics.tassel.app.data.OpenPlan
+import net.maizegenetics.tassel.app.data.RegionSource
+import net.maizegenetics.tassel.app.data.openRegionSource
 import net.maizegenetics.tassel.app.data.readGenotypes
+import net.maizegenetics.tassel.app.data.resolveOpen
+import net.maizegenetics.tassel.app.data.validateRegion
 import net.maizegenetics.tassel.app.export.ResultFiles
 import net.maizegenetics.tassel.app.yieldToEventLoop
 import net.maizegenetics.tassel.engine.DataHandle
 import net.maizegenetics.tassel.engine.RunRequest
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.InvalidParametersException
 import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.ops.ProgressReporter
@@ -41,13 +47,15 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param readContext the context HapMap parsing runs on. Desktop passes a background dispatcher. The browser has
  *   one thread and no worker here, so it passes [EmptyCoroutineContext] and the parse runs on the UI thread,
  *   giving it back at every progress report (ADR-0019) so the page keeps drawing.
+ * @param openIndexed opens a bgzipped VCF with its index. Tests pass a fake so the region step needs no BGZF bytes.
  */
-class AppViewModel(
+class AppViewModel internal constructor(
     private val files: GenotypeFiles,
     private val engine: AnalysisEngine,
     private val results: ResultFiles,
     private val scope: CoroutineScope,
     private val readContext: CoroutineContext = EmptyCoroutineContext,
+    private val openIndexed: suspend (GenotypeFile, GenotypeFile) -> RegionSource = ::openRegionSource,
 ) {
     private val mutableState = MutableStateFlow(AppState())
 
@@ -58,6 +66,9 @@ class AppViewModel(
     private var run: Job? = null
     private var export: Job? = null
     private var nextId = 1L
+
+    /** The indexed VCF behind [RegionPrompt], open until Load, Cancel, or another file replaces it. */
+    private var session: RegionSource? = null
 
     /** Handles the engine issued for each dataset, so a second analysis of the same data uploads nothing again. */
     private val handles = mutableMapOf<Long, DataHandle>()
@@ -70,8 +81,12 @@ class AppViewModel(
     /** Applies one user action. Returns at once; work continues in [scope]. */
     fun handle(event: AppEvent) {
         when (event) {
-            AppEvent.OpenTutorial -> open { files.tutorial() }
+            AppEvent.OpenTutorial -> open { listOf(files.tutorial()) }
             AppEvent.OpenFile -> open { files.choose() }
+            is AppEvent.SetRegion -> setRegion(event.text)
+            is AppEvent.UseContig -> setRegion(event.name)
+            AppEvent.ConfirmRegion -> confirmRegion()
+            AppEvent.CancelRegion -> cancelRegion()
             is AppEvent.Select -> mutate { copy(showing = Showing.Dataset(event.id)) }
             is AppEvent.Close -> close(event.id)
             is AppEvent.ExportDataset -> exportDataset(event.id)
@@ -79,7 +94,10 @@ class AppViewModel(
             is AppEvent.SetParameter -> mutate { copy(form = form?.with(event.name, event.value)) }
             AppEvent.CloseForm -> mutate { copy(form = null) }
             AppEvent.Run -> runAnalysis()
-            AppEvent.Cancel -> run?.cancel()
+            AppEvent.Cancel -> {
+                load?.cancel()
+                run?.cancel()
+            }
             is AppEvent.SelectResult -> mutate { copy(showing = Showing.Result(event.id, event.part)) }
             is AppEvent.CloseResult -> mutate {
                 copy(results = results.filterNot { it.id == event.id }, showing = showingAfterClose(event.id))
@@ -90,29 +108,165 @@ class AppViewModel(
     }
 
     /**
-     * Reads the file [choose] returns, if any, and adds it to the tree as the shown dataset.
+     * Reads the files [choose] returns, if any.
      *
-     * One load at a time: a second request cancels the first, so a user who picks another file while a big one is
-     * parsing does not leave two readers competing for the browser's single thread.
+     * A HapMap or plain VCF is added to the tree. A bgzipped VCF is opened with its index and the region step is
+     * shown; the sites are read later, from [confirmRegion]. One load at a time: a second request cancels the first,
+     * so a user who picks another file while a big one is parsing does not leave two readers competing for the
+     * browser's single thread.
      */
-    private fun open(choose: suspend () -> GenotypeFile?) {
+    private fun open(choose: suspend () -> List<GenotypeFile>?) {
         load?.cancel()
         // UNDISPATCHED so that clicking "Open file" shows the file dialog in the same frame as the click.
         load = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // The body can run before `load =` returns. Record the job first so a fast read can tell itself from
+            // the load that this one replaced.
+            load = coroutineContext[Job]
             var name = ""
+            var opened: RegionSource? = null
+            var published = false
             try {
-                val file = choose() ?: return@launch
-                name = file.name
-                mutate { copy(activity = Activity.Loading(name, Progress(0, 0, "Opening $name"))) }
-                val table = withContext(readContext) { file.readGenotypes(loadProgress()) }
-                add(name, table)
-                mutate { copy(activity = Activity.Idle) }
+                val picked = choose() ?: run {
+                    // The previous load was cancelled to show this dialog. Cancelling the dialog must not leave its
+                    // banner up. A region step that was already on screen stays until a file is actually picked.
+                    if (load === coroutineContext[Job] && mutableState.value.activity is Activity.Loading) {
+                        mutate { copy(activity = Activity.Idle) }
+                    }
+                    return@launch
+                }
+                closeSession()
+                mutate { copy(region = null) }
+                when (val plan = resolveOpen(picked)) {
+                    is OpenPlan.Rejected ->
+                        mutate { copy(activity = Activity.Failed(plan.name, plan.message)) }
+                    is OpenPlan.WholeFile -> {
+                        name = plan.file.name
+                        mutate { copy(activity = Activity.Loading(name, Progress(0, 0, "Opening $name"))) }
+                        val table = withContext(readContext) { plan.file.readGenotypes(loadProgress()) }
+                        add(name, table)
+                        mutate { copy(activity = Activity.Idle) }
+                    }
+                    is OpenPlan.Indexed -> {
+                        name = plan.data.name
+                        mutate {
+                            copy(activity = Activity.Loading(name, Progress(0, 0, "Reading index of $name")))
+                        }
+                        val indexed = withContext(readContext) { openIndexed(plan.data, plan.index) }
+                        opened = indexed
+                        session = indexed
+                        val names = indexed.contigs.map { it.name }
+                        mutate {
+                            copy(
+                                activity = Activity.Idle,
+                                region = RegionPrompt(
+                                    fileName = plan.data.name,
+                                    contigs = indexed.contigs.map { ContigRow(it.name, it.length) },
+                                    text = "",
+                                    message = validateRegion("", names),
+                                ),
+                            )
+                        }
+                        published = true
+                    }
+                }
             } catch (failure: CancellationException) {
+                if (!published) {
+                    opened?.close()
+                    if (session === opened) session = null
+                }
+                if (load === coroutineContext[Job]) mutate { copy(activity = Activity.Idle) }
                 throw failure
             } catch (failure: Exception) {
-                mutate { copy(activity = Activity.Failed(name, failure.message ?: failure.toString())) }
+                if (!published) {
+                    opened?.close()
+                    if (session === opened) session = null
+                }
+                mutate {
+                    copy(
+                        activity = Activity.Failed(name, failure.message ?: failure.toString()),
+                        region = null,
+                    )
+                }
             }
         }
+    }
+
+    /** Puts [text] in the region step and validates it. Load is what starts the read. */
+    private fun setRegion(text: String) {
+        val prompt = state.value.region ?: return
+        mutate {
+            copy(
+                region = prompt.copy(
+                    text = text,
+                    message = validateRegion(text, prompt.contigs.map { it.name }),
+                ),
+            )
+        }
+    }
+
+    /** Closes the region step and the indexed VCF behind it. No dataset is added. */
+    private fun cancelRegion() {
+        closeSession()
+        mutate { copy(region = null) }
+    }
+
+    /**
+     * Reads the region in the prompt.
+     *
+     * Validation has to pass first. The prompt is cleared before the read, and Cancel cancels [load]. The dataset
+     * name keeps the region, so two loads of one file stay distinct in the tree.
+     */
+    private fun confirmRegion() {
+        val prompt = state.value.region ?: return
+        val current = session ?: return
+        val names = prompt.contigs.map { it.name }
+        val problem = validateRegion(prompt.text, names)
+        if (problem != null) {
+            mutate { copy(region = prompt.copy(message = problem)) }
+            return
+        }
+        val region = parseVcfRegion(prompt.text.trim())
+        val label = "${prompt.fileName} [${prompt.text.trim()}]"
+        session = null
+        load?.cancel()
+        mutate {
+            copy(
+                region = null,
+                activity = Activity.Loading(prompt.fileName, Progress(0, 0, "Reading ${prompt.fileName}")),
+            )
+        }
+        // UNDISPATCHED so Cancel cannot arrive before the try/finally that closes [current] is in place.
+        load = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            load = coroutineContext[Job]
+            try {
+                // Close inside the context. The BGZF readahead window is a child of that job, and withContext
+                // does not return while a child is alive. Closing afterwards would wait forever.
+                val table = withContext(readContext) {
+                    try {
+                        current.read(region, regionProgress())
+                    } finally {
+                        current.close()
+                    }
+                }
+                add(label, table)
+                if (load === coroutineContext[Job]) mutate { copy(activity = Activity.Idle) }
+            } catch (failure: CancellationException) {
+                if (load === coroutineContext[Job]) mutate { copy(activity = Activity.Idle) }
+                throw failure
+            } catch (failure: Exception) {
+                if (load === coroutineContext[Job]) {
+                    mutate {
+                        copy(activity = Activity.Failed(prompt.fileName, failure.message ?: failure.toString()))
+                    }
+                }
+            }
+        }
+    }
+
+    /** Closes the indexed VCF held for the region step, if there is one. */
+    private fun closeSession() {
+        session?.close()
+        session = null
     }
 
     /** Adds [table] to the tree under [name] and shows it. */
@@ -255,6 +409,15 @@ class AppViewModel(
     private fun loadProgress() = ProgressReporter { progress ->
         mutate { (activity as? Activity.Loading)?.let { copy(activity = it.copy(progress = progress)) } ?: this }
         yield()
+    }
+
+    /**
+     * The region read's reports. [yieldToEventLoop] is a timer on wasm, because a [yield] there never paints and
+     * Cancel would not get a click (tassel-6#70).
+     */
+    private fun regionProgress() = ProgressReporter { progress ->
+        mutate { (activity as? Activity.Loading)?.let { copy(activity = it.copy(progress = progress)) } ?: this }
+        yieldToEventLoop()
     }
 
     /**
