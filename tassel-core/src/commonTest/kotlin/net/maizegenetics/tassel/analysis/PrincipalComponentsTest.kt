@@ -201,6 +201,12 @@ class PrincipalComponentsTest {
         val passes = reports.also { result() }.groupBy { it.message }
         assertEquals(3, passes.size, "expected one pass each for probabilities, the Gram matrix, and V")
         passes.forEach { (message, pass) ->
+            // 3,093 sites at one report per 256 is twelve during the pass, plus the tail.
+            assertTrue(pass.size >= 12, "$message reported ${pass.size} times")
+            val steps = listOf(pass.first().completed) + pass.zipWithNext { previous, next ->
+                next.completed - previous.completed
+            }
+            assertTrue(steps.all { it in 1..256 }, "$message steps: $steps")
             assertTrue(pass.all { it.total == tutorial().numberOfSites.toLong() }, message)
             assertEquals(tutorial().numberOfSites.toLong(), pass.last().completed, message)
             assertEquals(pass.map { it.completed }.sorted(), pass.map { it.completed }, message)

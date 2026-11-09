@@ -2,6 +2,8 @@
 
 package net.maizegenetics.tassel.testing
 
+import net.maizegenetics.tassel.io.latin1ToByteArray
+
 // Tests run on Node as an ES module, where `require` is not defined; `process.getBuiltinModule`
 // (Node 22.3+) is the way to reach `fs`.
 
@@ -13,7 +15,4 @@ private fun nodeReadFileLatin1(path: String): String =
 
 internal actual fun environmentVariable(name: String): String? = nodeEnvironmentVariable(name)
 
-internal actual fun readFile(absolutePath: String): ByteArray {
-    val text = nodeReadFileLatin1(absolutePath)
-    return ByteArray(text.length) { text[it].code.toByte() }
-}
+internal actual fun readFile(absolutePath: String): ByteArray = latin1ToByteArray(nodeReadFileLatin1(absolutePath))

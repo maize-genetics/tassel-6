@@ -8,24 +8,28 @@ An analysis is written once, in `commonMain`, and the same code runs in a comman
 desktop application, and a browser tab with no server. Every ported analysis is tested against
 TASSEL 5's own output, byte for byte where the format allows it.
 
-> **Status: proof of concept (`6.0.0-poc.1`).** Five analyses are ported: genotype summary, site and
-> taxa filters, Centered IBS kinship, and PCA. It is not a replacement for TASSEL 5 yet, and the
-> [known limits](docs/poc/benchmarks.md#known-limits) are written down rather than glossed over.
+> **Status: alpha (`6.0.0-alpha.1`).** Genotype summary, site and taxa filters, Centered IBS kinship,
+> and PCA are ported, and this release reads bgzipped VCF and one region of a CSI- or TBI-indexed VCF
+> on the command line, the desktop app, and in the browser. It is not a replacement for TASSEL 5 yet,
+> and the [known limits](docs/poc/benchmarks.md#known-limits) are written down rather than glossed over.
 
 ## What works today
 
 | | CLI | Desktop | Browser |
 |---|---|---|---|
-| Read HapMap | yes | yes | yes |
-| Read VCF (the `GT` field only, uncompressed) | yes | no | no |
+| Read HapMap, plain or gzipped | yes | yes | yes |
+| Read VCF, the `GT` field only, plain or bgzipped | yes | yes | yes |
+| Read one region of an indexed VCF (`.csi`, then `.tbi`) | yes (`--region`) | yes | yes |
 | `summary`, `filter-sites`, `filter-taxa` | yes | yes | yes |
 | `kinship` (Centered IBS) | yes | yes | yes |
 | `pca` (scores, eigenvalues, eigenvectors) | yes | yes | yes |
 | Write TASSEL 5-readable output | yes | yes | yes |
 
 The desktop and browser apps are the same Compose Multiplatform code, and both compute locally. The
-browser does not send data anywhere. Compressed input (`.vcf.gz`) is not supported on any target
-yet; decompress first.
+browser does not send data anywhere. A bgzipped VCF with a `.csi` or `.tbi` opens on a region: the
+desktop app finds the index beside the file, and the browser takes the VCF and the index together.
+With no index, the whole file is read. The CLI does the same with `--region`, and looks beside the
+VCF for `.csi`, then `.tbi`.
 
 ## Quick start
 
@@ -83,8 +87,9 @@ limits in [`docs/poc/benchmarks.md`](docs/poc/benchmarks.md).
   difference.
 - **PCA on 1,000 taxa x 100,000 sites:** 57 s and 887 MiB, against 274 s and 7.7 GiB, because
   analyses stream site blocks instead of materializing matrices.
-- **Centered IBS on the same set:** 19.3 s against 2.8 s. TASSEL 5 runs it on four threads and over
-  packed two-bit words; TASSEL 6 is single-threaded today. This is the one place TASSEL 6 is slower.
+- **Centered IBS on the same set:** the first port took 19.3 s against TASSEL 5's 2.8 s of work. The
+  kernel in this release is a blocked product across the cores the JVM dispatcher has, and takes 3.2 s
+  on its own. The pipeline table in the benchmarks is still the earlier single-threaded measurement.
 
 Reproduce all of it with `scripts/bench/run-benchmarks.sh`.
 
@@ -95,7 +100,7 @@ Reproduce all of it with `scripts/bench/run-benchmarks.sh`.
 | `tassel-core/` | Pure Kotlin model, I/O, and analyses. Targets `jvm`, `wasmJs`, `macosArm64`, and `linuxX64`. |
 | `tassel-cli/` | Clikt CLI generated from the operation specs. |
 | `tassel-app/` | Compose Multiplatform UI: shared code plus `desktopMain` and `wasmJsMain`. |
-| `testdata/` | Tutorial inputs and TASSEL 5 golden outputs. |
+| `testdata/` | Tutorial inputs, TASSEL 5 golden outputs, and the htslib oracle for compressed and indexed VCF. |
 | `docs/` | ADRs, the porting ledger, handoffs, and PoC notes. |
 | `scripts/` | Golden generation, benchmarks, and the TASSEL 5 reference checkout. |
 

@@ -111,9 +111,13 @@ internal class ReferenceProbability private constructor(
                         sums[taxon] += probability(genotype, major).toDouble()
                         counts[taxon] += 1.0
                     }
+                    done++
+                    // Report during the pass, not after a 4,096-site block. The tutorial file is
+                    // smaller than that block, so an end-of-block report never arrives in time.
+                    if (done % PROGRESS_SITES == 0 || done == numberOfSites) {
+                        progress.report(done, numberOfSites, MESSAGE)
+                    }
                 }
-                done += block.sites.count()
-                progress.report(done, numberOfSites, MESSAGE)
             }
             // ImputationByMean writes the column mean as a float, which ReferenceProbabilityBuilder
             // then quantizes. A taxon with no called genotype keeps TASSEL 5's 0.0 / 0.0 = NaN.
@@ -123,6 +127,9 @@ internal class ReferenceProbability private constructor(
 
         /** Progress message for the pass [of] makes. */
         const val MESSAGE: String = "PCA: reference probabilities"
+
+        /** Sites between progress reports. See `HapMap.PROGRESS_SITES`. */
+        private const val PROGRESS_SITES = 256
 
         /**
          * 0.5 per allele copy that equals [major]. An allele of a partly missing genotype such as

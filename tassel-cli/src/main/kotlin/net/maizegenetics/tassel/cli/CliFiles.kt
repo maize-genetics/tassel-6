@@ -11,7 +11,12 @@ import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.Vcf
+import net.maizegenetics.tassel.io.decompressing
+import net.maizegenetics.tassel.io.isBgzf
+import net.maizegenetics.tassel.io.openRandomAccessSource
+import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.table.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
@@ -25,32 +30,141 @@ const val TEXT_EXTENSION: String = ".txt"
 /** Plain-text VCF, which `--input` reads. */
 const val VCF_EXTENSION: String = ".vcf"
 
-/** bgzip-compressed VCF, which nothing can decompress yet. */
+/** bgzip-compressed VCF. The bytes are detected by content; this suffix only selects the VCF reader. */
 const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
 
 /**
  * Reads a genotype file. `tassel-core` takes a `kotlinx.io.Source` and knows nothing about paths
  * (ADR-0017), so opening the file is the CLI's job.
  *
- * The format comes from the extension, as in TASSEL 5: `$VCF_EXTENSION` is read as VCF and
- * everything else as HapMap.
+ * The format comes from the extension, as in TASSEL 5: [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are
+ * read as VCF, and everything else, including a gzipped HapMap, as HapMap. `.vcf.gz` does not end
+ * with `.vcf`, so the gzipped suffix is matched on its own. A `.vcf.gz` whose first member is BGZF
+ * is read from a random-access source, so inflate can use more than one worker. Plain gzip stays on
+ * the sequential source. Gzip itself is detected from the first bytes. A missing BGZF EOF block is a
+ * warning on standard error.
+ *
+ * [region] reads one region of a bgzipped VCF through [IndexedVcf]. [index] overrides the sibling
+ * lookup, which is `<path>.csi` and then `<path>.tbi` (ADR-0021). A `.csi` that is present is the
+ * index even when a `.tbi` is beside it. Without [region], [index] is ignored; the command rejects
+ * that combination before calling this.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
- * @throws IllegalArgumentException if it is not a file, or is in a format nothing can read yet.
+ * @throws IllegalArgumentException if it is not a file, the bytes are not a format the reader accepts,
+ *   or [region] is set and the file, the index, or the region cannot be read.
  */
-suspend fun readGenotypes(path: String, progress: ProgressReporter = ProgressReporter.None): GenotypeTable {
+suspend fun readGenotypes(
+    path: String,
+    progress: ProgressReporter = ProgressReporter.None,
+    region: String? = null,
+    index: String? = null,
+): GenotypeTable {
+    if (region != null) return readIndexedRegion(path, region, index, progress)
     val file = Path(path)
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
-    require(!path.endsWith(VCF_GZIP_EXTENSION)) {
-        "bgzip-compressed VCF is not supported yet (tassel-6#14 reads plain $VCF_EXTENSION only); " +
-            "decompress it first: $path"
-    }
     CliLog.info("reading $path")
-    return SystemFileSystem.source(file).buffered().use { source ->
-        if (path.endsWith(VCF_EXTENSION)) Vcf.read(source, progress) else HapMap.read(source, progress)
+    if (path.endsWith(VCF_GZIP_EXTENSION)) {
+        openRandomAccessSource(path).use { random ->
+            if (random.isBgzf()) {
+                val read = Vcf.read(random, progress)
+                read.warnings.forEach(CliLog::warn)
+                return read.table
+            }
+        }
     }
+    return SystemFileSystem.source(file).buffered().use { raw ->
+        val opened = raw.decompressing()
+        try {
+            val table = if (isVcfPath(path)) Vcf.read(opened.source, progress) else HapMap.read(opened.source, progress)
+            opened.warnings.forEach(CliLog::warn)
+            table
+        } finally {
+            if (opened.source !== raw) opened.source.close()
+        }
+    }
+}
+
+/** `.vcf.gz` does not end with `.vcf`, so the gzipped suffix has to be tested on its own. */
+private fun isVcfPath(path: String): Boolean = path.endsWith(VCF_GZIP_EXTENSION) || path.endsWith(VCF_EXTENSION)
+
+/**
+ * Reads [region] from the bgzipped VCF at [path].
+ *
+ * The index is [index] when the user named one, otherwise the `.csi` beside [path], then the `.tbi`.
+ * A header that lists `##contig` ids must name every index contig. The tutorial header lists none, so
+ * that check does not apply to it. Wheat's `chr6D` is in the header and absent from the CSI, so an
+ * index is allowed to be a subset.
+ */
+private suspend fun readIndexedRegion(
+    path: String,
+    region: String,
+    index: String?,
+    progress: ProgressReporter,
+): GenotypeTable {
+    val parsed = parseVcfRegion(region)
+    if (!path.endsWith(VCF_GZIP_EXTENSION)) {
+        throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
+    }
+    val file = Path(path)
+    val metadata = SystemFileSystem.metadataOrNull(file)
+    require(metadata != null) { "no such file: $path" }
+    require(metadata.isRegularFile) { "not a file: $path" }
+    CliLog.info("reading $path region $region")
+    return openRandomAccessSource(path).use { data ->
+        if (!data.isBgzf()) {
+            throw IllegalArgumentException("--region needs a bgzipped VCF; $path is not bgzip compressed")
+        }
+        val indexPath = resolveIndex(path, index)
+        openRandomAccessSource(indexPath).use { indexSource ->
+            val opened = try {
+                IndexedVcf.open(data, indexSource)
+            } catch (e: IllegalArgumentException) {
+                throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+            }
+            opened.use { vcf ->
+                rejectMismatchedIndex(vcf, path, indexPath)
+                val read = vcf.read(parsed, progress)
+                read.warnings.forEach(CliLog::warn)
+                read.table
+            }
+        }
+    }
+}
+
+/**
+ * The index for [vcfPath]: [explicit] when the user passed `--index`, otherwise `<vcfPath>.csi`,
+ * then `<vcfPath>.tbi`. A `.csi` that exists is used even if it cannot be read.
+ */
+private fun resolveIndex(vcfPath: String, explicit: String?): String {
+    if (explicit != null) return explicit
+    val csi = "$vcfPath.csi"
+    if (isRegularFile(csi)) return csi
+    val tbi = "$vcfPath.tbi"
+    if (isRegularFile(tbi)) return tbi
+    throw IllegalArgumentException(
+        "no index found for $vcfPath. Run `bcftools index -c $vcfPath`. " +
+            "`tabix -p vcf` only works for contigs under 2^29.",
+    )
+}
+
+private fun isRegularFile(path: String): Boolean {
+    val metadata = SystemFileSystem.metadataOrNull(Path(path))
+    return metadata != null && metadata.isRegularFile
+}
+
+private fun rejectMismatchedIndex(vcf: IndexedVcf, dataPath: String, indexPath: String) {
+    val headerIds = vcf.headerContigIds
+    if (headerIds.isEmpty()) return
+    val header = headerIds.toSet()
+    val missing = vcf.contigs.map { it.name }.filter { it !in header }
+    if (missing.isEmpty()) return
+    throw IllegalArgumentException(
+        "index $indexPath does not match $dataPath: " +
+            "index contigs ${missing.joinToString(", ")} are not in the VCF header " +
+            "(${headerIds.joinToString(", ")})",
+    )
 }
 
 /**

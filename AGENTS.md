@@ -28,7 +28,7 @@ with later tasks:
 | `tassel-core/` | Pure Kotlin model, I/O, and analyses. Targets jvm, wasmJs, macosArm64, linuxX64. |
 | `tassel-cli/` | Clikt CLI generated from operation specs (JVM first, Native later). |
 | `tassel-app/` | Compose Multiplatform UI: shared code plus `desktopMain` and `wasmJsMain`. |
-| `testdata/` | Tutorial inputs and TASSEL 5 golden outputs (`testdata/golden/`). |
+| `testdata/` | Tutorial inputs, TASSEL 5 golden outputs (`testdata/golden/`), and the htslib 1.25 oracle for compressed and indexed VCF (`testdata/htslib/`, ADR-0021). |
 | `reference/` | Git-ignored shallow clone of TASSEL 5 source, read-only, for porting. |
 | `docs/` | ADRs, porting ledger, handoffs, PoC notes. |
 
@@ -44,6 +44,9 @@ Later modules: `tassel-server/`, `legacy/tassel5-bridge/`, `bindings/{capi,r,pyt
 3. **Never edit files under `testdata/golden/`** unless the issue says so. These
    are the parity oracle; changing them to make a test pass is a failure, not a
    fix. Golden changes need the `golden-update` label and owner review.
+   `testdata/htslib/` (ADR-0021) is the htslib oracle for compressed and indexed
+   VCF and follows the same never-edit-by-hand rule; it is not a TASSEL 5 golden
+   and does not use the `golden-update` label.
 4. **Do not change frozen contracts** (`GenotypeTable`, the operation DSL,
    `Engine`) without an ADR. If a contract blocks you, stop and say so.
 5. **Stay inside the issue's scope.** Note related problems in the handoff; do

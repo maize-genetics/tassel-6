@@ -69,6 +69,12 @@ kotlin {
     linuxX64()
 
     sourceSets {
+        // Node fs must not live in wasmJsMain: that source set is linked into the browser (ADR-0021).
+        // The default hierarchy forbids a source set depending on wasmJsMain, so this directory is compiled
+        // only into wasmJsTest. The production wasm klib, and the browser bundle, do not include it.
+        named("wasmJsTest") {
+            kotlin.srcDir("src/wasmJsNodeMain/kotlin")
+        }
         commonMain {
             kotlin.srcDir(generateBuildInfo.map { it.outputDir })
             dependencies {

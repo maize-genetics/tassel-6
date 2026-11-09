@@ -47,8 +47,8 @@ fun hapMapText(taxa: List<String>, calls: List<String>): String {
 }
 
 /**
- * A [GenotypeFile] over text held in memory, the way the browser implementation works: no path, bytes handed to the
- * reader through a `kotlinx.io.Buffer`.
+ * A [GenotypeFile] over text held in memory. The browser's tutorial request works this way: no path, text handed to
+ * the reader through a `kotlinx.io.Buffer`. A picked file is bytes; see [ByteGenotypeFile].
  *
  * @param beforeOpen runs before the bytes are handed over, which lets a test hold a load open or fail it.
  */
@@ -68,6 +68,16 @@ class TextGenotypeFile(
     }
 }
 
+/**
+ * A [GenotypeFile] over bytes held in memory.
+ *
+ * [TextGenotypeFile] writes UTF-8, which cannot hold a gzip member. Dispatch tests use this for `.vcf.gz` and
+ * `.hmp.txt.gz`.
+ */
+class ByteGenotypeFile(override val name: String, private val bytes: ByteArray) : GenotypeFile {
+    override suspend fun open(): Source = Buffer().apply { write(bytes) }
+}
+
 /** A [GenotypeFiles] that hands out files a test prepared, and records what the app asked for. */
 class FakeGenotypeFiles(
     private val tutorial: GenotypeFile = TextGenotypeFile("tutorial.hmp.txt", SMALL_HAPMAP),
@@ -83,7 +93,18 @@ class FakeGenotypeFiles(
 
     override suspend fun tutorial(): GenotypeFile = tutorial.also { tutorialRequests++ }
 
-    override suspend fun choose(): GenotypeFile? = chosen.also { chooseRequests++ }
+    override suspend fun choose(): List<GenotypeFile>? {
+        chooseRequests++
+        return chosen?.let { listOf(it) }
+    }
+}
+
+/**
+ * A [GenotypeFile] that is only a name, and optionally an [index]. Region-step tests never open it: pairing and the
+ * fake indexed opener run first.
+ */
+class NamedGenotypeFile(override val name: String, override val index: GenotypeFile? = null) : GenotypeFile {
+    override suspend fun open(): Source = error("$name was opened")
 }
 
 /** Three taxa, two sites: enough to tell that a file was parsed and not invented. */

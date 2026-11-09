@@ -133,6 +133,21 @@ class AppViewModelTest {
     }
 
     @Test
+    fun aVcfThatIsNotVcfIsReportedWithTheReaderMessage() = runTest {
+        val files = FakeGenotypeFiles(chosen = TextGenotypeFile("notes.vcf", "not a genotype file\n"))
+        val viewModel = AppViewModel(files, testEngine(), RecordingResultFiles(), this)
+
+        viewModel.handle(AppEvent.OpenFile)
+        testScheduler.advanceUntilIdle()
+
+        val failed = viewModel.state.value.activity
+        assertIs<Activity.Failed>(failed)
+        assertEquals("notes.vcf", failed.name)
+        assertTrue(failed.message.contains("VCF"))
+        assertTrue(viewModel.state.value.datasets.isEmpty())
+    }
+
+    @Test
     fun aSecondLoadCancelsTheFirst() = runTest {
         // The browser has one thread; two readers racing for it would make both of them slow.
         val gate = CompletableDeferred<Unit>()

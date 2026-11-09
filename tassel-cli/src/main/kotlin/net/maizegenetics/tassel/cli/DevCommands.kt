@@ -4,20 +4,33 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.restrictTo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import net.maizegenetics.tassel.distance.centeredIbs
+import net.maizegenetics.tassel.distance.centeredIbsPanelColumns
+import net.maizegenetics.tassel.distance.centeredIbsPanelSites
 import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
+import net.maizegenetics.tassel.io.BgzfReader
+import net.maizegenetics.tassel.io.IndexedVcf
+import net.maizegenetics.tassel.io.RandomAccessSource
+import net.maizegenetics.tassel.io.bgzfWorkerCount
+import net.maizegenetics.tassel.io.openRandomAccessSource
+import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.position.Chromosome
 import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.position.PositionList
 import net.maizegenetics.tassel.taxa.TaxaList
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /** Developer tools. These are not analyses, so they are hand-written rather than generated. */
 class Dev : CliktCommand(name = "dev") {
@@ -67,6 +80,151 @@ class Simulate : CliktCommand(name = "simulate") {
         val table = simulateGenotypes(taxa, sites, minMaf, maxMaf, missingRate, seed)
         runBlocking { writeResult(table, output, stderrProgress()) }
     }
+}
+
+/**
+ * Times [net.maizegenetics.tassel.distance.centeredIbs] after the file has been read, so the number
+ * is the kernel and not JVM startup or the matrix write. Not an analysis: hand-written, like [Simulate].
+ */
+class KinshipBench : CliktCommand(name = "kinship-bench") {
+    override fun help(context: Context): String = "Time the Centered IBS kernel on one genotype file"
+
+    private val input by option("--input", help = "HapMap or VCF to read once, then time", metavar = "PATH").required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+
+    override fun run() = cliRun {
+        runBlocking {
+            val table = readGenotypes(input)
+            val panelColumns = centeredIbsPanelColumns(table.numberOfTaxa)
+            val panelSites = centeredIbsPanelSites(table.numberOfTaxa, table.numberOfSites)
+            val seconds = DoubleArray(runs)
+            repeat(runs + 1) { iteration ->
+                val started = TimeSource.Monotonic.markNow()
+                // The kernel inherits its caller's dispatcher. The CLI and the desktop app run on
+                // Dispatchers.Default, which is the parallelism this number is meant to include.
+                withContext(Dispatchers.Default) { centeredIbs(table) }
+                val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                if (iteration > 0) seconds[iteration - 1] = elapsed
+            }
+            seconds.sort()
+            // Same rank as scripts/bench/run-benchmarks.sh: 1-based int((n + 1) / 2).
+            val medianAt = (runs + 1) / 2 - 1
+            echo(
+                "taxa=${table.numberOfTaxa} sites=${table.numberOfSites} " +
+                    "panelColumns=$panelColumns panelSites=$panelSites " +
+                    "min=${formatSeconds(seconds.first())} median=${formatSeconds(seconds[medianAt])}",
+            )
+        }
+    }
+}
+
+/**
+ * Times a full BGZF inflate of one file, without parsing records.
+ *
+ * Not an analysis: hand-written, like [KinshipBench]. The printed median is the scan after one discarded
+ * warm-up. Omit `--workers` to use [bgzfWorkerCount].
+ */
+class BgzfBench : CliktCommand(name = "bgzf-bench") {
+    override fun help(context: Context): String = "Time BGZF inflation of one file, at 1 worker or at the host count"
+
+    private val input by option("--input", help = "bgzipped file to inflate", metavar = "PATH").required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+    private val workers by option(
+        "--workers",
+        help = "Inflate workers. Omit for one worker per processor.",
+        metavar = "INT",
+    ).int().restrictTo(min = 1)
+
+    override fun run() = cliRun {
+        val count = workers ?: bgzfWorkerCount()
+        runBlocking {
+            openRandomAccessSource(input).use { source ->
+                val seconds = DoubleArray(runs)
+                var bytes = 0L
+                repeat(runs + 1) { iteration ->
+                    val started = TimeSource.Monotonic.markNow()
+                    bytes = scanBgzf(source, count)
+                    val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                    if (iteration > 0) seconds[iteration - 1] = elapsed
+                }
+                seconds.sort()
+                val medianAt = (runs + 1) / 2 - 1
+                echo(
+                    "bytes=$bytes workers=$count min=${formatSeconds(seconds.first())} " +
+                        "median=${formatSeconds(seconds[medianAt])}",
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Times one indexed region read.
+ *
+ * Not an analysis: hand-written, like [BgzfBench]. The printed median is the read after one discarded
+ * warm-up, so it does not include JVM startup. `--region` uses the same syntax as `bcftools view -r`.
+ */
+class VcfRegionBench : CliktCommand(name = "vcf-region-bench") {
+    override fun help(context: Context): String = "Time one indexed VCF region, after the header and index are open"
+
+    private val input by option("--input", help = "bgzipped VCF", metavar = "PATH").required()
+    private val indexPath by option("--index", help = "CSI or TBI index", metavar = "PATH").required()
+    private val region by option(
+        "--region",
+        help = "One region, as bcftools view -r reads it",
+        metavar = "REGION",
+    ).required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+
+    override fun run() = cliRun {
+        val parsed = parseVcfRegion(region)
+        runBlocking {
+            openRandomAccessSource(input).use { data ->
+                openRandomAccessSource(indexPath).use { index ->
+                    IndexedVcf.open(data, index).use { vcf ->
+                        val seconds = DoubleArray(runs)
+                        var sites = 0
+                        repeat(runs + 1) { iteration ->
+                            val started = TimeSource.Monotonic.markNow()
+                            sites = vcf.read(parsed).table.numberOfSites
+                            val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                            if (iteration > 0) seconds[iteration - 1] = elapsed
+                        }
+                        seconds.sort()
+                        val medianAt = (runs + 1) / 2 - 1
+                        echo(
+                            "sites=$sites region=$region min=${formatSeconds(seconds.first())} " +
+                                "median=${formatSeconds(seconds[medianAt])}",
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private suspend fun scanBgzf(source: RandomAccessSource, workers: Int): Long {
+    var total = 0L
+    BgzfReader(source, workers = workers).use { reader ->
+        val chunk = ByteArray(64 * 1024)
+        while (true) {
+            val count = reader.read(chunk, 0, chunk.size)
+            if (count == 0) break
+            total += count
+        }
+    }
+    return total
+}
+
+/** Six digits after the decimal, so a tutorial-sized kernel does not round to 0.00. */
+private fun formatSeconds(seconds: Double): String {
+    val micros = (seconds * 1_000_000.0).toLong()
+    val whole = micros / 1_000_000
+    val fraction = (micros % 1_000_000).toString().padStart(6, '0')
+    return "$whole.$fraction"
 }
 
 /**

@@ -5,76 +5,90 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.io.Buffer
 import kotlinx.io.Source
 import kotlinx.io.writeString
+import net.maizegenetics.tassel.io.RandomAccessSource
 import org.w3c.dom.HTMLInputElement
 import org.w3c.files.File
-import org.w3c.files.FileReader
 import org.w3c.xhr.TEXT
 import org.w3c.xhr.XMLHttpRequest
 import org.w3c.xhr.XMLHttpRequestResponseType
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.js.ExperimentalWasmJsInterop
-import kotlin.js.JsString
 
 /**
  * Browser file loading. There is no file system here, so both paths end in bytes handed to the reader through a
  * `kotlinx.io.Buffer`: the tutorial dataset comes over HTTP from the page the app is served from, and a file the
  * user picks comes from an `<input type="file">` read by a `FileReader`.
  *
- * HapMap is a text format, so both reads ask for text and write it into the buffer as UTF-8. That crosses the
- * JavaScript boundary once per file instead of once per byte, which an `ArrayBuffer` copied element by element would
- * do, and it needs no dependency beyond the browser APIs Compose for Wasm already puts on the classpath.
+ * A picked file is read as an `ArrayBuffer` when the whole file is wanted. HapMap is text, but gzip is not, and
+ * `readAsText` replaces every byte that is not valid UTF-8. A `.vcf.gz` opened for a region is not copied whole:
+ * [BlobGenotypeFile] seeks through [BlobRandomAccessSource]. The tutorial stays text: it is the uncompressed HapMap
+ * the page serves, and the tutorial button is not a file the user picked.
+ *
+ * The chooser has `multiple` set. Pairing a VCF with its index is [resolveOpen]'s job, because this page cannot see
+ * the files next to the one the user picked.
  */
 class BrowserGenotypeFiles : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = TextGenotypeFile(TUTORIAL_FILE_NAME) { get(TUTORIAL_FILE_NAME) }
 
-    override suspend fun choose(): GenotypeFile? {
-        val file = pickFile() ?: return null
-        return TextGenotypeFile(file.name) { readAsText(file) }
+    override suspend fun choose(): List<GenotypeFile>? {
+        val files = pickFiles() ?: return null
+        return files.map { BlobGenotypeFile(it) }
     }
 }
 
-/** A file whose bytes come from text fetched when it is opened. */
+/** A file whose bytes come from text fetched when it is opened. The bundled tutorial uses this. */
 private class TextGenotypeFile(override val name: String, private val text: suspend () -> String) : GenotypeFile {
     override suspend fun open(): Source = Buffer().apply { writeString(text()) }
 }
 
 /**
+ * A file the user picked. [open] copies it whole, which is what HapMap and a plain VCF need. [openRandomAccess]
+ * seeks, which is what a region of a bgzipped VCF needs.
+ */
+private class BlobGenotypeFile(private val file: File) : GenotypeFile {
+    override val name: String get() = file.name
+
+    override suspend fun open(): Source = Buffer().apply { write(readBlobBytes(file, file.name)) }
+
+    override suspend fun openRandomAccess(): RandomAccessSource = BlobRandomAccessSource(file)
+}
+
+/**
  * Shows a file chooser and returns what the user picked, or null when they cancel.
  *
- * The input element is added to the document because Safari ignores `click()` on a detached one, hidden because the
- * app's own UI is the chooser the user sees, and removed again either way.
+ * `multiple` is set so a bgzipped VCF and its index can be picked together. The input element is added to the
+ * document because Safari ignores `click()` on a detached one, hidden because the app's own UI is the chooser the
+ * user sees, and removed again either way. The [File] objects are copied out before the element is removed.
  */
-private suspend fun pickFile(): File? = suspendCancellableCoroutine { continuation ->
+private suspend fun pickFiles(): List<File>? = suspendCancellableCoroutine { continuation ->
     val input = document.createElement("input") as HTMLInputElement
     input.type = "file"
-    input.accept = ".txt,.hmp.txt,text/plain"
+    input.multiple = true
+    // Unfiltered. The dialog matches the extension after the last dot, so `accept=".vcf.gz"` hid every gzipped VCF
+    // while a plain `.vcf` stayed selectable. Pairing and the reader reject a file that is not a genotype file.
     input.style.display = "none"
     document.body?.appendChild(input)
 
     var answered = false
-    fun answer(file: File?) {
+    fun answer(files: List<File>?) {
         if (answered) return
         answered = true
         input.remove()
-        continuation.resume(file)
+        continuation.resume(files)
     }
-    input.addEventListener("change") { answer(input.files?.item(0)) }
+    input.addEventListener("change") {
+        val selected = input.files
+        val picked = if (selected == null || selected.length == 0) {
+            emptyList()
+        } else {
+            List(selected.length) { index -> selected.item(index) }.filterNotNull()
+        }
+        answer(picked.ifEmpty { null })
+    }
     // Fired when the chooser is dismissed without a file. Without it the coroutine would never resume.
     input.addEventListener("cancel") { answer(null) }
     continuation.invokeOnCancellation { input.remove() }
     input.click()
-}
-
-/** Reads a picked file as text. */
-@OptIn(ExperimentalWasmJsInterop::class)
-private suspend fun readAsText(file: File): String = suspendCancellableCoroutine { continuation ->
-    val reader = FileReader()
-    // readAsText leaves the text in result, typed as JsAny? because a FileReader can also produce an ArrayBuffer.
-    reader.onload = { continuation.resume((reader.result as JsString).toString()) }
-    reader.onerror = { continuation.resumeWithException(IllegalStateException("could not read ${file.name}")) }
-    continuation.invokeOnCancellation { reader.abort() }
-    reader.readAsText(file)
 }
 
 /** Fetches [url] relative to the page as text. */

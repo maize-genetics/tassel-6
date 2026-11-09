@@ -24,8 +24,11 @@ import net.maizegenetics.tassel.ops.StringListParameterDescriptor
 import net.maizegenetics.tassel.ops.StringParameterDescriptor
 import net.maizegenetics.tassel.ops.TasselOperations
 
-/** `--input` and `--output` are the CLI's own; no spec may declare a parameter with either name. */
-private val RESERVED_NAMES = setOf("input", "output")
+/**
+ * `--input`, `--output`, `--region`, and `--index` are the CLI's own.
+ * No spec may declare a parameter with one of these names.
+ */
+internal val RESERVED_NAMES = setOf("input", "output", "region", "index")
 
 /**
  * A subcommand for every registered operation, in the registry's presentation order (ADR-0002 and
@@ -38,7 +41,8 @@ fun operationCommands(registry: OperationRegistry = TasselOperations.registry): 
 /**
  * One generated subcommand. Options are the spec's parameter names in kebab-case; the spec's
  * `legacy` TASSEL 5 names are not registered, because translating those is `tassel translate`'s job
- * (ADR-0006, tassel-6#26).
+ * (ADR-0006, tassel-6#26). `--region` and `--index` are registered here, like `--input` and
+ * `--output`, so every genotype command has them without a spec change (ADR-0002).
  */
 class OperationCommand(
     private val descriptor: OperationDescriptor,
@@ -48,6 +52,27 @@ class OperationCommand(
         option("--input", "-i", help = "Genotype file to analyze (HapMap or VCF)", metavar = "PATH")
             .required()
             .also { registerOption(it) }
+    } else {
+        null
+    }
+
+    private val region = if (descriptor.inputType == "GenotypeTable") {
+        option(
+            "--region",
+            help = "Read one region of a bgzipped, indexed VCF, for example chr3B:600000000-650000000. " +
+                "A bare contig name reads that contig. Coordinates are 1-based and inclusive.",
+            metavar = "TEXT",
+        ).also { registerOption(it) }
+    } else {
+        null
+    }
+
+    private val index = if (descriptor.inputType == "GenotypeTable") {
+        option(
+            "--index",
+            help = "CSI or TBI index for --region. When omitted, look beside the VCF for .csi, then .tbi.",
+            metavar = "PATH",
+        ).also { registerOption(it) }
     } else {
         null
     }
@@ -79,9 +104,16 @@ class OperationCommand(
         // Bind before reading, so bad options are reported without first parsing a large file. The
         // engine binds again from the same text; that is the contract RunRequest carries.
         registry[descriptor.id]?.bind(supplied)
+        val regionText = region?.value
+        val indexText = index?.value
+        if (indexText != null && regionText == null) {
+            throw IllegalArgumentException("--index requires --region")
+        }
         val engine = LocalEngine(registry)
         runBlocking {
-            val genotypes = input?.let { readGenotypes(it.value, stderrProgress("Reading")) }
+            val genotypes = input?.let {
+                readGenotypes(it.value, stderrProgress("Reading"), regionText, indexText)
+            }
             val handle = genotypes?.let { engine.put(it) }
             val request = RunRequest(descriptor.id, handle, supplied)
             CliLog.info("running ${descriptor.id}")

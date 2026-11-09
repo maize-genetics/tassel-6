@@ -6,6 +6,45 @@ versions follow [Semantic Versioning](https://semver.org).
 
 For what a release can actually do, read the [README](README.md); this file lists what changed.
 
+## 6.0.0-alpha.1 - 2026-11-09
+
+### Features
+
+- **core:** Add a pure-Kotlin DEFLATE decoder and CRC32
+- **core:** Read bgzipped VCF sequentially
+- **core:** Stream plain gzip through a 32 KiB window
+- **core:** Add random-access byte sources on every target
+- **core:** Seek BGZF by virtual offset
+- **core:** Read CSI and TBI indexes into region chunks
+- **core:** Read one region from an indexed VCF
+- **cli:** Read one region of a bgzipped indexed VCF
+- **app:** Open plain and bgzipped VCF on desktop and web
+- **app:** Load one region of an indexed VCF
+
+### Fixes
+
+- **core:** Yield during PCA passes so the browser can paint
+- **app:** Let wasm kinship reports reach a browser frame
+- **app:** Paint the kinship heatmap in slices
+
+### Performance
+
+- **core:** Compute Centered IBS as a blocked dosage product
+- **core:** Parse VCF records from a byte window
+- **core:** Decompress BGZF blocks on several workers
+
+### Tests
+
+- **testdata:** Add an htslib 1.25 oracle for compressed and indexed VCF
+- **core:** Add a wheat-scale VCF read benchmark
+
+### Documentation
+
+- **adr:** Accept ADR-0019 and record browser frame gaps
+- **adr:** Record kinship tolerance and parallelism rules
+- **adr:** Record pure-Kotlin indexed VCF reading
+- **docs:** Record the VCF reading benchmark
+
 ## 6.0.0-poc.1 - 2026-11-05
 
 ### Features

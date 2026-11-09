@@ -7,21 +7,46 @@
 # on both tools under /usr/bin/time, reporting the median wall time and the peak resident set over
 # --runs runs after one warm-up.
 #
-# Both tools get the same -Xmx so neither wins on heap alone, and TASSEL 5 gets -maxThreads 4 for
-# the same reason scripts/generate-goldens.sh does: it fixes Centered IBS at 1,000-site blocks, so
-# the work does not depend on the host's core count. TASSEL 6 is single threaded today.
+# Both tools get the same -Xmx so neither wins on heap alone, and the pipeline rows pin TASSEL 5
+# at -maxThreads 4 for the same reason scripts/generate-goldens.sh does: it fixes Centered IBS at
+# 1,000-site blocks. kinship-kernel sweeps 1, 4, and 8 threads instead, and times TASSEL 6's
+# centeredIbs directly.
+#
+# --only vcf times wheat-scale VCF reads (tassel-6#81, tassel-6#89). It generates a loadable plain
+# VCF and a bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the
+# TASSEL 6 CLI on the plain and bgzipped files, TASSEL 5 -vcf on both, BGZF inflate at 1 worker and
+# at the host worker count, htslib, and indexed region reads of chr3B (tassel-6#90). vcf needs
+# --heap 8g, plus bgzip and bcftools from htslib 1.25.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
-# JDK 25 through the Gradle toolchain.
+# JDK 25 through the Gradle toolchain. --only vcf also requires htslib 1.25.
 #
 # Usage: scripts/bench/run-benchmarks.sh [--runs N] [--heap 8g] [--million]
 #                                        [--only ANALYSIS] [--dataset NAME]
+#
+# ANALYSIS includes the pipeline rows (load, summary, filter-sites, filter-taxa, kinship, pca),
+# kinship-kernel, and vcf. kinship-kernel times centeredIbs alone and sweeps TASSEL 5 at 1, 4, and
+# 8 threads. synthetic-5k (5,000 taxa x 100,000 sites) and, with --million, synthetic-1m
+# (1,000 x 1,000,000) are part of that sweep. Both need --heap 16g. A smaller heap skips them,
+# unless --dataset names one, in which case the script stops. The 1,000,000-site HapMap is about
+# 2 GB of text. vcf needs --heap 8g and does not use --dataset or --million.
 set -euo pipefail
 
 TASSEL5_VERSION="5.2.98"
 TASSEL5_TAG="v5.2.98"
 TASSEL5_URL="https://github.com/maize-genetics/tassel/releases/download/v5.2.98/tassel-5-standalone-v5.2.98.tar.gz"
 TASSEL5_SHA256="52e7675aec4c7ab34bb6e0cfe94b26709f8fd8dd761b4d7892b3aa0e38df3c6e"
+
+# Wheat VCF (tassel-6#81). 1,000 x 1,000,000 is the loadable size both tools are asked to read
+# at --heap 8g. The region file is streamed and indexed; 5,110,342 sites is the count that
+# landed on about 2.5 GiB of bgzip. Calibration: 100,000 sites, htslib 1.25 `bgzip -c -@ 1`,
+# 52,527,890 bytes (525.28 bytes/site). 5,110,342 * 525.28 is 2.50 GiB.
+VCF_TAXA=1000
+VCF_SITES=1000000
+VCF_REGION_SITES=5110342
+VCF_SEED=81
+VCF_BGZIP_THREADS=4
+VCF_HTSLIB_VERSION="1.25"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CACHE="$ROOT/build/bench"
@@ -41,7 +66,7 @@ while [[ $# -gt 0 ]]; do
     --million) MILLION=1; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -67,6 +92,23 @@ JAVA_MAJOR="$("$JAVA" -XshowSettings:properties -version 2>&1 |
   awk -F' = ' '/java\.specification\.version/ { print $2 }')"
 [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] && ((JAVA_MAJOR >= 21)) ||
   die "TASSEL $TASSEL5_VERSION needs Java 21 or newer; found '$JAVA_MAJOR'"
+# TASSEL 6 class files are JDK 25 (ADR-0011). The launcher uses JAVA_HOME and otherwise
+# `java` on PATH. TASSEL 5 keeps the JDK chosen above, which only has to be 21 or newer.
+if ((JAVA_MAJOR < 25)); then
+  JDK25_HOME=""
+  for candidate in "$HOME"/.gradle/jdks/*/jdk-*/Contents/Home; do
+    [[ -x "$candidate/bin/java" ]] || continue
+    major=$("$candidate/bin/java" -XshowSettings:properties -version 2>&1 |
+      awk -F' = ' '/java\.specification\.version/ { print $2; exit }')
+    if [[ "$major" == "25" ]]; then
+      JDK25_HOME="$candidate"
+      break
+    fi
+  done
+  [[ -n "$JDK25_HOME" ]] ||
+    die "TASSEL 6 needs JDK 25; found Java $JAVA_MAJOR and no toolchain JDK under ~/.gradle/jdks"
+  export JAVA_HOME="$JDK25_HOME"
+fi
 command -v /usr/bin/time >/dev/null || die "/usr/bin/time not found; it is what reports peak memory"
 
 mkdir -p "$CACHE" "$WORK"
@@ -157,6 +199,282 @@ simulate() {
   "$TASSEL6" --quiet dev simulate --taxa "$taxa" --sites "$sites" --seed 0 --output "$path" >>"$LOG" 2>&1 ||
     die "could not simulate $taxa x $sites; see $LOG"
 }
+
+heap_mib() {
+  local spec="$1"
+  local number="${spec%[GgMm]}"
+  case "$spec" in
+    *g|*G) echo $((number * 1024)) ;;
+    *m|*M) echo "$number" ;;
+    *) die "unrecognized heap '$spec'; use 8g or 512m" ;;
+  esac
+}
+
+require_heap() {
+  local need="$1" why="$2" have
+  have=$(heap_mib "$HEAP")
+  ((have >= need)) ||
+    die "$why needs --heap $((need / 1024))g or more (currently --heap $HEAP)"
+}
+
+# Times centeredIbs, then TASSEL 5's kinship pipeline at 1, 4, and 8 threads.
+# TASSEL 5's numbers include JVM startup and the file read; TASSEL 6's do not.
+run_kinship_kernel() {
+  local sets=() name
+  kernel_wanted() { [[ -z "$DATASET" || "$DATASET" == "$1" ]]; }
+  kernel_wanted tutorial && sets+=("tutorial|$TUTORIAL|1024")
+  if kernel_wanted synthetic-100k; then
+    local path="$WORK/sim_1000x100000.hmp.txt"
+    simulate 1000 100000 "$path"
+    sets+=("synthetic-100k|$path|1024")
+  fi
+  if kernel_wanted synthetic-5k; then
+    if (( $(heap_mib "$HEAP") < 16384 )); then
+      [[ -z "$DATASET" ]] || die "synthetic-5k needs --heap 16g (5,000 taxa x 100,000 sites; currently --heap $HEAP)"
+      echo "skipping synthetic-5k: needs --heap 16g (currently --heap $HEAP)"
+    else
+      local path="$WORK/sim_5000x100000.hmp.txt"
+      simulate 5000 100000 "$path"
+      sets+=("synthetic-5k|$path|16384")
+    fi
+  fi
+  if ((MILLION)) && kernel_wanted synthetic-1m; then
+    if (( $(heap_mib "$HEAP") < 16384 )); then
+      [[ -z "$DATASET" ]] ||
+        die "synthetic-1m needs --heap 16g (1,000 taxa x 1,000,000 sites, about 2 GB of HapMap text; currently --heap $HEAP)"
+      echo "skipping synthetic-1m: needs --heap 16g (currently --heap $HEAP)"
+    else
+      local path="$WORK/sim_1000x1000000.hmp.txt"
+      simulate 1000 1000000 "$path"
+      sets+=("synthetic-1m|$path|16384")
+    fi
+  fi
+  ((${#sets[@]})) || die "no kinship-kernel datasets selected; --dataset was '$DATASET'"
+
+  echo
+  echo "Host:    $(uname -srm)"
+  echo "Java:    $("$JAVA" -version 2>&1 | head -1)"
+  echo "TASSEL5: $TASSEL5_VERSION at -maxThreads 1, 4, and 8 (pipeline, startup included)"
+  echo "TASSEL6: kinship-bench median of $RUNS after one warm-up, file read not included"
+  echo "Heap:    -Xmx$HEAP"
+  echo
+  printf '| Dataset | T6 kernel median | T6 peak | T5 1 thread | T5 4 threads | T5 8 threads | Kernel line |\n'
+  printf '|---------|-----------------:|--------:|------------:|-------------:|-------------:|:------------|\n'
+
+  local entry dataset input need stats out rss median threads five line
+  for entry in "${sets[@]}"; do
+    dataset="${entry%%|*}"
+    input="${entry#*|}"; input="${input%|*}"
+    need="${entry##*|}"
+    require_heap "$need" "$dataset"
+    stats="$WORK/.time"
+    out="$WORK/kernel.out"
+    /usr/bin/time $TIME_FLAG "$TASSEL6" --quiet dev kinship-bench --input "$input" --runs "$RUNS" \
+      >"$out" 2>"$stats" || die "kinship-bench failed on $dataset; see $LOG"
+    cat "$stats" >>"$LOG"
+    if [[ "$TIME_FLAG" == "-l" ]]; then
+      rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+    else
+      rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+    fi
+    line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+    median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+    [[ -n "$median" ]] || die "kinship-bench wrote no median for $dataset: $(cat "$out")"
+    local -a thread_times=()
+    for threads in 1 4 8; do
+      CMD=("$JAVA" "-Xmx$HEAP" -cp "$T5/sTASSEL.jar" net.maizegenetics.pipeline.TasselPipeline \
+        -maxThreads "$threads" -h "$input" -KinshipPlugin -method Centered_IBS -endPlugin \
+        -export "$WORK/t5_${dataset}_k$threads" -exportType SqrMatrix)
+      five=$(repeat_measure "${CMD[@]}")
+      thread_times+=("${five%% *}")
+    done
+    printf '| %s | %s s | %s MiB | %s s | %s s | %s s | `%s` |\n' \
+      "$dataset" "$median" "${rss:-0}" "${thread_times[0]}" "${thread_times[1]}" "${thread_times[2]}" "$line"
+  done
+  echo
+  echo "TASSEL 5 columns are the full pipeline (startup included). Full tool output: $LOG"
+}
+
+# Whole-file VCF reads, BGZF inflate, then htslib on the same loadable file and on a >2 GiB region
+# file. TASSEL 6's whole-file row is filter-sites with defaults: read the VCF and write HapMap.
+# The .vcf.gz row uses the parallel BGZF reader. Inflate rows are `dev bgzf-bench`: the scan only,
+# after one warm-up, JVM startup excluded. htslib inflate is the whole `bgzip -d` process.
+run_vcf() {
+  require_heap 8192 "vcf"
+  command -v bgzip >/dev/null || die "bgzip not found; brew install htslib"
+  command -v bcftools >/dev/null || die "bcftools not found; brew install bcftools"
+  local bgzip_out bgzip_line bcftools_out bcftools_first bcftools_second
+  bgzip_out=$(bgzip --version 2>&1) || die "bgzip --version failed"
+  bgzip_line=${bgzip_out%%$'\n'*}
+  [[ "$bgzip_line" == "bgzip (htslib) $VCF_HTSLIB_VERSION" ]] ||
+    die "bgzip must be htslib $VCF_HTSLIB_VERSION; found '$bgzip_line'"
+  bcftools_out=$(bcftools --version 2>&1) || die "bcftools --version failed"
+  bcftools_first=${bcftools_out%%$'\n'*}
+  bcftools_second=${bcftools_out#*$'\n'}
+  bcftools_second=${bcftools_second%%$'\n'*}
+  [[ "$bcftools_first" == "bcftools $VCF_HTSLIB_VERSION" && "$bcftools_second" == "Using htslib $VCF_HTSLIB_VERSION" ]] ||
+    die "bcftools must be $VCF_HTSLIB_VERSION built with htslib $VCF_HTSLIB_VERSION; found '$bcftools_first' / '$bcftools_second'"
+
+  local gen="$ROOT/scripts/bench/generate-wheat-vcf.sh"
+  [[ -x "$gen" ]] || die "no generator at $gen"
+  local load="$WORK/wheat-load-${VCF_TAXA}x${VCF_SITES}.vcf"
+  local region="$WORK/wheat-region-${VCF_TAXA}x${VCF_REGION_SITES}.vcf.gz"
+  "$gen" plain --taxa "$VCF_TAXA" --sites "$VCF_SITES" --seed "$VCF_SEED" --output "$load"
+  "$gen" region --taxa "$VCF_TAXA" --sites "$VCF_REGION_SITES" --seed "$VCF_SEED" --output "$region"
+  local load_gz="${load}.gz"
+
+  local plain_bytes gz_bytes region_bytes
+  plain_bytes=$(file_bytes "$load")
+  gz_bytes=$(file_bytes "$load_gz")
+  region_bytes=$(file_bytes "$region")
+
+  local t5_java t6_java t6_bin
+  t5_java=$("$JAVA" -version 2>&1 || true)
+  t6_bin="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+  t6_java=$("$t6_bin" -version 2>&1 || true)
+  echo
+  echo "Host:    $(uname -srm)"
+  echo "TASSEL5 JDK: ${t5_java%%$'\n'*}"
+  echo "TASSEL6 JDK: ${t6_java%%$'\n'*}"
+  echo "TASSEL5: $TASSEL5_VERSION at -maxThreads 4"
+  echo "TASSEL6: $(cd "$ROOT" && awk -F= '/^version=/ { print $2 }' gradle.properties)"
+  echo "htslib:  $VCF_HTSLIB_VERSION"
+  echo "Heap:    -Xmx$HEAP, median of $RUNS runs after one warm-up"
+  echo "Loadable: $VCF_TAXA taxa x $VCF_SITES sites, seed $VCF_SEED"
+  echo "  plain $(file_bytes_human "$plain_bytes") ($plain_bytes bytes) $load"
+  echo "  bgzip $(file_bytes_human "$gz_bytes") ($gz_bytes bytes) $load_gz"
+  echo "Region: $VCF_TAXA taxa x $VCF_REGION_SITES sites, seed $VCF_SEED"
+  echo "  bgzip $(file_bytes_human "$region_bytes") ($region_bytes bytes) $region"
+  echo "  index: bcftools index -c"
+
+  printf '| Tool | Read | Input | Median | Peak | Command |\n'
+  printf '|------|------|-------|-------:|-----:|:--------|\n'
+
+  local result command
+  command="$TASSEL6 --quiet filter-sites --input $load --output $WORK/t6_vcf_load"
+  result=$(repeat_measure "$TASSEL6" --quiet filter-sites --input "$load" --output "$WORK/t6_vcf_load")
+  vcf_row "TASSEL 6" "whole-file read" "loadable .vcf" "$result" "$command"
+
+  command="$TASSEL6 --quiet filter-sites --input $load_gz --output $WORK/t6_vcf_gz"
+  result=$(repeat_measure "$TASSEL6" --quiet filter-sites --input "$load_gz" --output "$WORK/t6_vcf_gz")
+  vcf_row "TASSEL 6" "whole-file read" "loadable .vcf.gz" "$result" "$command"
+
+  bgzf_bench_row "$load_gz" 1
+  bgzf_bench_row "$load_gz" ""
+
+  command="$JAVA -Xmx$HEAP -cp $T5/sTASSEL.jar net.maizegenetics.pipeline.TasselPipeline -maxThreads 4 -vcf $load -export $WORK/t5_vcf_load -exportType Hapmap"
+  result=$(repeat_measure "$JAVA" "-Xmx$HEAP" -cp "$T5/sTASSEL.jar" net.maizegenetics.pipeline.TasselPipeline \
+    -maxThreads 4 -vcf "$load" -export "$WORK/t5_vcf_load" -exportType Hapmap)
+  vcf_row "TASSEL 5" "whole-file read" "loadable .vcf" "$result" "$command"
+
+  command="$JAVA -Xmx$HEAP -cp $T5/sTASSEL.jar net.maizegenetics.pipeline.TasselPipeline -maxThreads 4 -vcf $load_gz -export $WORK/t5_vcf_gz -exportType Hapmap"
+  result=$(repeat_measure "$JAVA" "-Xmx$HEAP" -cp "$T5/sTASSEL.jar" net.maizegenetics.pipeline.TasselPipeline \
+    -maxThreads 4 -vcf "$load_gz" -export "$WORK/t5_vcf_gz" -exportType Hapmap)
+  vcf_row "TASSEL 5" "whole-file read" "loadable .vcf.gz" "$result" "$command"
+
+  command="bgzip -d -@ 1 -o /dev/null $load_gz"
+  result=$(repeat_measure bgzip -d -@ 1 -o /dev/null "$load_gz")
+  vcf_row "htslib" "decompress, 1 thread" "loadable .vcf.gz" "$result" "$command"
+
+  command="bgzip -d -@ $VCF_BGZIP_THREADS -o /dev/null $load_gz"
+  result=$(repeat_measure bgzip -d -@ "$VCF_BGZIP_THREADS" -o /dev/null "$load_gz")
+  vcf_row "htslib" "decompress, $VCF_BGZIP_THREADS threads" "loadable .vcf.gz" "$result" "$command"
+
+  command="bcftools view -Ou -o /dev/null $load_gz"
+  result=$(repeat_measure bcftools view -Ou -o /dev/null "$load_gz")
+  vcf_row "htslib" "decompress and parse" "loadable .vcf.gz" "$result" "$command"
+
+  local region_query region_index="${region}.csi"
+  [[ -f "$region_index" ]] || die "no CSI beside $region"
+  for region_query in "chr3B:1-1000000" "chr3B:1-50000000" "chr3B"; do
+    vcf_region_row "$region" "$region_index" "$region_query"
+    command="bcftools view -H -r $region_query -o /dev/null $region"
+    result=$(repeat_measure bcftools view -H -r "$region_query" -o /dev/null "$region")
+    vcf_row "htslib" "region $region_query" "region .vcf.gz" "$result" "$command"
+  done
+
+  echo
+  echo "TASSEL whole-file rows are the CLI path: read the VCF, write HapMap, JVM startup included."
+  echo "TASSEL 6 decompress rows are dev bgzf-bench: inflate only, one warm-up discarded, startup excluded."
+  echo "TASSEL 6 region rows are dev vcf-region-bench: one region, one warm-up discarded, startup excluded."
+  echo "Full tool output: $LOG"
+}
+
+# One dev bgzf-bench invocation. [workers] empty means the host count. Prints a table row.
+bgzf_bench_row() {
+  local input="$1" workers="$2"
+  local -a args=(--quiet dev bgzf-bench --input "$input" --runs "$RUNS")
+  if [[ -n "$workers" ]]; then
+    args+=(--workers "$workers")
+  fi
+  local stats="$WORK/.time" out="$WORK/bgzf-bench.out" rss line median count label command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "bgzf-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  count=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "workers") print p[2] } }' <<<"$line")
+  [[ -n "$median" && -n "$count" ]] || die "bgzf-bench wrote no median: $(cat "$out")"
+  label="decompress, $count worker"
+  if [[ "$count" != "1" ]]; then
+    label="decompress, $count workers"
+  fi
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "$label" "loadable .vcf.gz" "$median" "${rss:-0}" "$command"
+}
+
+# One dev vcf-region-bench invocation. The median excludes JVM startup. Prints a table row.
+vcf_region_row() {
+  local input="$1" index="$2" query="$3"
+  local -a args=(--quiet dev vcf-region-bench --input "$input" --index "$index" --region "$query" --runs "$RUNS")
+  local stats="$WORK/.time" out="$WORK/vcf-region-bench.out" rss line median command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "vcf-region-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  [[ -n "$median" ]] || die "vcf-region-bench wrote no median: $(cat "$out")"
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "region $query" "region .vcf.gz" "$median" "${rss:-0}" "$command"
+}
+
+file_bytes() {
+  if stat -f%z "$1" >/dev/null 2>&1; then
+    stat -f%z "$1"
+  else
+    stat -c%s "$1"
+  fi
+}
+
+file_bytes_human() {
+  awk -v n="$1" 'BEGIN { printf "%.2f GiB", n / 1024 / 1024 / 1024 }'
+}
+
+vcf_row() {
+  local tool="$1" what="$2" input="$3" result="$4" command="$5"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "$tool" "$what" "$input" "${result%% *}" "${result##* }" "$command"
+}
+
+if [[ "$ONLY" == "kinship-kernel" ]]; then
+  run_kinship_kernel
+  exit 0
+fi
+
+if [[ "$ONLY" == "vcf" ]]; then
+  run_vcf
+  exit 0
+fi
 
 DATASETS=()
 wanted() { [[ -z "$DATASET" || "$DATASET" == "$1" ]]; }

@@ -1,21 +1,34 @@
 package net.maizegenetics.tassel.distance
 
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlinx.io.Buffer
+import net.maizegenetics.tassel.genotype.Allele
+import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.ops.TasselOperations
+import net.maizegenetics.tassel.position.Chromosome
+import net.maizegenetics.tassel.position.Position
+import net.maizegenetics.tassel.position.PositionList
+import net.maizegenetics.tassel.taxa.TaxaList
 import net.maizegenetics.tassel.testing.SquareMatrix
 import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.assertMatchesGoldenMatrix
 import net.maizegenetics.tassel.testing.goldenText
 import net.maizegenetics.tassel.testing.normalizeLineEndings
+import kotlin.coroutines.coroutineContext
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -35,18 +48,22 @@ class CenteredIbsTest {
         val expected = SquareMatrix.parse(goldenText(GOLDEN)).properties
             .single { it.startsWith("##$SUMPK=") }
             .substringAfter('=')
-        assertEquals(expected, kinship().annotations[SUMPK])
+            .toDouble()
+        val actual = kinship().annotations.getValue(SUMPK).toDouble()
+        assertTrue(
+            abs(expected - actual) <= SUMPK_TOLERANCE,
+            "SumPk $actual differs from $expected by more than $SUMPK_TOLERANCE (ADR-0020)",
+        )
     }
 
     /**
-     * The matrix is in fact identical to the golden, not merely inside its tolerance: the `float`
-     * sums land on the same bits and `floatToString` spells them the same way. The MANIFEST
-     * tolerance stands as the contract ([matchesGoldenMatrix]); this test says how much room is
-     * left under it, and will fail first if the summation order ever drifts.
+     * The retained TASSEL 5-order kernel is still byte-identical, including `SumPk`. The default
+     * kernel is held to the MANIFEST tolerance ([matchesGoldenMatrix], ADR-0020).
      */
     @Test
     fun writesTheGoldenByteForByte() = runTest {
-        assertEquals(normalizeLineEndings(goldenText(GOLDEN)), kinship().toDelimitedString())
+        val written = centeredIbsTassel5Order(tutorial(), workers = 1).toDelimitedString()
+        assertEquals(normalizeLineEndings(goldenText(GOLDEN)), written)
     }
 
     @Test
@@ -86,7 +103,12 @@ class CenteredIbsTest {
     fun reportsProgressOverEverySite() = runTest {
         val reports = mutableListOf<Progress>()
         centeredIbs(tutorial(), progress = ProgressReporter { reports += it })
-        assertTrue(reports.size > 1, "expected a report per run of sites, got ${reports.size}")
+        val steps = listOf(reports.first().completed) + reports.zipWithNext { previous, next ->
+            next.completed - previous.completed
+        }
+        // 3,093 sites, flushed about every 100 sites: 31 reports. The last step is the remainder.
+        assertEquals(31, reports.size, "steps: $steps")
+        assertTrue(steps.all { it in 1..150 }, "a step left the ~100 site cadence: $steps")
         assertTrue(reports.all { it.total == tutorial().numberOfSites.toLong() })
         assertEquals(tutorial().numberOfSites.toLong(), reports.last().completed)
         assertEquals(reports.map { it.completed }.sorted(), reports.map { it.completed })
@@ -134,10 +156,87 @@ class CenteredIbsTest {
         assertEquals("maxAlleles", kinshipOperation.parameterByLegacyName("maxAlleles")?.name)
     }
 
+    @Test
+    fun parallelBandsMatchTheSequentialKernel() = runTest {
+        val table = variedTable(taxa = 16, sites = 1_200)
+        val sequential = centeredIbsTassel5Order(table, workers = 1)
+        val parallel = centeredIbsTassel5Order(table, workers = 4)
+        assertEquals(sequential.toDelimitedString(), parallel.toDelimitedString())
+    }
+
+    @Test
+    fun parallelBandsMatchTheSequentialKernelOnTheTutorial() = runTest {
+        val sequential = centeredIbsTassel5Order(tutorial(), workers = 1)
+        val parallel = centeredIbsTassel5Order(tutorial(), workers = 4)
+        assertEquals(sequential.toDelimitedString(), parallel.toDelimitedString())
+    }
+
+    @Test
+    fun cancelsWhenTheCallerIsCancelled() = runTest {
+        var seen = 0
+        val job = launch {
+            centeredIbs(
+                variedTable(taxa = 16, sites = 250),
+                progress = ProgressReporter {
+                    seen++
+                    coroutineContext.cancel()
+                    yield()
+                },
+            )
+        }
+        job.join()
+        assertTrue(job.isCancelled, "the run finished instead of cancelling")
+        assertEquals(1, seen, "the kernel kept going after cancellation")
+    }
+
+    @Test
+    fun matchesTheTassel5OrderOnVariedSites() = runTest {
+        val table = variedTable(taxa = 12, sites = 80)
+        for (maxAlleles in intArrayOf(2, DEFAULT_MAX_ALLELES)) {
+            val expected = centeredIbsTassel5Order(table, maxAlleles = maxAlleles, workers = 1)
+            val actual = centeredIbs(table, maxAlleles = maxAlleles)
+            assertWithinTolerance(expected, actual)
+        }
+    }
+
+    @Test
+    fun pairBandsCoverEveryRowOnce() {
+        for (taxa in listOf(1, 2, 5, 10, 281, 1_000)) {
+            for (workers in listOf(1, 2, 3, 4, 8, 16)) {
+                val bands = pairBands(taxa, workers)
+                assertEquals(0, bands.first().first, "taxa=$taxa workers=$workers")
+                var cursor = 0
+                var pairs = 0
+                for (band in bands) {
+                    assertEquals(cursor, band.first, "taxa=$taxa workers=$workers bands=$bands")
+                    assertFalse(band.isEmpty(), "empty band $band for taxa=$taxa workers=$workers")
+                    pairs += pairCount(taxa, band)
+                    cursor = band.last + 1
+                }
+                assertEquals(taxa, cursor)
+                assertEquals(taxa * (taxa + 1) / 2, pairs)
+            }
+        }
+    }
+
+    private fun assertWithinTolerance(expected: DistanceMatrix, actual: DistanceMatrix) {
+        assertEquals(expected.numberOfTaxa, actual.numberOfTaxa)
+        val sumExpected = expected.annotations.getValue(SUMPK).toDouble()
+        val sumActual = actual.annotations.getValue(SUMPK).toDouble()
+        assertTrue(abs(sumExpected - sumActual) <= SUMPK_TOLERANCE, "SumPk $sumActual vs $sumExpected")
+        for (row in 0 until expected.numberOfTaxa) {
+            for (column in row until expected.numberOfTaxa) {
+                val diff = abs(expected.distance(row, column) - actual.distance(row, column)).toDouble()
+                assertTrue(diff <= TOLERANCE, "pair $row,$column differs by $diff")
+            }
+        }
+    }
+
     private companion object {
         const val GOLDEN = "golden/kinship/centered_ibs.txt"
         const val TUTORIAL = "tutorial/mdp_genotype.hmp.txt"
         const val TOLERANCE = 8e-6
+        const val SUMPK_TOLERANCE = 1e-4
         const val SUMPK = DistanceMatrix.CENTERED_IBS_SUMPK
 
         val tutorial = SuspendLazy {
@@ -147,6 +246,29 @@ class CenteredIbsTest {
         val kinship = SuspendLazy { centeredIbs(tutorial()) }
 
         val opposingHomozygotes = SuspendLazy { hapMap("AA" to "CC") }
+
+        /**
+         * Sites that exercise missing calls, a monomorphic column, and more than two alleles.
+         * 1,200 sites is several TASSEL 5 blocks (`max(sites / 4, 1000)`).
+         */
+        fun variedTable(taxa: Int, sites: Int): GenotypeTable {
+            val names = List(taxa) { "t$it" }
+            val chromosome = Chromosome.of(1)
+            val positions = List(sites) { Position(chromosome, it + 1) }
+            val alleles = byteArrayOf(Allele.A, Allele.C, Allele.G, Allele.T)
+            return InMemoryGenotypeTable.of(TaxaList.of(names), PositionList(positions)) { taxon, site ->
+                when {
+                    site % 11 == 0 -> Genotype.of(Allele.G, Allele.G)
+                    taxon % 13 == 0 -> Genotype.UNKNOWN
+                    site % 5 == 0 -> Genotype.of(alleles[(taxon + site) % 4], alleles[(taxon * 3 + site) % 4])
+                    else -> {
+                        val first = if ((taxon + site) % 3 == 0) Allele.C else Allele.A
+                        val second = if ((taxon * 2 + site) % 3 == 0) Allele.C else Allele.A
+                        Genotype.of(first, second)
+                    }
+                }
+            }
+        }
 
         /** One HapMap site per pair of genotypes, with two taxa named `one` and `two`. */
         suspend fun hapMap(vararg sites: Pair<String, String>): GenotypeTable {

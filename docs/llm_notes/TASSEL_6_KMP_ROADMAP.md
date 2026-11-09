@@ -279,7 +279,7 @@ Never cut the golden parity tests, the CLI, or the desktop and web apps showing 
 
 - An out-of-core chunked genotype store with streaming analyses.
 - JVM acceleration: OpenBLAS/LAPACK called through JDK 25's Foreign Function & Memory (FFM) API, plus bit-packed kinship and LD kernels.
-- JVM I/O through full BioKotlin/htsjdk: bgzip- and tabix-indexed VCF.
+- Pure-Kotlin bgzip- and CSI/TBI-indexed VCF on every target ([ADR-0021](../adr/0021-pure-kotlin-compressed-indexed-vcf.md)). Not JVM-only htsjdk.
 - The TASSEL 5 bridge:
   - Load a pinned TASSEL 5 jar in an isolated classloader. This avoids version clashes between TASSEL 5's htsjdk 2.x and Guava 22 and BioKotlin's htsjdk 4.x and Guava 33.
   - Expose TASSEL 5 plugins as TASSEL 6 operations automatically by reading their parameter metadata.
@@ -369,4 +369,3 @@ flowchart LR
 - Web hosting domain, plus custom headers for future Wasm threads.
 - LLM provider and data-privacy policy for the in-app assistant.
 - Naming: the `tassel` CLI command, the Python package name, and Maven coordinates.
-- Gzip handling per platform.
