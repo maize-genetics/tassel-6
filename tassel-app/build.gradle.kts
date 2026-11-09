@@ -1,3 +1,6 @@
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
@@ -51,6 +54,14 @@ kotlin {
             resources.srcDir(bundleTutorialData)
         }
     }
+}
+
+// desktopTest reads testdata/ the way tassel-core's TestData does.
+val testDataDir = rootProject.layout.projectDirectory.dir("testdata")
+
+tasks.withType<Test>().configureEach {
+    inputs.dir(testDataDir).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("testData")
+    environment("TASSEL_TESTDATA_DIR", testDataDir.asFile.absolutePath)
 }
 
 compose.desktop {

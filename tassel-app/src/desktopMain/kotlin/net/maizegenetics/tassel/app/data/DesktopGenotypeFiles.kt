@@ -8,6 +8,8 @@ import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
+import net.maizegenetics.tassel.io.RandomAccessSource
+import net.maizegenetics.tassel.io.openRandomAccessSource
 import java.awt.FileDialog
 import java.awt.Frame
 
@@ -26,8 +28,9 @@ class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
     override suspend fun choose(): GenotypeFile? = withContext(Dispatchers.Swing) {
         // FileDialog is the native chooser on macOS and Windows, which JFileChooser is not. It blocks until the
         // user answers, so it runs on the AWT event thread rather than the Compose one.
+        // Unfiltered. A `*.hmp.txt` filter hid VCF, and FilenameFilter does nothing on macOS. The reader
+        // picks HapMap or VCF from the file name.
         val dialog = FileDialog(owner, "Open genotype file", FileDialog.LOAD)
-        dialog.file = "*.hmp.txt"
         dialog.isVisible = true
         val directory = dialog.directory
         val file = dialog.file
@@ -35,11 +38,16 @@ class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
     }
 }
 
-/** A file on disk. */
+/** A file at [path]. Tests use this to read `testdata/` without a dialog. */
+internal fun pathGenotypeFile(path: String): GenotypeFile = PathGenotypeFile(Path(path))
+
+/** A file on disk. [openRandomAccess] is what lets a bgzipped VCF inflate on more than one worker. */
 private class PathGenotypeFile(private val path: Path) : GenotypeFile {
     override val name: String get() = path.name
 
     override suspend fun open(): Source = SystemFileSystem.source(path).buffered()
+
+    override suspend fun openRandomAccess(): RandomAccessSource = openRandomAccessSource(path.toString())
 }
 
 /** A file packaged with the app, read straight off the classpath so it streams rather than loading whole. */

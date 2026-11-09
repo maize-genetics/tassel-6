@@ -47,8 +47,8 @@ fun hapMapText(taxa: List<String>, calls: List<String>): String {
 }
 
 /**
- * A [GenotypeFile] over text held in memory, the way the browser implementation works: no path, bytes handed to the
- * reader through a `kotlinx.io.Buffer`.
+ * A [GenotypeFile] over text held in memory. The browser's tutorial request works this way: no path, text handed to
+ * the reader through a `kotlinx.io.Buffer`. A picked file is bytes; see [ByteGenotypeFile].
  *
  * @param beforeOpen runs before the bytes are handed over, which lets a test hold a load open or fail it.
  */
@@ -66,6 +66,16 @@ class TextGenotypeFile(
         opened++
         return Buffer().apply { writeString(text) }
     }
+}
+
+/**
+ * A [GenotypeFile] over bytes held in memory.
+ *
+ * [TextGenotypeFile] writes UTF-8, which cannot hold a gzip member. Dispatch tests use this for `.vcf.gz` and
+ * `.hmp.txt.gz`.
+ */
+class ByteGenotypeFile(override val name: String, private val bytes: ByteArray) : GenotypeFile {
+    override suspend fun open(): Source = Buffer().apply { write(bytes) }
 }
 
 /** A [GenotypeFiles] that hands out files a test prepared, and records what the app asked for. */

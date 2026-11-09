@@ -45,10 +45,9 @@ private class NodeRandomAccessSource(private val fd: Int, size: Long) : BaseRand
                 throw IOException("Cannot read random access source", e)
             }
             if (chunk.isEmpty()) break
-            for (i in chunk.indices) {
-                destination[destinationOffset + read + i] = chunk[i].code.toByte()
-            }
-            read += chunk.length
+            val copied = latin1ToByteArray(chunk)
+            copied.copyInto(destination, destinationOffset + read)
+            read += copied.size
         }
         return read
     }

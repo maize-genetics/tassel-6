@@ -5,6 +5,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.io.Buffer
 import kotlinx.io.Source
 import kotlinx.io.writeString
+import net.maizegenetics.tassel.io.arrayBufferToByteArray
 import org.w3c.dom.HTMLInputElement
 import org.w3c.files.File
 import org.w3c.files.FileReader
@@ -14,29 +15,33 @@ import org.w3c.xhr.XMLHttpRequestResponseType
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.js.ExperimentalWasmJsInterop
-import kotlin.js.JsString
 
 /**
  * Browser file loading. There is no file system here, so both paths end in bytes handed to the reader through a
  * `kotlinx.io.Buffer`: the tutorial dataset comes over HTTP from the page the app is served from, and a file the
  * user picks comes from an `<input type="file">` read by a `FileReader`.
  *
- * HapMap is a text format, so both reads ask for text and write it into the buffer as UTF-8. That crosses the
- * JavaScript boundary once per file instead of once per byte, which an `ArrayBuffer` copied element by element would
- * do, and it needs no dependency beyond the browser APIs Compose for Wasm already puts on the classpath.
+ * A picked file is read as an `ArrayBuffer`. HapMap is text, but gzip is not, and `readAsText` replaces every byte
+ * that is not valid UTF-8. The tutorial stays text: it is the uncompressed HapMap the page serves, and the tutorial
+ * button is not a file the user picked.
  */
 class BrowserGenotypeFiles : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = TextGenotypeFile(TUTORIAL_FILE_NAME) { get(TUTORIAL_FILE_NAME) }
 
     override suspend fun choose(): GenotypeFile? {
         val file = pickFile() ?: return null
-        return TextGenotypeFile(file.name) { readAsText(file) }
+        return BytesGenotypeFile(file.name) { readAsBytes(file) }
     }
 }
 
-/** A file whose bytes come from text fetched when it is opened. */
+/** A file whose bytes come from text fetched when it is opened. The bundled tutorial uses this. */
 private class TextGenotypeFile(override val name: String, private val text: suspend () -> String) : GenotypeFile {
     override suspend fun open(): Source = Buffer().apply { writeString(text()) }
+}
+
+/** A file whose bytes are copied whole, so a gzip member arrives unchanged. */
+private class BytesGenotypeFile(override val name: String, private val bytes: suspend () -> ByteArray) : GenotypeFile {
+    override suspend fun open(): Source = Buffer().apply { write(bytes()) }
 }
 
 /**
@@ -48,7 +53,7 @@ private class TextGenotypeFile(override val name: String, private val text: susp
 private suspend fun pickFile(): File? = suspendCancellableCoroutine { continuation ->
     val input = document.createElement("input") as HTMLInputElement
     input.type = "file"
-    input.accept = ".txt,.hmp.txt,text/plain"
+    input.accept = ".vcf,.vcf.gz,.hmp.txt,.hmp.txt.gz,.txt"
     input.style.display = "none"
     document.body?.appendChild(input)
 
@@ -66,15 +71,22 @@ private suspend fun pickFile(): File? = suspendCancellableCoroutine { continuati
     input.click()
 }
 
-/** Reads a picked file as text. */
+/** Reads a picked file as bytes. `readAsText` would replace anything that is not UTF-8, including every gzip file. */
 @OptIn(ExperimentalWasmJsInterop::class)
-private suspend fun readAsText(file: File): String = suspendCancellableCoroutine { continuation ->
+private suspend fun readAsBytes(file: File): ByteArray = suspendCancellableCoroutine { continuation ->
     val reader = FileReader()
-    // readAsText leaves the text in result, typed as JsAny? because a FileReader can also produce an ArrayBuffer.
-    reader.onload = { continuation.resume((reader.result as JsString).toString()) }
+    // readAsArrayBuffer leaves the buffer in result, typed as JsAny? because a FileReader can also produce text.
+    reader.onload = {
+        val buffer = reader.result
+        if (buffer == null) {
+            continuation.resumeWithException(IllegalStateException("could not read ${file.name}"))
+        } else {
+            continuation.resume(arrayBufferToByteArray(buffer))
+        }
+    }
     reader.onerror = { continuation.resumeWithException(IllegalStateException("could not read ${file.name}")) }
     continuation.invokeOnCancellation { reader.abort() }
-    reader.readAsText(file)
+    reader.readAsArrayBuffer(file)
 }
 
 /** Fetches [url] relative to the page as text. */
