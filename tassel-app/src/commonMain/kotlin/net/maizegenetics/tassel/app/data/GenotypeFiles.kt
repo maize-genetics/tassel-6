@@ -30,23 +30,41 @@ interface GenotypeFile {
      * Opens the same bytes for positional reads, or null when this file is only a stream.
      *
      * A path on disk returns one, so a bgzipped VCF can use [Vcf.read] of a [RandomAccessSource] and inflate on
-     * more than one worker. Bytes already in memory, which is every file the browser opens, return null and stay
-     * on [Source.decompressing].
+     * more than one worker. A file the browser user picked returns one over that `File`, so a region read can seek
+     * without copying the file into memory. Bytes already copied into memory return null and stay on
+     * [Source.decompressing].
      */
     suspend fun openRandomAccess(): RandomAccessSource? = null
+
+    /**
+     * The index that belongs with this file, when the platform already resolved one.
+     *
+     * Desktop sets this from the `.csi` or `.tbi` beside a `.vcf.gz`, or from the index dialog. The browser leaves
+     * it null: the page cannot see neighboring files, so [resolveOpen] pairs the picked names instead. A set index
+     * is used even when its name is not `<data>.csi` or `<data>.tbi`, which is the desktop dialog and the CLI's
+     * `--index`.
+     */
+    val index: GenotypeFile?
+        get() = null
 }
 
 /**
  * Where the app gets genotype files. Desktop opens the file system through a native dialog; the browser reads an
- * `<input type="file">` and an HTTP request. Both sit behind this one interface so the shared UI, and the analysis
- * screens of tassel-6#22, never learn which target they are on.
+ * `<input type="file">` and an HTTP request. Both sit behind this one interface so the shared UI never learns which
+ * target it is on. A bgzipped VCF's index is a second [GenotypeFile], not a path: `commonMain` has no file system
+ * (ADR-0017, ADR-0021).
  */
 interface GenotypeFiles {
     /** The tutorial dataset shipped with the app ([TUTORIAL_FILE_NAME]). */
     suspend fun tutorial(): GenotypeFile
 
-    /** Asks the user for a file, or returns null when they cancel. */
-    suspend fun choose(): GenotypeFile?
+    /**
+     * Asks the user for files, or returns null when they cancel.
+     *
+     * One file is the usual open. A `.vcf.gz` may arrive with [GenotypeFile.index] set, or as one of several files
+     * the browser user picked together. [resolveOpen] decides which is the data file and which is the index.
+     */
+    suspend fun choose(): List<GenotypeFile>?
 }
 
 /**
@@ -86,4 +104,6 @@ suspend fun GenotypeFile.readGenotypes(progress: ProgressReporter = ProgressRepo
 private fun isVcfName(name: String): Boolean = name.endsWith(VCF_GZIP_EXTENSION) || name.endsWith(VCF_EXTENSION)
 
 private const val VCF_EXTENSION: String = ".vcf"
-private const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
+
+/** `.vcf.gz` does not end with `.vcf`. Desktop lookup and [resolveOpen] share this suffix. */
+internal const val VCF_GZIP_EXTENSION: String = ".vcf.gz"

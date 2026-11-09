@@ -44,13 +44,19 @@ fun AppScreen(state: AppState, onEvent: (AppEvent) -> Unit) {
             VerticalDivider()
             Column(modifier = Modifier.weight(1f).fillMaxSize()) {
                 when (val activity = state.activity) {
-                    is Activity.Loading -> ProgressBanner(activity.progress, "Reading ${activity.name}", null, onEvent)
+                    is Activity.Loading ->
+                        ProgressBanner(activity.progress, "Reading ${activity.name}", AppEvent.Cancel, onEvent)
                     is Activity.Running ->
                         ProgressBanner(activity.progress, "Running ${activity.operationId}", AppEvent.Cancel, onEvent)
                     is Activity.Failed -> FailureBanner(activity, onEvent)
                     Activity.Idle -> Unit
                 }
                 Content(state, onEvent)
+            }
+            val region = state.region
+            if (region != null) {
+                VerticalDivider()
+                RegionPane(prompt = region, onEvent = onEvent, modifier = Modifier.width(FORM_WIDTH))
             }
             val form = state.form
             if (form != null) {
