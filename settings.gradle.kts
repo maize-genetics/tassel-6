@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 }
 
 include(":tassel-core", ":tassel-cli", ":tassel-app")
+
+if (providers.gradleProperty("tassel.spikes").orNull == "true") include(":spikes:gpu-gram")
