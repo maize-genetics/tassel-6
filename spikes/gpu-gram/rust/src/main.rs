@@ -1,7 +1,7 @@
-//! Times the shared WGSL Gram and Accelerate on the four published shapes.
+//! Times the shared WGSL Gram and a platform BLAS on the four published shapes.
 //!
 //! `cargo run --release` writes `target/gpu-gram-report.json`. `--blas-only` is the one-thread
-//! Accelerate child, so vecLib sees `VECLIB_MAXIMUM_THREADS` before it initializes.
+//! child, so Accelerate or OpenBLAS sees its thread-count variable before it initializes.
 
 mod blas;
 mod gpu;
@@ -33,6 +33,7 @@ fn main() {
         adapter: None,
         gpu_error: None,
         setup_seconds: None,
+        blas_library: None,
         sizes: Vec::new(),
     };
     let gpu = match gpu::open() {
@@ -119,11 +120,16 @@ fn main() {
         prepared.push(item);
     }
 
-    if let Ok(previous) = std::env::var("VECLIB_MAXIMUM_THREADS") {
-        eprintln!("unsetting VECLIB_MAXIMUM_THREADS={previous} for the default Accelerate run");
-        std::env::remove_var("VECLIB_MAXIMUM_THREADS");
+    let blas_name = blas::backend_label();
+    let thread_env = blas::thread_env_var();
+    if let Ok(previous) = std::env::var(thread_env) {
+        eprintln!("unsetting {thread_env}={previous} for the default {blas_name} run");
+        std::env::remove_var(thread_env);
     }
-    eprintln!("Accelerate, default vecLib pool");
+    let library_line = blas::library_line();
+    eprintln!("{library_line}");
+    report.blas_library = Some(library_line);
+    eprintln!("{blas_name}, default thread pool");
     for (index, item) in prepared.iter().enumerate() {
         let outcomes = blas::time_shape(
             &BlasInput {
@@ -145,11 +151,11 @@ fn main() {
     drop(prepared);
 
     let one_thread_path = report_path.with_file_name("blas-1thread.txt");
-    eprintln!("Accelerate, VECLIB_MAXIMUM_THREADS=1");
+    eprintln!("{blas_name}, {thread_env}=1");
     let status = Command::new(std::env::current_exe().expect("current exe"))
         .arg("--blas-only")
         .arg(&one_thread_path)
-        .env("VECLIB_MAXIMUM_THREADS", "1")
+        .env(thread_env, "1")
         .status()
         .expect("spawn one-thread blas");
     assert!(status.success(), "one-thread blas exited {status}");
@@ -219,6 +225,7 @@ fn blas_row(outcome: blas::BlasOutcome) -> BlasRow {
 }
 
 fn write_one_thread(path: &Path) {
+    eprintln!("{}", blas::library_line());
     let mut outcomes = Vec::new();
     for shape in SHAPES {
         let codes = generate_dosages(shape.taxa, shape.sites, PARK_MILLER_SEED);
@@ -266,6 +273,11 @@ fn reference_path(taxa: usize, sites: usize) -> PathBuf {
 }
 
 fn host_report() -> HostReport {
+    #[cfg(target_os = "windows")]
+    {
+        return windows_host();
+    }
+    #[cfg(not(target_os = "windows"))]
     HostReport {
         model: command("sysctl", &["-n", "hw.model"]),
         uname: command("uname", &["-srm"]),
@@ -273,6 +285,33 @@ fn host_report() -> HostReport {
         performance_cores: command("sysctl", &["-n", "hw.perflevel0.physicalcpu"]),
         efficiency_cores: command("sysctl", &["-n", "hw.perflevel1.physicalcpu"]),
         memory_bytes: command("sysctl", &["-n", "hw.memsize"]),
+        rustc: command("rustc", &["--version"]),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_host() -> HostReport {
+    let text = command(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-Command",
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; $cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem; $cpu = Get-CimInstance Win32_Processor; Write-Output $cs.Model; Write-Output ($os.Caption + ' ' + $os.Version); Write-Output $cpu.NumberOfLogicalProcessors; Write-Output $cs.TotalPhysicalMemory; Write-Output $cpu.Name",
+        ],
+    );
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let model = lines.next().unwrap_or("unknown").to_string();
+    let uname = lines.next().unwrap_or("unknown").to_string();
+    let logical_cpus = lines.next().unwrap_or("unknown").to_string();
+    let memory_bytes = lines.next().unwrap_or("unknown").to_string();
+    let cpu = lines.next().unwrap_or("unknown").to_string();
+    HostReport {
+        model: format!("{model}, {cpu}"),
+        uname,
+        logical_cpus,
+        performance_cores: "unknown".to_string(),
+        efficiency_cores: "unknown".to_string(),
+        memory_bytes,
         rustc: command("rustc", &["--version"]),
     }
 }

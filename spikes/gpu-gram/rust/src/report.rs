@@ -87,6 +87,7 @@ pub struct Report {
     pub adapter: Option<AdapterReport>,
     pub gpu_error: Option<String>,
     pub setup_seconds: Option<f64>,
+    pub blas_library: Option<String>,
     pub sizes: Vec<SizeReport>,
 }
 
@@ -107,6 +108,8 @@ pub fn write_report(report: &Report) -> String {
         Some(seconds) => out.push_str(&json_seconds(seconds)),
         None => out.push_str("null"),
     }
+    out.push_str(",\n  \"blasLibrary\": ");
+    write_opt_string(&mut out, report.blas_library.as_deref());
     out.push_str(",\n  \"sizes\": [\n");
     for (index, size) in report.sizes.iter().enumerate() {
         if index > 0 {

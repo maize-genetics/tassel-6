@@ -26,10 +26,16 @@ Three measurements decide that:
   times for the same shader and the same shapes are 0.51 s and 0.83 s. Rust is 2.3x and 2.0x
   those Chrome times, on the same GPU. It does not beat the browser's own WebGPU.
 
+The same four dosage shapes were timed on a Windows desktop with a discrete GPU. Both WGSL
+entry points were bit-exact there, and OpenBLAS `dsyrk` and `ssyrk` matched the f64 reference
+with max abs `0`. Tiled `wgpu` at 5,000 x 20,000 took 1.060 s, compared with 1.693 s on the M2.
+OpenBLAS `ssyrk` on that machine, 32 threads, took 0.446 s in the following run. The GPU run is
+slower than that BLAS. The Windows section has the table.
+
 **Stage 2 is a go, as the next spike.** Dosage was bit-exact here and in the three browsers.
 Chrome's cited 0.51 s at 1,000 x 100,000 is 62x the wasm CPU median measured here (31.512 s),
 past the epic's 5x line. The dense Float32 Gram is not the kernel to ship: on this Mac it loses
-to Accelerate and to TASSEL 5's residual. Stage 2 is the compact kernels. File these, and do not
+to Accelerate and to TASSEL 5's residual, and on the Windows host it loses to OpenBLAS `ssyrk`. Stage 2 is the compact kernels. File these, and do not
 open them from the harness PR:
 
 - Pure-Kotlin bit-plane popcount kernel on the JVM and on wasm
@@ -45,7 +51,8 @@ not that integer kernel.
 This is the first BLAS timing on this workload. The JVM and native kinship spikes
 ([kinship-jvm-fast-path.md](kinship-jvm-fast-path.md),
 [kinship-native-fast-path.md](kinship-native-fast-path.md)) stopped before calling BLAS or the
-Vector API. On this host `ssyrk` is the fastest dense Gram. Putting it behind the JVM Foreign
+Vector API. On this host `ssyrk` is the fastest dense Gram. On the Windows host, OpenBLAS
+`ssyrk` is likewise the fastest dense Gram. Putting either behind the JVM Foreign
 Function & Memory API is out of scope for this issue.
 
 ## What was timed
@@ -165,10 +172,83 @@ scripts/bench/run-benchmarks.sh --only kinship-kernel --dataset synthetic-100k -
 The 1,000 x 10,000 and 5,000 x 20,000 kinship rows are the one-off commands in the spike README.
 `synthetic-5k` was skipped because it needs `--heap 16g`.
 
+## Windows discrete GPU
+
+Host: MSI MS-7D37, Intel Core i9-14900K, 24 cores, 32 logical processors, 137,207,046,144 bytes
+of memory, Windows 11 Home 10.0.26300 (26H2). Rustc 1.87.0 (`17067e9ac`, 2025-05-09). `wgpu`
+26.0.1. The adapter was NVIDIA GeForce RTX 4060 Ti, Vulkan, driver 617.42, `DiscreteGpu`,
+`fallback` false. Vendor `4318`, device `10243`. An Intel UHD Graphics 770 is also installed.
+The harness asked for high performance and opened the 4060 Ti (16,380 MiB). One-time device and
+pipeline setup was 0.709 s and is outside the table. The device kept the default limits the
+kernel uses: 256 invocations per workgroup, a 128 MB storage binding, and 65,535 workgroups per
+dimension. The adapter advertised higher limits.
+
+Dosages are the Park-Miller draws in the spike README. All four checksums matched, and the first
+16 codes were `2, 2, 3, 1, 1, 1, 2, 3, 1, 1, 2, 1, 1, 0, 1, 1`. `wgpu` medians are the same
+end-to-end f32 protocol as the Mac rows: staging, `writeBuffer`, dispatch plus device poll, one
+readback, and the copy out. One warm-up is discarded and the median of 3 is rank 1 of the sorted
+samples. Both shaders and all four shapes had max abs `0`.
+
+Dispatch is most of the large tiled runs: 0.214 s of 0.329 s at 1,000 x 100,000, and 0.857 s of
+1.060 s at 5,000 x 20,000. Readback (`mapAsync` plus the copy out) at 5,000 x 20,000 is 0.014 s.
+The f64 reference in that same process is one sample on one thread: 0.024 s, 0.977 s, 9.823 s,
+and 56.525 s. It is not a median, and it is the scalar loop rather than a BLAS kernel.
+
+Tiled `wgpu` is faster here than the M2 tiled row at every shape: 0.00196 s, 0.0356 s, 0.329 s,
+and 1.060 s, against 0.009 s, 0.071 s, 1.189 s, and 1.693 s. At 5,000 x 20,000, 1.060 s is 4.4
+times the Mac Accelerate `ssyrk` median of 0.243 s. The cited Chrome time for that shape is
+0.83 s on the M2, so the two GPU samples are different machines. Pair-sites/s below uses the
+unrounded median and three significant figures, the same rule as the Mac table.
+
+OpenBLAS 0.3.34 is the official x64 build, linked as `cblas_dsyrk` and `cblas_ssyrk`.
+`openblas_get_config` reported `DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64`. The default
+pool used 32 threads. The one-thread child set `OPENBLAS_NUM_THREADS=1` before the library
+initialized and then reported 1 thread. Medians are the `syrk` call after one discarded warm-up.
+Packing is extra: 0.060 s for `dsyrk` and 0.033 s for `ssyrk` at 1,000 x 100,000, and 0.072 s
+and 0.039 s at 5,000 x 20,000. Both precisions matched the f64 reference with max abs `0` on all
+four shapes. `cargo test` passed the six library tests and `hand_gram_matches_both_precisions`,
+the 2 by 2 Gram at both precisions.
+
+The `wgpu` rows are the release run described above. The OpenBLAS rows are the next release run.
+That run also re-timed tiled `wgpu` at 0.00192 s, 0.0331 s, 0.329 s, and 1.085 s, still max abs
+`0`. In that process, tiled `wgpu` at 5,000 x 20,000 is 1.085 s and `ssyrk` is 0.446 s. The three
+`ssyrk` samples were 0.450 s, 0.446 s, and 0.392 s. Default-pool `ssyrk` is the fastest path at
+every shape. Tiled `wgpu` is faster than default-pool `dsyrk` at 281 x 3,093 and at 5,000 x
+20,000. Pair-sites/s/thread for the 32-thread rows divides the wall rate by 32.
+
+| Implementation | Size | Median s | Pair-sites/s | Pair-sites/s/thread | Error | Source |
+|---|---:|---:|---:|---:|---|---|
+| Rust wgpu naive | 281 x 3,093 | 0.00326 | 3.76e10 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 281 x 3,093 | 0.00196 | 6.26e10 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, 32 threads | 281 x 3,093 | 0.00275 | 4.45e10 | 1.39e9 | max abs 0 | measured |
+| OpenBLAS ssyrk, 32 threads | 281 x 3,093 | 0.00182 | 6.73e10 | 2.10e9 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 281 x 3,093 | 0.00387 | 3.16e10 | 3.16e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 281 x 3,093 | 0.00218 | 5.63e10 | 5.63e10 | max abs 0 | measured |
+| Rust wgpu naive | 1,000 x 10,000 | 0.149 | 3.37e10 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 1,000 x 10,000 | 0.0356 | 1.40e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, 32 threads | 1,000 x 10,000 | 0.0198 | 2.52e11 | 7.89e9 | max abs 0 | measured |
+| OpenBLAS ssyrk, 32 threads | 1,000 x 10,000 | 0.00987 | 5.07e11 | 1.58e10 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 1,000 x 10,000 | 0.151 | 3.32e10 | 3.32e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 1,000 x 10,000 | 0.0740 | 6.76e10 | 6.76e10 | max abs 0 | measured |
+| Rust wgpu naive | 1,000 x 100,000 | 1.385 | 3.61e10 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 1,000 x 100,000 | 0.329 | 1.52e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, 32 threads | 1,000 x 100,000 | 0.190 | 2.63e11 | 8.21e9 | max abs 0 | measured |
+| OpenBLAS ssyrk, 32 threads | 1,000 x 100,000 | 0.0994 | 5.04e11 | 1.57e10 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 1,000 x 100,000 | 1.476 | 3.39e10 | 3.39e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 1,000 x 100,000 | 0.734 | 6.82e10 | 6.82e10 | max abs 0 | measured |
+| Rust wgpu naive | 5,000 x 20,000 | 3.197 | 7.82e10 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 5,000 x 20,000 | 1.060 | 2.36e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, 32 threads | 5,000 x 20,000 | 1.502 | 1.66e11 | 5.20e9 | max abs 0 | measured |
+| OpenBLAS ssyrk, 32 threads | 5,000 x 20,000 | 0.446 | 5.61e11 | 1.75e10 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 5,000 x 20,000 | 6.418 | 3.90e10 | 3.90e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 5,000 x 20,000 | 3.093 | 8.08e10 | 8.08e10 | max abs 0 | measured |
+
 ## Limitations
 
-- One host, Apple M2 Max. Accelerate is unusually strong here. A Windows or Linux machine with a
-  discrete GPU is the next measurement and can move the GPU-versus-BLAS comparison.
+- Two hosts. On the Windows host, tiled `wgpu` at 5,000 x 20,000 is 1.060 s in the first run and
+  1.085 s in the OpenBLAS run, against OpenBLAS `ssyrk` at 0.446 s. The discrete GPU is still
+  slower than the best CPU path measured on that machine. OpenBLAS selected Haswell. A Linux
+  host is still unmeasured.
 - The Rust wasm module was built and not run. Its speed against the Kotlin/Wasm WebGPU path is
   not measured.
 - Centered kinship was not reimplemented in Rust. The scaled Float kinship error against `8e-6`
