@@ -32,6 +32,14 @@ with max abs `0`. Tiled `wgpu` at 5,000 x 20,000 took 1.060 s, compared with 1.6
 OpenBLAS `ssyrk` on that machine, 32 threads, took 0.446 s in the following run. The GPU run is
 slower than that BLAS. The Windows section has the table.
 
+The same four dosage shapes were timed on `cbsubl02.biohpc.cornell.edu`, two AMD EPYC 9355
+sockets and two NVIDIA H200 NVL GPUs. Both WGSL entry points were bit-exact, and OpenBLAS
+`dsyrk` and `ssyrk` matched the f64 reference with max abs `0`. Tiled `wgpu` at 5,000 x 20,000
+took 0.453 s. The linked OpenBLAS is the serial build (`SINGLE_THREADED`, one thread), and
+`ssyrk` took 1.997 s. Tiled `wgpu` is faster than that serial BLAS at every shape.
+`libopenblasp.so` and `libopenblaso.so` are on the machine and were not linked, so this is not
+the multi-thread CPU comparison the Windows rows are. The Linux section has the table.
+
 **Stage 2 is a go, as the next spike.** Dosage was bit-exact here and in the three browsers.
 Chrome's cited 0.51 s at 1,000 x 100,000 is 62x the wasm CPU median measured here (31.512 s),
 past the epic's 5x line. The dense Float32 Gram is not the kernel to ship: on this Mac it loses
@@ -52,8 +60,10 @@ This is the first BLAS timing on this workload. The JVM and native kinship spike
 ([kinship-jvm-fast-path.md](kinship-jvm-fast-path.md),
 [kinship-native-fast-path.md](kinship-native-fast-path.md)) stopped before calling BLAS or the
 Vector API. On this host `ssyrk` is the fastest dense Gram. On the Windows host, OpenBLAS
-`ssyrk` is likewise the fastest dense Gram. Putting either behind the JVM Foreign
-Function & Memory API is out of scope for this issue.
+`ssyrk` is likewise the fastest dense Gram. On the Linux host the linked OpenBLAS is serial,
+and tiled `wgpu` is faster than that `ssyrk` at every shape. A threaded OpenBLAS on that host
+is not measured. Putting either behind the JVM Foreign Function & Memory API is out of scope
+for this issue.
 
 ## What was timed
 
@@ -243,12 +253,89 @@ every shape. Tiled `wgpu` is faster than default-pool `dsyrk` at 281 x 3,093 and
 | OpenBLAS dsyrk, 1 thread | 5,000 x 20,000 | 6.418 | 3.90e10 | 3.90e10 | max abs 0 | measured |
 | OpenBLAS ssyrk, 1 thread | 5,000 x 20,000 | 3.093 | 8.08e10 | 8.08e10 | max abs 0 | measured |
 
+## Linux discrete GPU
+
+Host: `cbsubl02.biohpc.cornell.edu`, two AMD EPYC 9355 sockets (32 cores each, one thread per
+core, 64 logical CPUs), 810,576,736,256 bytes of memory, Linux 5.14.0-687.60.1.el9_8.x86_64.
+The harness JSON records `model`, `logicalCpus`, and `memoryBytes` as `unknown` because
+`host_report` still reads those with `sysctl`. The CPU and memory figures are from `lscpu` and
+`/proc/meminfo` on that machine. Rustc 1.92.0 (`ded5c06cf`, 2025-12-08), the Red Hat
+1.92.0-2.el9_8 package. `rustup` is not installed, so the 1.87.0 pin in `rust-toolchain.toml`
+was not used. `wgpu` 26.0.1. The adapter was NVIDIA H200 NVL, Vulkan, driver 595.112.07,
+`DiscreteGpu`, `fallback` false. Vendor `4318`, device `9019`. A second H200 NVL is installed.
+The harness asked for high performance and opened one H200. One-time device and pipeline setup
+was 0.204 s and is outside the table. The device kept the default limits the kernel uses: 256
+invocations per workgroup, a 128 MB storage binding, and 65,535 workgroups per dimension. The
+adapter advertised higher limits.
+
+Dosages are the Park-Miller draws in the spike README. All four checksums matched, and the first
+16 codes were `2, 2, 3, 1, 1, 1, 2, 3, 1, 1, 2, 1, 1, 0, 1, 1`. `wgpu` medians are the same
+end-to-end f32 protocol as the Mac rows. One warm-up is discarded and the median of 3 is rank 1
+of the sorted samples. Both shaders and all four shapes had max abs `0`.
+
+Dispatch is most of the large tiled runs: 0.082 s of 0.188 s at 1,000 x 100,000, and 0.329 s of
+0.453 s at 5,000 x 20,000. Readback (`mapAsync` plus the copy out) at 5,000 x 20,000 is 0.0055 s.
+The f64 reference in that same process is one sample on one thread: 0.023 s, 0.887 s, 9.194 s,
+and 52.297 s. It is not a median, and it is the scalar loop rather than a BLAS kernel.
+
+Tiled `wgpu` is faster here than the M2 tiled row at every shape: 0.00153 s, 0.0184 s, 0.188 s,
+and 0.453 s, against 0.009 s, 0.071 s, 1.189 s, and 1.693 s. It is also faster than the RTX
+4060 Ti tiled row at every shape, against 0.00196 s, 0.0356 s, 0.329 s, and 1.060 s. At
+5,000 x 20,000, 0.453 s is 1.9 times the Mac Accelerate `ssyrk` median of 0.243 s. Pair-sites/s
+below uses the unrounded median
+and three significant figures, the same rule as the Mac table.
+
+OpenBLAS 0.3.29 is the EL9 LP64 library `/lib64/libopenblas.so`, linked as `cblas_dsyrk` and
+`cblas_ssyrk`. `openblas_get_config` reported `DYNAMIC_ARCH NO_AFFINITY USE_LOCKING Cooperlake
+SINGLE_THREADED`. The default run and the one-thread child both reported `procs 1 threads 1
+parallel sequential`. The child set `OPENBLAS_NUM_THREADS=1` before the library initialized.
+The parent run cleared that variable. The SSH environment had `OMP_NUM_THREADS=1`. The library
+reports `SINGLE_THREADED`, and the pool is one thread either way. Medians are the
+`syrk` call after one discarded warm-up. Packing is extra: 0.027 s for `dsyrk` and 0.013 s for
+`ssyrk` at 1,000 x 100,000, and 0.027 s and 0.014 s at 5,000 x 20,000. Both precisions matched
+the f64 reference with max abs `0` on all four shapes. `cargo test` on this checkout passed the
+six library tests, and `hand_gram_matches_both_precisions` passed after the Linux link.
+
+The `wgpu` rows and the OpenBLAS rows are the same release run. In that process, tiled `wgpu`
+at 5,000 x 20,000 is 0.453 s and serial `ssyrk` is 1.997 s. The three `ssyrk` samples were
+1.995 s, 1.998 s, and 1.997 s. Tiled `wgpu` is faster than serial `ssyrk` and serial `dsyrk`
+at every shape. The per-thread column equals the wall rate because the library ran one thread.
+`libopenblasp.so` and `libopenblaso.so` were not linked.
+
+| Implementation | Size | Median s | Pair-sites/s | Pair-sites/s/thread | Error | Source |
+|---|---:|---:|---:|---:|---|---|
+| Rust wgpu naive | 281 x 3,093 | 0.00219 | 5.59e10 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 281 x 3,093 | 0.00153 | 8.02e10 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, serial | 281 x 3,093 | 0.00265 | 4.62e10 | 4.62e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, serial | 281 x 3,093 | 0.00139 | 8.82e10 | 8.82e10 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 281 x 3,093 | 0.00265 | 4.62e10 | 4.62e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 281 x 3,093 | 0.00139 | 8.79e10 | 8.79e10 | max abs 0 | measured |
+| Rust wgpu naive | 1,000 x 10,000 | 0.0400 | 1.25e11 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 1,000 x 10,000 | 0.0184 | 2.72e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, serial | 1,000 x 10,000 | 0.0964 | 5.19e10 | 5.19e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, serial | 1,000 x 10,000 | 0.0458 | 1.09e11 | 1.09e11 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 1,000 x 10,000 | 0.0964 | 5.19e10 | 5.19e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 1,000 x 10,000 | 0.0461 | 1.09e11 | 1.09e11 | max abs 0 | measured |
+| Rust wgpu naive | 1,000 x 100,000 | 0.415 | 1.21e11 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 1,000 x 100,000 | 0.188 | 2.67e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, serial | 1,000 x 100,000 | 0.961 | 5.21e10 | 5.21e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, serial | 1,000 x 100,000 | 0.463 | 1.08e11 | 1.08e11 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 1,000 x 100,000 | 0.962 | 5.21e10 | 5.21e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 1,000 x 100,000 | 0.467 | 1.07e11 | 1.07e11 | max abs 0 | measured |
+| Rust wgpu naive | 5,000 x 20,000 | 1.807 | 1.38e11 | n/a | max abs 0 | measured |
+| Rust wgpu tiled | 5,000 x 20,000 | 0.453 | 5.51e11 | n/a | max abs 0 | measured |
+| OpenBLAS dsyrk, serial | 5,000 x 20,000 | 4.363 | 5.73e10 | 5.73e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, serial | 5,000 x 20,000 | 1.997 | 1.25e11 | 1.25e11 | max abs 0 | measured |
+| OpenBLAS dsyrk, 1 thread | 5,000 x 20,000 | 4.367 | 5.73e10 | 5.73e10 | max abs 0 | measured |
+| OpenBLAS ssyrk, 1 thread | 5,000 x 20,000 | 2.017 | 1.24e11 | 1.24e11 | max abs 0 | measured |
+
 ## Limitations
 
-- Two hosts. On the Windows host, tiled `wgpu` at 5,000 x 20,000 is 1.060 s in the first run and
-  1.085 s in the OpenBLAS run, against OpenBLAS `ssyrk` at 0.446 s. The discrete GPU is still
-  slower than the best CPU path measured on that machine. OpenBLAS selected Haswell. A Linux
-  host is still unmeasured.
+- Three hosts. On the Windows host, tiled `wgpu` at 5,000 x 20,000 is 1.060 s in the first run and
+  1.085 s in the OpenBLAS run, against OpenBLAS `ssyrk` at 0.446 s on 32 threads. The discrete GPU
+  is slower than that CPU path. OpenBLAS selected Haswell. On the Linux host the linked OpenBLAS
+  is serial, and `ssyrk` at that shape is 1.997 s against tiled `wgpu` at 0.453 s.
+  `libopenblasp.so` and `libopenblaso.so` are installed and were not linked.
 - The Rust wasm module was built and not run. Its speed against the Kotlin/Wasm WebGPU path is
   not measured.
 - Centered kinship was not reimplemented in Rust. The scaled Float kinship error against `8e-6`
