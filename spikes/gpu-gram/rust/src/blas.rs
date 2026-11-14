@@ -1,6 +1,6 @@
 //! `cblas_dsyrk` and `cblas_ssyrk` on the dosage matrix.
 //!
-//! macOS links Accelerate. Windows links OpenBLAS. The matrix is column-major and site-major,
+//! macOS links Accelerate. Windows and Linux link OpenBLAS. The matrix is column-major and site-major,
 //! which is the same order as the generator: element `(taxon, site)` lives at `site * taxa + taxon`.
 //! One full `syrk` per shape, not one call per panel.
 
@@ -11,11 +11,11 @@ use gpu_gram::{compare_triangles, pair_count, MISSING_CODE, RELATIVE_FLOOR};
 use crate::report::{stats_of, Stats};
 
 const RUNS: usize = 3;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const CBLAS_COL_MAJOR: i32 = 102;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const CBLAS_NO_TRANS: i32 = 111;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const CBLAS_UPPER: i32 = 121;
 
 pub struct BlasInput<'a> {
@@ -36,8 +36,8 @@ pub struct BlasOutcome {
 }
 
 #[cfg_attr(target_os = "macos", link(name = "Accelerate", kind = "framework"))]
-#[cfg_attr(target_os = "windows", link(name = "openblas"))]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), link(name = "openblas"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 unsafe extern "C" {
     fn cblas_dsyrk(
         order: i32,
@@ -67,7 +67,7 @@ unsafe extern "C" {
     );
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[link(name = "openblas")]
 unsafe extern "C" {
     fn openblas_get_config() -> *const std::ffi::c_char;
@@ -81,11 +81,11 @@ pub fn backend_label() -> &'static str {
     {
         "Accelerate"
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         "OpenBLAS"
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         "BLAS"
     }
@@ -103,14 +103,14 @@ pub fn thread_env_var() -> &'static str {
     }
 }
 
-/// Library and pool description. On Windows this initializes OpenBLAS, so call it after the
-/// thread-count variable is set for this process.
+/// Library and pool description. On Windows and Linux this initializes OpenBLAS, so call it
+/// after the thread-count variable is set for this process.
 pub fn library_line() -> String {
     #[cfg(target_os = "macos")]
     {
         "Accelerate vecLib".to_string()
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     unsafe {
         let config = std::ffi::CStr::from_ptr(openblas_get_config())
             .to_string_lossy()
@@ -127,7 +127,7 @@ pub fn library_line() -> String {
             openblas_get_num_threads(),
         )
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         "no BLAS linked".to_string()
     }
@@ -206,7 +206,7 @@ fn pack_f32(codes: &[u8], matrix: &mut [f32]) {
 }
 
 fn syrk_f64(taxa: usize, sites: usize, matrix: &[f64], product: &mut [f64]) {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     unsafe {
         cblas_dsyrk(
             CBLAS_COL_MAJOR,
@@ -222,15 +222,15 @@ fn syrk_f64(taxa: usize, sites: usize, matrix: &[f64], product: &mut [f64]) {
             taxa as i32,
         );
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (taxa, sites, matrix, product);
-        panic!("cblas_dsyrk is linked on macOS (Accelerate) and Windows (OpenBLAS)");
+        panic!("cblas_dsyrk is linked on macOS (Accelerate) and on Windows and Linux (OpenBLAS)");
     }
 }
 
 fn syrk_f32(taxa: usize, sites: usize, matrix: &[f32], product: &mut [f32]) {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     unsafe {
         cblas_ssyrk(
             CBLAS_COL_MAJOR,
@@ -246,10 +246,10 @@ fn syrk_f32(taxa: usize, sites: usize, matrix: &[f32], product: &mut [f32]) {
             taxa as i32,
         );
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (taxa, sites, matrix, product);
-        panic!("cblas_ssyrk is linked on macOS (Accelerate) and Windows (OpenBLAS)");
+        panic!("cblas_ssyrk is linked on macOS (Accelerate) and on Windows and Linux (OpenBLAS)");
     }
 }
 
@@ -353,7 +353,7 @@ pub fn parse_lines(text: &str) -> Vec<(usize, usize, BlasOutcome)> {
         .collect()
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 mod tests {
     use super::*;
     use gpu_gram::{dosage_gram, triangle_index};

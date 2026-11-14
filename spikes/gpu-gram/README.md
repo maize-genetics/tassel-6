@@ -127,8 +127,9 @@ answer.
 
 Issue #113. This crate is not part of `./gradlew check` or CI. It links `wgpu` 26.0.1,
 `pollster`, and `bytemuck`, and calls `cblas_dsyrk` and `cblas_ssyrk` directly. macOS links
-Accelerate. Windows links OpenBLAS (`OPENBLAS_LIB_DIR` is the directory that contains
-`openblas.lib`, and `PATH` must include `libopenblas.dll`). The Windows zip's
+Accelerate. Windows and Linux link OpenBLAS. On Windows, `OPENBLAS_LIB_DIR` is the directory that contains
+`openblas.lib`, and `PATH` must include `libopenblas.dll`. Linux links the system LP64
+library `libopenblas.so` (`-lopenblas`), not the ILP64 `libopenblas64`. The Windows zip's
 `libopenblas.lib` is a GNU archive; `openblas.lib` is an MSVC import library for
 `libopenblas.dll`. OpenBLAS is not a crate
 dependency and is not shipped from `tassel-core`, `tassel-cli`, or `tassel-app`.
@@ -140,8 +141,8 @@ checks the four checksums and the first 16 dosage codes above, then times both e
 with f32 accumulation on dosage panels. One warm-up is discarded and the median of 3 uses the
 same rank as `tassel dev kinship-bench`. The BLAS timing is one full `syrk` of the column-major
 dosage matrix (missing stored as 0), at the default pool and again in a child process with
-`VECLIB_MAXIMUM_THREADS=1` on macOS or `OPENBLAS_NUM_THREADS=1` on Windows. `cargo test` on
-those two systems includes a 2 by 2 Gram check for both precisions. That test calls the linked
+`VECLIB_MAXIMUM_THREADS=1` on macOS or `OPENBLAS_NUM_THREADS=1` on Windows and Linux. `cargo test` on
+those systems includes a 2 by 2 Gram check for both precisions. That test calls the linked
 library. It does not open a GPU.
 
 ```bash
