@@ -29,6 +29,19 @@ pub const SHAPES: [Shape; 4] = [
     Shape { taxa: 5_000, sites: 20_000, checksum: 6_644_050_518_704_627_923 },
 ];
 
+/// Larger Park-Miller panels at sizes a kinship run actually sees.
+///
+/// 2,815 x 1,000,000 is an Ames-scale diversity panel at a million sites.
+/// 5,000 x 500,000 is a large recombinant-inbred or training population.
+/// 10,000 x 100,000 is a wide genomic-selection training set.
+/// Checksums use the same generator as [`SHAPES`]. `cargo run -- --large` times these.
+/// The four published shapes stay on [`SHAPES`] so the browser spike is unchanged.
+pub const LARGE_SHAPES: [Shape; 3] = [
+    Shape { taxa: 2_815, sites: 1_000_000, checksum: 8_550_447_608_615_587_593 },
+    Shape { taxa: 5_000, sites: 500_000, checksum: 14_819_543_007_493_590_618 },
+    Shape { taxa: 10_000, sites: 100_000, checksum: 15_056_641_793_485_750_855 },
+];
+
 /// First 16 site-major codes. The first site does not depend on how many taxa follow.
 pub const PREVIEW: [u8; 16] = [2, 2, 3, 1, 1, 1, 2, 3, 1, 1, 2, 1, 1, 0, 1, 1];
 

@@ -52,8 +52,18 @@ pub fn open() -> Result<GpuContext, String> {
     .map_err(|error| format!("request_adapter: {error:?}"))?;
     let info = adapter.get_info();
     let available = adapter.limits();
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-        .map_err(|error| format!("request_device: {error:?}"))?;
+    // The WebGPU default storage binding is 128 MB. A 10,000-taxa f32 triangle is 200 MB.
+    // Ask for the adapter's own buffer limits; the H200 reports a 2 GB storage binding.
+    let mut required_limits = wgpu::Limits::default();
+    required_limits.max_storage_buffer_binding_size = available.max_storage_buffer_binding_size;
+    required_limits.max_buffer_size = required_limits
+        .max_buffer_size
+        .max(available.max_storage_buffer_binding_size as u64);
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits,
+        ..Default::default()
+    }))
+    .map_err(|error| format!("request_device: {error:?}"))?;
     device.on_uncaptured_error(Box::new(|error| panic!("wgpu: {error:?}")));
     let (naive_source, tiled_source) = {
         let path = gpu_gram::shader_path();

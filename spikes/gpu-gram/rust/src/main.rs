@@ -1,7 +1,8 @@
 //! Times the shared WGSL Gram and a platform BLAS on the four published shapes.
 //!
-//! `cargo run --release` writes `target/gpu-gram-report.json`. `--blas-only` is the one-thread
-//! child, so Accelerate or OpenBLAS sees its thread-count variable before it initializes.
+//! `cargo run --release` writes `target/gpu-gram-report.json`. `--large` times the three
+//! larger panels and writes `target/gpu-gram-large-report.json`. `--blas-only` is the
+//! one-thread child, so Accelerate or OpenBLAS sees its thread-count variable before it initializes.
 
 mod blas;
 mod gpu;
@@ -12,21 +13,35 @@ use std::process::Command;
 use std::time::Instant;
 
 use gpu_gram::{
-    dosage_checksum, dosage_gram, generate_dosages, PARK_MILLER_SEED, PANEL_COLUMNS, PREVIEW, SHAPES,
+    dosage_checksum, dosage_gram, generate_dosages, Shape, LARGE_SHAPES, PARK_MILLER_SEED, PANEL_COLUMNS,
+    PREVIEW, SHAPES,
 };
 
 use crate::blas::BlasInput;
 use crate::report::{AdapterReport, BlasRow, GpuRow, HostReport, Report, SizeReport};
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("--blas-only") {
-        let path = args.next().expect("--blas-only needs an output path");
-        write_one_thread(Path::new(&path));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let large = args.iter().any(|arg| arg == "--large");
+    let shapes: &[Shape] = if large { &LARGE_SHAPES } else { &SHAPES };
+    if args.first().map(String::as_str) == Some("--print-checksums") {
+        for shape in shapes {
+            let codes = generate_dosages(shape.taxa, shape.sites, PARK_MILLER_SEED);
+            println!("{}x{} {}", shape.taxa, shape.sites, dosage_checksum(&codes));
+        }
         return;
     }
+    if args.first().map(String::as_str) == Some("--blas-only") {
+        let path = args.get(1).expect("--blas-only needs an output path");
+        write_one_thread(Path::new(path), shapes);
+        return;
+    }
+    if args.iter().any(|arg| arg != "--large") {
+        panic!("unknown argument: {}", args.iter().find(|arg| arg.as_str() != "--large").unwrap());
+    }
 
-    let report_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/gpu-gram-report.json");
+    let report_name = if large { "gpu-gram-large-report.json" } else { "gpu-gram-report.json" };
+    let report_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join(report_name);
     std::fs::create_dir_all(report_path.parent().unwrap()).expect("target directory");
     let mut report = Report {
         host: host_report(),
@@ -71,7 +86,7 @@ fn main() {
     };
 
     let mut prepared = Vec::new();
-    for shape in SHAPES {
+    for shape in shapes {
         eprint!("{}x{}: generating dosages... ", shape.taxa, shape.sites);
         let codes = generate_dosages(shape.taxa, shape.sites, PARK_MILLER_SEED);
         let checksum = dosage_checksum(&codes);
@@ -150,14 +165,15 @@ fn main() {
     }
     drop(prepared);
 
-    let one_thread_path = report_path.with_file_name("blas-1thread.txt");
+    let one_thread_name = if large { "blas-1thread-large.txt" } else { "blas-1thread.txt" };
+    let one_thread_path = report_path.with_file_name(one_thread_name);
     eprintln!("{blas_name}, {thread_env}=1");
-    let status = Command::new(std::env::current_exe().expect("current exe"))
-        .arg("--blas-only")
-        .arg(&one_thread_path)
-        .env(thread_env, "1")
-        .status()
-        .expect("spawn one-thread blas");
+    let mut child = Command::new(std::env::current_exe().expect("current exe"));
+    child.arg("--blas-only").arg(&one_thread_path);
+    if large {
+        child.arg("--large");
+    }
+    let status = child.env(thread_env, "1").status().expect("spawn one-thread blas");
     assert!(status.success(), "one-thread blas exited {status}");
     let text = std::fs::read_to_string(&one_thread_path).expect("one-thread blas output");
     for (taxa, sites, outcome) in blas::parse_lines(&text) {
@@ -224,10 +240,10 @@ fn blas_row(outcome: blas::BlasOutcome) -> BlasRow {
     }
 }
 
-fn write_one_thread(path: &Path) {
+fn write_one_thread(path: &Path, shapes: &[Shape]) {
     eprintln!("{}", blas::library_line());
     let mut outcomes = Vec::new();
-    for shape in SHAPES {
+    for shape in shapes {
         let codes = generate_dosages(shape.taxa, shape.sites, PARK_MILLER_SEED);
         let reference = load_reference(shape.taxa, shape.sites);
         eprintln!("one-thread {}x{}", shape.taxa, shape.sites);

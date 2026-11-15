@@ -76,6 +76,19 @@ checksum = checksum * 131 + code
 | 1,000 | 100,000 | 3888745768927589105 |
 | 5,000 | 20,000 | 6644050518704627923 |
 
+`cargo run --release -- --large` times three larger panels and writes
+`spikes/gpu-gram/rust/target/gpu-gram-large-report.json`. These stay out of `SHAPES` and out of
+the Kotlin browser list. A 10,000-taxa f32 triangle is 200 MB, above the WebGPU default 128 MB
+storage binding, so the harness requests the adapter's buffer limits. The sizes match common
+kinship panels: an Ames-scale diversity set, a large training population, and a wide
+genomic-selection set. The bytes are still the Park-Miller generator above, not a VCF.
+
+| Taxa | Sites | Checksum | What it stands in for |
+|------|------:|----------|------------------------|
+| 2,815 | 1,000,000 | 8550447608615587593 | Ames-scale diversity panel |
+| 5,000 | 500,000 | 14819543007493590618 | large recombinant-inbred or training population |
+| 10,000 | 100,000 | 15056641793485750855 | wide genomic-selection training set |
+
 The first 16 codes of any of those shapes (the first site does not depend on later taxa) are
 `2, 2, 3, 1, 1, 1, 2, 3, 1, 1, 2, 1, 1, 0, 1, 1`.
 
