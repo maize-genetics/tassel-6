@@ -76,6 +76,19 @@ checksum = checksum * 131 + code
 | 1,000 | 100,000 | 3888745768927589105 |
 | 5,000 | 20,000 | 6644050518704627923 |
 
+`cargo run --release -- --large` times three larger panels and writes
+`spikes/gpu-gram/rust/target/gpu-gram-large-report.json`. These stay out of `SHAPES` and out of
+the Kotlin browser list. A 10,000-taxa f32 triangle is 200 MB, above the WebGPU default 128 MB
+storage binding, so the harness requests the adapter's buffer limits. The sizes match common
+kinship panels: an Ames-scale diversity set, a large training population, and a wide
+genomic-selection set. The bytes are still the Park-Miller generator above, not a VCF.
+
+| Taxa | Sites | Checksum | What it stands in for |
+|------|------:|----------|------------------------|
+| 2,815 | 1,000,000 | 8550447608615587593 | Ames-scale diversity panel |
+| 5,000 | 500,000 | 14819543007493590618 | large recombinant-inbred or training population |
+| 10,000 | 100,000 | 15056641793485750855 | wide genomic-selection training set |
+
 The first 16 codes of any of those shapes (the first site does not depend on later taxa) are
 `2, 2, 3, 1, 1, 1, 2, 3, 1, 1, 2, 1, 1, 0, 1, 1`.
 
@@ -122,6 +135,73 @@ error beside a small absolute error is a near-zero reference pair.
 Break-even in the JSON is the set of shapes where the fastest linear-memory f32 dosage Gram
 beats the wasm CPU median, excluding one-time adapter and pipeline setup. `none` is a valid
 answer.
+
+## Rust harness
+
+Issue #113. This crate is not part of `./gradlew check` or CI. It links `wgpu` 26.0.1,
+`pollster`, and `bytemuck`, and calls `cblas_dsyrk` and `cblas_ssyrk` directly. macOS links
+Accelerate. Windows and Linux link OpenBLAS. On Windows, `OPENBLAS_LIB_DIR` is the directory that contains
+`openblas.lib`, and `PATH` must include `libopenblas.dll`. Linux links the system LP64
+library `libopenblas.so` (`-lopenblas`), not the ILP64 `libopenblas64`. The Windows zip's
+`libopenblas.lib` is a GNU archive; `openblas.lib` is an MSVC import library for
+`libopenblas.dll`. OpenBLAS is not a crate
+dependency and is not shipped from `tassel-core`, `tassel-cli`, or `tassel-app`.
+`wgpu` 27.0.1 needs Rust 1.88, so the harness stays on the 1.87.0 toolchain named in the issue.
+`rust-toolchain.toml` pins that toolchain.
+
+The runner reads `../wgsl/gram_f32.wgsl` and splits it on `// @@NAIVE` and `// @@TILED`. It
+checks the four checksums and the first 16 dosage codes above, then times both entry points
+with f32 accumulation on dosage panels. One warm-up is discarded and the median of 3 uses the
+same rank as `tassel dev kinship-bench`. The BLAS timing is one full `syrk` of the column-major
+dosage matrix (missing stored as 0), at the default pool and again in a child process with
+`VECLIB_MAXIMUM_THREADS=1` on macOS or `OPENBLAS_NUM_THREADS=1` on Windows and Linux. `cargo test` on
+those systems includes a 2 by 2 Gram check for both precisions. That test calls the linked
+library. It does not open a GPU.
+
+```bash
+cd spikes/gpu-gram/rust
+cargo test
+cargo run --release
+```
+
+`cargo test` does not open a GPU. `cargo run --release` writes
+`spikes/gpu-gram/rust/target/gpu-gram-report.json`. That `target/` directory is gitignored.
+
+A release build for `wasm32-unknown-unknown` is optional and is not timed. On this machine it
+produced a 1,447,390-byte `.wasm` that imports the browser's WebGPU through `wasm-bindgen` and
+`web-sys`. It was not run, so it is not a speed measurement.
+
+## Kinship shapes that are not bench datasets
+
+`scripts/bench/run-benchmarks.sh --only kinship-kernel` already times the tutorial file
+(281 x 3,093) and `synthetic-100k` (1,000 x 100,000). The other two Gram shapes use the same
+commands, with HapMap from `tassel dev simulate --seed 0`. That draw is not the Park-Miller
+dosage matrix above. Build the CLI and the pinned TASSEL 5 jar by running the bench script
+once, then:
+
+```bash
+TASSEL=tassel-cli/build/install/tassel/bin/tassel
+T5=build/bench/tassel-5-standalone-v5.2.98/sTASSEL.jar
+WORK=build/bench/work
+JAVA="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+
+"$TASSEL" --quiet dev simulate --taxa 1000 --sites 10000 --seed 0 --output "$WORK/sim_1000x10000.hmp.txt"
+"$TASSEL" --quiet dev simulate --taxa 5000 --sites 20000 --seed 0 --output "$WORK/sim_5000x20000.hmp.txt"
+"$TASSEL" --quiet dev kinship-bench --input "$WORK/sim_1000x10000.hmp.txt" --runs 3
+"$TASSEL" --quiet dev kinship-bench --input "$WORK/sim_5000x20000.hmp.txt" --runs 3
+```
+
+TASSEL 5 is the pipeline, median of 3 after one discarded warm-up, at `-maxThreads` 1, 4, and 8.
+Startup and the HapMap read stay in the number. `-Xmx8g`, and the export is `SqrMatrix`:
+
+```bash
+"$JAVA" -Xmx8g -cp "$T5" net.maizegenetics.pipeline.TasselPipeline \
+  -maxThreads 1 -h "$WORK/sim_1000x10000.hmp.txt" \
+  -KinshipPlugin -method Centered_IBS -endPlugin \
+  -export "$WORK/t5_1000x10000_k1" -exportType SqrMatrix
+```
+
+Repeat for `-maxThreads` 4 and 8, and for `sim_5000x20000.hmp.txt`.
 
 ## Report fields
 
