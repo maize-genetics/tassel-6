@@ -44,10 +44,11 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param engine the engine analyses run on. The UI never calls an analysis directly.
  * @param results where an exported result is written on this target.
  * @param scope the scope loads and runs happen in; it should live as long as the screen.
- * @param readContext the context HapMap parsing runs on. Desktop passes a background dispatcher. The browser has
+ * @param readContext the context genotype parsing runs on. Desktop passes a background dispatcher. The browser has
  *   one thread and no worker here, so it passes [EmptyCoroutineContext] and the parse runs on the UI thread,
  *   giving it back at every progress report (ADR-0019) so the page keeps drawing.
- * @param openIndexed opens a bgzipped VCF with its index. Tests pass a fake so the region step needs no BGZF bytes.
+ * @param openIndexed opens a bgzipped VCF or BCF with its index. Tests pass a fake so the region step needs no
+ *   BGZF bytes.
  */
 class AppViewModel internal constructor(
     private val files: GenotypeFiles,
@@ -67,7 +68,7 @@ class AppViewModel internal constructor(
     private var export: Job? = null
     private var nextId = 1L
 
-    /** The indexed VCF behind [RegionPrompt], open until Load, Cancel, or another file replaces it. */
+    /** The indexed VCF or BCF behind [RegionPrompt], open until Load, Cancel, or another file replaces it. */
     private var session: RegionSource? = null
 
     /** Handles the engine issued for each dataset, so a second analysis of the same data uploads nothing again. */
@@ -110,10 +111,10 @@ class AppViewModel internal constructor(
     /**
      * Reads the files [choose] returns, if any.
      *
-     * A HapMap or plain VCF is added to the tree. A bgzipped VCF is opened with its index and the region step is
-     * shown; the sites are read later, from [confirmRegion]. One load at a time: a second request cancels the first,
-     * so a user who picks another file while a big one is parsing does not leave two readers competing for the
-     * browser's single thread.
+     * A HapMap, plain VCF, or whole BCF is added to the tree. A bgzipped VCF with its index, or a BCF with its
+     * `.csi`, opens the region step; the sites are read later, from [confirmRegion]. One load at a time: a second
+     * request cancels the first, so a user who picks another file while a big one is parsing does not leave two
+     * readers competing for the browser's single thread.
      */
     private fun open(choose: suspend () -> List<GenotypeFile>?) {
         load?.cancel()
@@ -204,7 +205,7 @@ class AppViewModel internal constructor(
         }
     }
 
-    /** Closes the region step and the indexed VCF behind it. No dataset is added. */
+    /** Closes the region step and the indexed file behind it. No dataset is added. */
     private fun cancelRegion() {
         closeSession()
         mutate { copy(region = null) }
