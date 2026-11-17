@@ -2,11 +2,12 @@ package net.maizegenetics.tassel.testing
 
 /**
  * Parsed `testdata/htslib/MANIFEST`, written by `scripts/generate-htslib-fixtures.sh`
- * (ADR-0021, tassel-6#80).
+ * (ADR-0021, tassel-6#80; BCF fixtures, ADR-0022, tassel-6#118).
  *
  * The format matches `testdata/golden/MANIFEST`: `[section]` headers, `key = value` lines,
- * and `#` comments. `command` and `file` may repeat. A `file` value is a path relative to
- * `testdata/`.
+ * and `#` comments. `command`, `file`, and `identical` may repeat. A `file` value is a path
+ * relative to `testdata/`. An `identical` value is a path whose bytes matched a BCF region
+ * query, so the body is not stored again.
  */
 class HtslibManifest(val sections: Map<String, Section>) {
     class Section(
@@ -14,6 +15,7 @@ class HtslibManifest(val sections: Map<String, Section>) {
         val properties: Map<String, String>,
         val commands: List<String>,
         val files: List<String>,
+        val identical: List<String>,
     ) {
         operator fun get(key: String): String = properties[key] ?: error("[$name] has no '$key'")
     }
@@ -34,11 +36,12 @@ class HtslibManifest(val sections: Map<String, Section>) {
             var properties = linkedMapOf<String, String>()
             var commands = mutableListOf<String>()
             var files = mutableListOf<String>()
+            var identical = mutableListOf<String>()
 
             fun finish() {
                 val current = name ?: return
                 require(current !in sections) { "MANIFEST repeats section [$current]" }
-                sections[current] = Section(current, properties, commands, files)
+                sections[current] = Section(current, properties, commands, files, identical)
             }
 
             for ((index, raw) in text.lines().withIndex()) {
@@ -50,6 +53,7 @@ class HtslibManifest(val sections: Map<String, Section>) {
                     properties = linkedMapOf()
                     commands = mutableListOf()
                     files = mutableListOf()
+                    identical = mutableListOf()
                     continue
                 }
                 val separator = line.indexOf(" = ")
@@ -61,6 +65,7 @@ class HtslibManifest(val sections: Map<String, Section>) {
                 when (key) {
                     "command" -> commands += value
                     "file" -> files += value
+                    "identical" -> identical += value
                     else -> {
                         require(key !in properties) { "MANIFEST section [$name] repeats '$key'" }
                         properties[key] = value
