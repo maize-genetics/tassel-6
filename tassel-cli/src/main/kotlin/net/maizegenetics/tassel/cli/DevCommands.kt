@@ -1,6 +1,7 @@
 package net.maizegenetics.tassel.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
@@ -19,9 +20,11 @@ import net.maizegenetics.tassel.genotype.Allele
 import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
+import net.maizegenetics.tassel.io.Bcf
 import net.maizegenetics.tassel.io.BgzfReader
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.RandomAccessSource
+import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.bgzfWorkerCount
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
@@ -201,6 +204,54 @@ class VcfRegionBench : CliktCommand(name = "vcf-region-bench") {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Times one whole-file [Bcf.read] or [Vcf.read].
+ *
+ * Not an analysis: hand-written, like [BgzfBench]. The printed median is the read after one discarded
+ * warm-up, so it does not include JVM startup. Pass exactly one of `--bcf` and `--vcf`.
+ */
+class BcfBench : CliktCommand(name = "bcf-bench") {
+    override fun help(context: Context): String =
+        "Time Bcf.read of one BCF, or Vcf.read of one bgzipped VCF, after one discarded warm-up"
+
+    private val bcf by option("--bcf", help = "BGZF BCF read with Bcf.read", metavar = "PATH")
+    private val vcf by option("--vcf", help = "bgzipped VCF read with Vcf.read", metavar = "PATH")
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+
+    override fun run() = cliRun {
+        val bcfPath = bcf
+        val vcfPath = vcf
+        if ((bcfPath == null) == (vcfPath == null)) {
+            throw CliktError("Pass exactly one of --bcf and --vcf", statusCode = EXIT_USER_ERROR)
+        }
+        val path = bcfPath ?: checkNotNull(vcfPath)
+        val reader = if (bcfPath != null) "bcf" else "vcf"
+        runBlocking {
+            openRandomAccessSource(path).use { source ->
+                val seconds = DoubleArray(runs)
+                var sites = 0
+                repeat(runs + 1) { iteration ->
+                    val started = TimeSource.Monotonic.markNow()
+                    sites = if (bcfPath != null) {
+                        Bcf.read(source).table.numberOfSites
+                    } else {
+                        Vcf.read(source).table.numberOfSites
+                    }
+                    val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+                    if (iteration > 0) seconds[iteration - 1] = elapsed
+                }
+                seconds.sort()
+                val medianAt = (runs + 1) / 2 - 1
+                echo(
+                    "sites=$sites reader=$reader min=${formatSeconds(seconds.first())} " +
+                        "median=${formatSeconds(seconds[medianAt])}",
+                )
             }
         }
     }

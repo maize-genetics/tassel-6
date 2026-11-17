@@ -187,7 +187,7 @@ private fun Source.readExact(count: Int): ByteArray {
     return out
 }
 
-private fun ByteArray.uint32Le(at: Int): Long = (this[at].toLong() and 0xff) or
+internal fun ByteArray.uint32Le(at: Int): Long = (this[at].toLong() and 0xff) or
     ((this[at + 1].toLong() and 0xff) shl 8) or
     ((this[at + 2].toLong() and 0xff) shl 16) or
     ((this[at + 3].toLong() and 0xff) shl 24)
@@ -200,8 +200,8 @@ private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
     return true
 }
 
-private const val BCF_MAGIC_LENGTH = 5
-private const val UINT32_BYTES = 4
+internal const val BCF_MAGIC_LENGTH = 5
+internal const val UINT32_BYTES = 4
 private const val BCF_MAJOR: Byte = 2
 private const val BCF_MINOR: Byte = 2
 private val BCF_LETTERS = "BCF".encodeToByteArray()

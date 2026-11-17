@@ -197,6 +197,32 @@ discards them.
 | TASSEL 6 | region `chr3B` | region .vcf.gz | 16.87 s | 3487 MiB |
 | htslib | region `chr3B` | region .vcf.gz | 10.45 s | 107 MiB |
 
+The same loadable VCF, converted with `bcftools view --no-version -Ob`, compared in-process.
+`scripts/bench/run-benchmarks.sh --only vcf` prints these two rows after the table above. The clock
+is `tassel dev bcf-bench`: one warm-up discarded, JVM startup excluded, `-Xmx8g`. The `.bcf` row is
+`Bcf.read` of the BGZF file. The `.vcf.gz` row is `Vcf.read` of the bgzipped VCF, not the CLI row
+above, which also writes HapMap.
+
+The BCF is 429,114,980 bytes (0.40 GiB). `Bcf.read` took 25.40 s and `Vcf.read` took 8.38 s. The
+BCF reader rebuilds each genotype as the text `Vcf.read` would parse, so this gap is the decode,
+not inflate. A direct GT path is left for a follow-up.
+
+| | |
+|---|---|
+| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
+| JDK | 25.0.4.1, `-Xmx8g` |
+| TASSEL 6 | 6.0.0-alpha.1 on `feature/123-read-bcf` |
+| htslib | 1.25 (`bcftools view --no-version -Ob`) |
+| Runs | Median of 3, after one warm-up run that is discarded |
+
+| Tool | Read | Input | Median | Peak |
+|------|------|-------|-------:|-----:|
+| TASSEL 6 | whole-file read | loadable .bcf | 25.40 s | 5469 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | 8.38 s | 6690 MiB |
+
+`sites=1000000 reader=bcf min=25.291980 median=25.402351` and
+`sites=1000000 reader=vcf min=8.297233 median=8.375704`.
+
 ## Known limits
 
 ### Centered IBS at scale
