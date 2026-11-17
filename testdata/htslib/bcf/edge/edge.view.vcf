@@ -1,0 +1,147 @@
+##fileformat=VCFv4.3
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=chr1,length=1000>
+##FILTER=<ID=q10,Description="qual">
+##INFO=<ID=I8,Number=1,Type=Integer,Description="int8">
+##INFO=<ID=I16,Number=1,Type=Integer,Description="int16">
+##INFO=<ID=I32,Number=1,Type=Integer,Description="int32">
+##INFO=<ID=FL,Number=1,Type=Float,Description="float">
+##INFO=<ID=K000,Number=1,Type=Integer,Description="dict 0">
+##INFO=<ID=K001,Number=1,Type=Integer,Description="dict 1">
+##INFO=<ID=K002,Number=1,Type=Integer,Description="dict 2">
+##INFO=<ID=K003,Number=1,Type=Integer,Description="dict 3">
+##INFO=<ID=K004,Number=1,Type=Integer,Description="dict 4">
+##INFO=<ID=K005,Number=1,Type=Integer,Description="dict 5">
+##INFO=<ID=K006,Number=1,Type=Integer,Description="dict 6">
+##INFO=<ID=K007,Number=1,Type=Integer,Description="dict 7">
+##INFO=<ID=K008,Number=1,Type=Integer,Description="dict 8">
+##INFO=<ID=K009,Number=1,Type=Integer,Description="dict 9">
+##INFO=<ID=K010,Number=1,Type=Integer,Description="dict 10">
+##INFO=<ID=K011,Number=1,Type=Integer,Description="dict 11">
+##INFO=<ID=K012,Number=1,Type=Integer,Description="dict 12">
+##INFO=<ID=K013,Number=1,Type=Integer,Description="dict 13">
+##INFO=<ID=K014,Number=1,Type=Integer,Description="dict 14">
+##INFO=<ID=K015,Number=1,Type=Integer,Description="dict 15">
+##INFO=<ID=K016,Number=1,Type=Integer,Description="dict 16">
+##INFO=<ID=K017,Number=1,Type=Integer,Description="dict 17">
+##INFO=<ID=K018,Number=1,Type=Integer,Description="dict 18">
+##INFO=<ID=K019,Number=1,Type=Integer,Description="dict 19">
+##INFO=<ID=K020,Number=1,Type=Integer,Description="dict 20">
+##INFO=<ID=K021,Number=1,Type=Integer,Description="dict 21">
+##INFO=<ID=K022,Number=1,Type=Integer,Description="dict 22">
+##INFO=<ID=K023,Number=1,Type=Integer,Description="dict 23">
+##INFO=<ID=K024,Number=1,Type=Integer,Description="dict 24">
+##INFO=<ID=K025,Number=1,Type=Integer,Description="dict 25">
+##INFO=<ID=K026,Number=1,Type=Integer,Description="dict 26">
+##INFO=<ID=K027,Number=1,Type=Integer,Description="dict 27">
+##INFO=<ID=K028,Number=1,Type=Integer,Description="dict 28">
+##INFO=<ID=K029,Number=1,Type=Integer,Description="dict 29">
+##INFO=<ID=K030,Number=1,Type=Integer,Description="dict 30">
+##INFO=<ID=K031,Number=1,Type=Integer,Description="dict 31">
+##INFO=<ID=K032,Number=1,Type=Integer,Description="dict 32">
+##INFO=<ID=K033,Number=1,Type=Integer,Description="dict 33">
+##INFO=<ID=K034,Number=1,Type=Integer,Description="dict 34">
+##INFO=<ID=K035,Number=1,Type=Integer,Description="dict 35">
+##INFO=<ID=K036,Number=1,Type=Integer,Description="dict 36">
+##INFO=<ID=K037,Number=1,Type=Integer,Description="dict 37">
+##INFO=<ID=K038,Number=1,Type=Integer,Description="dict 38">
+##INFO=<ID=K039,Number=1,Type=Integer,Description="dict 39">
+##INFO=<ID=K040,Number=1,Type=Integer,Description="dict 40">
+##INFO=<ID=K041,Number=1,Type=Integer,Description="dict 41">
+##INFO=<ID=K042,Number=1,Type=Integer,Description="dict 42">
+##INFO=<ID=K043,Number=1,Type=Integer,Description="dict 43">
+##INFO=<ID=K044,Number=1,Type=Integer,Description="dict 44">
+##INFO=<ID=K045,Number=1,Type=Integer,Description="dict 45">
+##INFO=<ID=K046,Number=1,Type=Integer,Description="dict 46">
+##INFO=<ID=K047,Number=1,Type=Integer,Description="dict 47">
+##INFO=<ID=K048,Number=1,Type=Integer,Description="dict 48">
+##INFO=<ID=K049,Number=1,Type=Integer,Description="dict 49">
+##INFO=<ID=K050,Number=1,Type=Integer,Description="dict 50">
+##INFO=<ID=K051,Number=1,Type=Integer,Description="dict 51">
+##INFO=<ID=K052,Number=1,Type=Integer,Description="dict 52">
+##INFO=<ID=K053,Number=1,Type=Integer,Description="dict 53">
+##INFO=<ID=K054,Number=1,Type=Integer,Description="dict 54">
+##INFO=<ID=K055,Number=1,Type=Integer,Description="dict 55">
+##INFO=<ID=K056,Number=1,Type=Integer,Description="dict 56">
+##INFO=<ID=K057,Number=1,Type=Integer,Description="dict 57">
+##INFO=<ID=K058,Number=1,Type=Integer,Description="dict 58">
+##INFO=<ID=K059,Number=1,Type=Integer,Description="dict 59">
+##INFO=<ID=K060,Number=1,Type=Integer,Description="dict 60">
+##INFO=<ID=K061,Number=1,Type=Integer,Description="dict 61">
+##INFO=<ID=K062,Number=1,Type=Integer,Description="dict 62">
+##INFO=<ID=K063,Number=1,Type=Integer,Description="dict 63">
+##INFO=<ID=K064,Number=1,Type=Integer,Description="dict 64">
+##INFO=<ID=K065,Number=1,Type=Integer,Description="dict 65">
+##INFO=<ID=K066,Number=1,Type=Integer,Description="dict 66">
+##INFO=<ID=K067,Number=1,Type=Integer,Description="dict 67">
+##INFO=<ID=K068,Number=1,Type=Integer,Description="dict 68">
+##INFO=<ID=K069,Number=1,Type=Integer,Description="dict 69">
+##INFO=<ID=K070,Number=1,Type=Integer,Description="dict 70">
+##INFO=<ID=K071,Number=1,Type=Integer,Description="dict 71">
+##INFO=<ID=K072,Number=1,Type=Integer,Description="dict 72">
+##INFO=<ID=K073,Number=1,Type=Integer,Description="dict 73">
+##INFO=<ID=K074,Number=1,Type=Integer,Description="dict 74">
+##INFO=<ID=K075,Number=1,Type=Integer,Description="dict 75">
+##INFO=<ID=K076,Number=1,Type=Integer,Description="dict 76">
+##INFO=<ID=K077,Number=1,Type=Integer,Description="dict 77">
+##INFO=<ID=K078,Number=1,Type=Integer,Description="dict 78">
+##INFO=<ID=K079,Number=1,Type=Integer,Description="dict 79">
+##INFO=<ID=K080,Number=1,Type=Integer,Description="dict 80">
+##INFO=<ID=K081,Number=1,Type=Integer,Description="dict 81">
+##INFO=<ID=K082,Number=1,Type=Integer,Description="dict 82">
+##INFO=<ID=K083,Number=1,Type=Integer,Description="dict 83">
+##INFO=<ID=K084,Number=1,Type=Integer,Description="dict 84">
+##INFO=<ID=K085,Number=1,Type=Integer,Description="dict 85">
+##INFO=<ID=K086,Number=1,Type=Integer,Description="dict 86">
+##INFO=<ID=K087,Number=1,Type=Integer,Description="dict 87">
+##INFO=<ID=K088,Number=1,Type=Integer,Description="dict 88">
+##INFO=<ID=K089,Number=1,Type=Integer,Description="dict 89">
+##INFO=<ID=K090,Number=1,Type=Integer,Description="dict 90">
+##INFO=<ID=K091,Number=1,Type=Integer,Description="dict 91">
+##INFO=<ID=K092,Number=1,Type=Integer,Description="dict 92">
+##INFO=<ID=K093,Number=1,Type=Integer,Description="dict 93">
+##INFO=<ID=K094,Number=1,Type=Integer,Description="dict 94">
+##INFO=<ID=K095,Number=1,Type=Integer,Description="dict 95">
+##INFO=<ID=K096,Number=1,Type=Integer,Description="dict 96">
+##INFO=<ID=K097,Number=1,Type=Integer,Description="dict 97">
+##INFO=<ID=K098,Number=1,Type=Integer,Description="dict 98">
+##INFO=<ID=K099,Number=1,Type=Integer,Description="dict 99">
+##INFO=<ID=K100,Number=1,Type=Integer,Description="dict 100">
+##INFO=<ID=K101,Number=1,Type=Integer,Description="dict 101">
+##INFO=<ID=K102,Number=1,Type=Integer,Description="dict 102">
+##INFO=<ID=K103,Number=1,Type=Integer,Description="dict 103">
+##INFO=<ID=K104,Number=1,Type=Integer,Description="dict 104">
+##INFO=<ID=K105,Number=1,Type=Integer,Description="dict 105">
+##INFO=<ID=K106,Number=1,Type=Integer,Description="dict 106">
+##INFO=<ID=K107,Number=1,Type=Integer,Description="dict 107">
+##INFO=<ID=K108,Number=1,Type=Integer,Description="dict 108">
+##INFO=<ID=K109,Number=1,Type=Integer,Description="dict 109">
+##INFO=<ID=K110,Number=1,Type=Integer,Description="dict 110">
+##INFO=<ID=K111,Number=1,Type=Integer,Description="dict 111">
+##INFO=<ID=K112,Number=1,Type=Integer,Description="dict 112">
+##INFO=<ID=K113,Number=1,Type=Integer,Description="dict 113">
+##INFO=<ID=K114,Number=1,Type=Integer,Description="dict 114">
+##INFO=<ID=K115,Number=1,Type=Integer,Description="dict 115">
+##INFO=<ID=K116,Number=1,Type=Integer,Description="dict 116">
+##INFO=<ID=K117,Number=1,Type=Integer,Description="dict 117">
+##INFO=<ID=K118,Number=1,Type=Integer,Description="dict 118">
+##INFO=<ID=K119,Number=1,Type=Integer,Description="dict 119">
+##INFO=<ID=K120,Number=1,Type=Integer,Description="dict 120">
+##INFO=<ID=K121,Number=1,Type=Integer,Description="dict 121">
+##INFO=<ID=K122,Number=1,Type=Integer,Description="dict 122">
+##INFO=<ID=K123,Number=1,Type=Integer,Description="dict 123">
+##INFO=<ID=K124,Number=1,Type=Integer,Description="dict 124">
+##INFO=<ID=K125,Number=1,Type=Integer,Description="dict 125">
+##INFO=<ID=K126,Number=1,Type=Integer,Description="dict 126">
+##INFO=<ID=K127,Number=1,Type=Integer,Description="dict 127">
+##INFO=<ID=K128,Number=1,Type=Integer,Description="dict 128">
+##INFO=<ID=K129,Number=1,Type=Integer,Description="dict 129">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=F8,Number=1,Type=Integer,Description="int8">
+##FORMAT=<ID=F16,Number=1,Type=Integer,Description="int16">
+##FORMAT=<ID=F32,Number=1,Type=Integer,Description="int32">
+##FORMAT=<ID=FF,Number=1,Type=Float,Description="float">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	s1	s2
+chr1	10	.	A	C	.	PASS	.	GT	0	1
+chr1	20	LONG_VARIANT_ID_16	A	C	.	.	I8=100;I16=200;I32=40000;FL=1.5;K129=7	GT:F8:F16:F32:FF	0:100:200:40000:1.5	0/1:101:201:40001:2.5
+chr1	30	.	A	AA0,AC1,AG2,AT3,AA4,AC5,AG6,AT7,AA8,AC9,AG10,AT11,AA12,AC13,AG14,AT15,AA16,AC17,AG18,AT19,AA20,AC21,AG22,AT23,AA24,AC25,AG26,AT27,AA28,AC29,AG30,AT31,AA32,AC33,AG34,AT35,AA36,AC37,AG38,AT39,AA40,AC41,AG42,AT43,AA44,AC45,AG46,AT47,AA48,AC49,AG50,AT51,AA52,AC53,AG54,AT55,AA56,AC57,AG58,AT59,AA60,AC61,AG62,AT63	.	PASS	.	GT	10/0	64/0
