@@ -203,25 +203,25 @@ is `tassel dev bcf-bench`: one warm-up discarded, JVM startup excluded, `-Xmx8g`
 `Bcf.read` of the BGZF file. The `.vcf.gz` row is `Vcf.read` of the bgzipped VCF, not the CLI row
 above, which also writes HapMap.
 
-The BCF is 429,114,980 bytes (0.40 GiB). `Bcf.read` took 25.40 s and `Vcf.read` took 8.38 s. The
-BCF reader rebuilds each genotype as the text `Vcf.read` would parse, so this gap is the decode,
-not inflate. A direct GT path is left for a follow-up.
+The BCF is 429,114,980 bytes (0.40 GiB). `Bcf.read` took 6.89 s and `Vcf.read` took 8.65 s.
+Genotypes are decoded from the integer block. A multi-digit allele index, a negative token, and
+every error still rebuild the ASCII `call` reads, so those records match the previous reader.
 
 | | |
 |---|---|
 | Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
 | JDK | 25.0.4.1, `-Xmx8g` |
-| TASSEL 6 | 6.0.0-alpha.1 on `feature/123-read-bcf` |
+| TASSEL 6 | 6.0.0-alpha.1 on `feature/145-bcf-direct-gt` |
 | htslib | 1.25 (`bcftools view --no-version -Ob`) |
 | Runs | Median of 3, after one warm-up run that is discarded |
 
 | Tool | Read | Input | Median | Peak |
 |------|------|-------|-------:|-----:|
-| TASSEL 6 | whole-file read | loadable .bcf | 25.40 s | 5469 MiB |
-| TASSEL 6 | whole-file read | loadable .vcf.gz | 8.38 s | 6690 MiB |
+| TASSEL 6 | whole-file read | loadable .bcf | 6.89 s | 5396 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | 8.65 s | 5422 MiB |
 
-`sites=1000000 reader=bcf min=25.291980 median=25.402351` and
-`sites=1000000 reader=vcf min=8.297233 median=8.375704`.
+`sites=1000000 reader=bcf min=6.791637 median=6.888574` and
+`sites=1000000 reader=vcf min=8.591694 median=8.649285`.
 
 ## Known limits
 
