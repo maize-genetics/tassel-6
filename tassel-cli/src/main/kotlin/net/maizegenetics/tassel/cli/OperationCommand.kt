@@ -49,7 +49,7 @@ class OperationCommand(
     private val registry: OperationRegistry = TasselOperations.registry,
 ) : CliktCommand(name = descriptor.id) {
     private val input = if (descriptor.inputType != "Unit") {
-        option("--input", "-i", help = "Genotype file to analyze (HapMap or VCF)", metavar = "PATH")
+        option("--input", "-i", help = "Genotype file to analyze (HapMap, VCF, or BCF)", metavar = "PATH")
             .required()
             .also { registerOption(it) }
     } else {
@@ -59,8 +59,9 @@ class OperationCommand(
     private val region = if (descriptor.inputType == "GenotypeTable") {
         option(
             "--region",
-            help = "Read one region of a bgzipped, indexed VCF, for example chr3B:600000000-650000000. " +
-                "A bare contig name reads that contig. Coordinates are 1-based and inclusive.",
+            help = "Read one region of a bgzipped, indexed VCF or BCF (.bcf), for example " +
+                "chr3B:600000000-650000000. A bare contig name reads that contig. Coordinates are " +
+                "1-based and inclusive. A BCF region needs a .csi.",
             metavar = "TEXT",
         ).also { registerOption(it) }
     } else {
@@ -70,7 +71,8 @@ class OperationCommand(
     private val index = if (descriptor.inputType == "GenotypeTable") {
         option(
             "--index",
-            help = "CSI or TBI index for --region. When omitted, look beside the VCF for .csi, then .tbi.",
+            help = "CSI or TBI index for --region. When omitted, look beside the VCF for .csi, then .tbi. " +
+                "A BCF uses .csi only.",
             metavar = "PATH",
         ).also { registerOption(it) }
     } else {

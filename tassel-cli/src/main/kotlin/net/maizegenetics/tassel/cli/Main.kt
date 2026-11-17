@@ -21,8 +21,8 @@ class Tassel : CliktCommand(name = "tassel") {
         versionOption(tasselVersion())
     }
 
-    override fun help(context: Context): String =
-        "TASSEL 6: genotype analysis. Every analysis subcommand is generated from its operation spec."
+    override fun help(context: Context): String = "TASSEL 6: genotype analysis. Reads HapMap, VCF, and BCF. " +
+        "Every analysis subcommand is generated from its operation spec."
 
     override fun run() {
         CliLog.quiet = quiet

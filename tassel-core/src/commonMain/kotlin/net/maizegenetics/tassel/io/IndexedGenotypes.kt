@@ -69,7 +69,7 @@ class IndexedGenotypes private constructor(private val reader: Reader) : AutoClo
          * that then takes over.
          */
         suspend fun open(data: RandomAccessSource, index: RandomAccessSource): IndexedGenotypes {
-            val reader = if (isBcf22(data)) {
+            val reader = if (data.isBcf22()) {
                 BcfReader(IndexedBcf.open(data, index))
             } else {
                 VcfReader(IndexedVcf.open(data, index))
@@ -85,10 +85,12 @@ class IndexedGenotypeRead(val table: GenotypeTable, val warnings: List<String>)
 /**
  * True when the inflated bytes at offset 0 are the BCF 2.2 magic.
  *
- * The peek reader is closed here. [exactBlocks] keeps the check from inflating past the first block.
+ * Call this only on a BGZF source ([isBgzf]). The peek reads one block and does not close [this],
+ * so a following [Bcf.read] or [IndexedGenotypes.open] can use the same source. This is the detector
+ * [IndexedGenotypes.open] uses; callers should not compare the magic bytes themselves (ADR-0022).
  */
-private suspend fun isBcf22(data: RandomAccessSource): Boolean {
-    val reader = BgzfReader(data)
+suspend fun RandomAccessSource.isBcf22(): Boolean {
+    val reader = BgzfReader(this)
     try {
         reader.exactBlocks(true)
         val magic = ByteArray(BCF_MAGIC_LENGTH)
