@@ -206,6 +206,13 @@ private const val BCF_MAJOR: Byte = 2
 private const val BCF_MINOR: Byte = 2
 private val BCF_LETTERS = "BCF".encodeToByteArray()
 
+/** True when [magic] is the BCF 2.2 magic, `BCF` followed by major 2 and minor 2. */
+internal fun isBcf22Magic(magic: ByteArray): Boolean {
+    if (magic.size < BCF_MAGIC_LENGTH) return false
+    if (!magic.startsWith(BCF_LETTERS)) return false
+    return magic[3] == BCF_MAJOR && magic[4] == BCF_MINOR
+}
+
 private const val FILTER = "FILTER"
 private const val INFO = "INFO"
 private const val FORMAT = "FORMAT"
