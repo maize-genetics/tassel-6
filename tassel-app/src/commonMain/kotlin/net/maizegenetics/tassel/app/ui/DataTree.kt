@@ -56,7 +56,7 @@ fun DataTree(state: AppState, onEvent: (AppEvent) -> Unit, modifier: Modifier = 
         HorizontalDivider()
         if (state.datasets.isEmpty()) {
             Text(
-                "No datasets yet. Load the tutorial dataset, or open a HapMap or VCF file.",
+                "No datasets yet. Load the tutorial dataset, or open a HapMap, VCF, or BCF file.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

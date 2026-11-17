@@ -2,9 +2,11 @@ package net.maizegenetics.tassel.app.data
 
 import net.maizegenetics.tassel.app.logAppMessage
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.io.IndexedGenotypes
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.RandomAccessSource
 import net.maizegenetics.tassel.io.VcfRegion
+import net.maizegenetics.tassel.io.isBcf22
 import net.maizegenetics.tassel.io.isBgzf
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.io.resolveContigName
@@ -14,9 +16,9 @@ import kotlin.time.TimeSource
 /**
  * What [resolveOpen] decided to do with one chooser result.
  *
- * [WholeFile] is HapMap, gzipped HapMap, or a plain VCF: the reader [GenotypeFile.readGenotypes] already has.
- * [Indexed] is a bgzipped VCF plus the index that belongs with it. [Rejected] is a missing or mismatched index,
- * reported in the UI before any read.
+ * [WholeFile] is HapMap, gzipped HapMap, a plain VCF, or a BCF with no index: the reader
+ * [GenotypeFile.readGenotypes] already has. [Indexed] is a bgzipped VCF plus its index, or a BCF plus its `.csi`.
+ * [Rejected] is a missing or mismatched index, reported in the UI before any read.
  */
 internal sealed interface OpenPlan {
     /** Read [file] from start to end. */
@@ -30,23 +32,33 @@ internal sealed interface OpenPlan {
 }
 
 /**
- * Pairs a bgzipped VCF with its index, or keeps a single genotype file on the whole-file path.
+ * Pairs a bgzipped VCF or a BCF with its index, or keeps a single genotype file on the whole-file path.
  *
- * Names are case-sensitive and the list order does not matter. A [GenotypeFile.index] already set on the `.vcf.gz`
+ * Names are case-sensitive and the list order does not matter. A [GenotypeFile.index] already set on the data file
  * wins, even when that index has some other name: that is the desktop sibling lookup and the CLI's `--index`.
- * Otherwise the index must be named `<data>.csi` or `<data>.tbi`. When both are picked, `.csi` wins and the `.tbi`
- * is ignored (ADR-0021). A `.vcf.gz` with no index is read whole, the same way a plain `.vcf` is. An unrelated extra
- * file is a mismatch.
+ * Otherwise a `.vcf.gz` index must be named `<data>.csi` or `<data>.tbi`, and a `.bcf` index must be named
+ * `<data>.csi`. When a VCF has both, `.csi` wins and the `.tbi` is ignored (ADR-0022). A `.tbi` beside a `.bcf` is
+ * not an index. A data file with no index is read whole. An unrelated extra file is a mismatch.
  */
 internal fun resolveOpen(files: List<GenotypeFile>): OpenPlan {
     if (files.isEmpty()) return OpenPlan.Rejected("", "No file was selected.")
-    val dataFiles = files.filter { it.name.endsWith(VCF_GZIP_EXTENSION) }
-    if (dataFiles.isEmpty()) {
+    val gzipped = files.filter { it.name.endsWith(VCF_GZIP_EXTENSION) }
+    val bcfs = files.filter { it.name.endsWith(BCF_EXTENSION) }
+    if (gzipped.isEmpty() && bcfs.isEmpty()) {
         if (files.size == 1) return OpenPlan.WholeFile(files[0])
-        return OpenPlan.Rejected(files[0].name, "Open one genotype file, or a .vcf.gz with its index.")
+        return OpenPlan.Rejected(files[0].name, "Open one genotype file, or a .vcf.gz or .bcf with its index.")
     }
-    if (dataFiles.size > 1) return OpenPlan.Rejected(dataFiles[0].name, "Open one .vcf.gz with its index.")
-    val data = dataFiles[0]
+    if (gzipped.size > 1) return OpenPlan.Rejected(gzipped[0].name, "Open one .vcf.gz with its index.")
+    if (bcfs.size > 1) return OpenPlan.Rejected(bcfs[0].name, "Open one .bcf with its index.")
+    if (gzipped.isNotEmpty() && bcfs.isNotEmpty()) {
+        return OpenPlan.Rejected(gzipped[0].name, "Open one genotype file, or a .vcf.gz or .bcf with its index.")
+    }
+    return pairIndex(gzipped.firstOrNull() ?: bcfs[0], files)
+}
+
+/** Attaches the index that belongs with [data], or keeps [data] on the whole-file path. */
+private fun pairIndex(data: GenotypeFile, files: List<GenotypeFile>): OpenPlan {
+    val bcf = data.name.endsWith(BCF_EXTENSION)
     val attached = data.index
     if (attached != null) {
         val extras = files.filter { it !== data && it !== attached && !it.isCompanionIndex(data.name) }
@@ -56,10 +68,10 @@ internal fun resolveOpen(files: List<GenotypeFile>): OpenPlan {
     val others = files.filter { it !== data }
     val csiName = data.name + CSI_EXTENSION
     val tbiName = data.name + TBI_EXTENSION
-    val unrelated = others.filter { it.name != csiName && it.name != tbiName }
+    val unrelated = others.filter { file -> file.name != csiName && (bcf || file.name != tbiName) }
     if (unrelated.isNotEmpty()) return mismatch(data, unrelated[0])
     val csi = others.filter { it.name == csiName }
-    val tbi = others.filter { it.name == tbiName }
+    val tbi = if (bcf) emptyList() else others.filter { it.name == tbiName }
     if (csi.size > 1 || tbi.size > 1) {
         return OpenPlan.Rejected(data.name, "More than one index was picked for ${data.name}.")
     }
@@ -110,17 +122,22 @@ internal fun indexMismatch(
 }
 
 /**
- * A bgzipped VCF opened with its index, ready for one region at a time.
+ * A bgzipped VCF or BCF opened with its index, ready for one region at a time.
  *
  * [openRegionSource] reads the header and the index. [read] reads one region. [close] closes the reader and both
  * sources. The view model holds one of these between the prompt and the load.
  */
 internal interface RegionSource : AutoCloseable {
-    /** File name of the VCF, without a directory. */
+    /** File name of the VCF or BCF, without a directory. */
     val fileName: String
 
-    /** Index contigs, in index order, with `##contig` lengths where the header has them. */
-    val contigs: List<IndexedVcf.Contig>
+    /**
+     * Contigs the pane lists.
+     *
+     * A VCF reports the index names. A BCF reports the header dictionary, which is why wheat `chr6D` is present
+     * for a BCF and absent for the sibling `.vcf.gz` (ADR-0022).
+     */
+    val contigs: List<IndexedGenotypes.Contig>
 
     /** The sites in [region]. The caller reports [progress]. */
     suspend fun read(region: VcfRegion, progress: ProgressReporter): GenotypeTable
@@ -129,9 +146,11 @@ internal interface RegionSource : AutoCloseable {
 /**
  * Opens [data] with [index] for a region read.
  *
- * Both must be random-access sources. [data] must be BGZF. A bad index, or an index whose contigs are not in the
- * header, closes both sources and throws [IllegalArgumentException]. The byte counter is reset after the header
- * read, so [RegionSource.read] counts only the region's slices.
+ * Both must be random-access sources. [data] must be BGZF. A `.bcf`, or any BGZF file [isBcf22] accepts, is opened
+ * with [IndexedGenotypes]. Anything else stays on [IndexedVcf], including the header-subset check a VCF index
+ * still has to pass. A bad index closes both sources and throws [IllegalArgumentException], with the same
+ * `cannot read index` wrapper either reader uses. The byte counter is reset after the header read, so
+ * [RegionSource.read] counts only the region's slices.
  */
 internal suspend fun openRegionSource(data: GenotypeFile, index: GenotypeFile): RegionSource {
     val raw = data.openRandomAccess()
@@ -148,26 +167,27 @@ internal suspend fun openRegionSource(data: GenotypeFile, index: GenotypeFile): 
         throw IllegalArgumentException("${index.name} cannot be read by region")
     }
     var handedOff = false
-    var opened: IndexedVcf? = null
+    var opened: AutoCloseable? = null
     try {
         if (!counted.isBgzf()) throw IllegalArgumentException("${data.name} is not bgzip compressed")
-        opened = try {
-            IndexedVcf.open(counted, indexSource)
-        } catch (failure: IllegalArgumentException) {
-            throw IllegalArgumentException(
-                "cannot read index ${index.name}: ${failure.message ?: "invalid index"}",
-                failure,
+        val session = if (data.name.endsWith(BCF_EXTENSION) || counted.isBcf22()) {
+            val genotypes = openIndexed(index.name) { IndexedGenotypes.open(counted, indexSource) }
+            opened = genotypes
+            counted.reset()
+            IndexedBcfRegionSource(data.name, genotypes, counted, indexSource)
+        } else {
+            val vcf = openIndexed(index.name) { IndexedVcf.open(counted, indexSource) }
+            opened = vcf
+            val mismatch = indexMismatch(
+                data.name,
+                index.name,
+                vcf.contigs.map { it.name },
+                vcf.headerContigIds,
             )
+            if (mismatch != null) throw IllegalArgumentException(mismatch)
+            counted.reset()
+            IndexedVcfRegionSource(data.name, vcf, counted, indexSource)
         }
-        val mismatch = indexMismatch(
-            data.name,
-            index.name,
-            opened.contigs.map { it.name },
-            opened.headerContigIds,
-        )
-        if (mismatch != null) throw IllegalArgumentException(mismatch)
-        counted.reset()
-        val session = IndexedRegionSource(data.name, opened, counted, indexSource)
         handedOff = true
         return session
     } finally {
@@ -177,6 +197,16 @@ internal suspend fun openRegionSource(data: GenotypeFile, index: GenotypeFile): 
             indexSource.close()
         }
     }
+}
+
+/** Wraps an unreadable index with the message the VCF path already shows. */
+private suspend fun <T> openIndexed(indexName: String, open: suspend () -> T): T = try {
+    open()
+} catch (failure: IllegalArgumentException) {
+    throw IllegalArgumentException(
+        "cannot read index $indexName: ${failure.message ?: "invalid index"}",
+        failure,
+    )
 }
 
 /**
@@ -217,25 +247,17 @@ internal class CountingRandomAccessSource(private val inner: RandomAccessSource)
     }
 }
 
-private class IndexedRegionSource(
+private class IndexedVcfRegionSource(
     override val fileName: String,
     private val indexed: IndexedVcf,
     private val data: CountingRandomAccessSource,
     private val index: RandomAccessSource,
 ) : RegionSource {
-    override val contigs: List<IndexedVcf.Contig> get() = indexed.contigs
+    override val contigs: List<IndexedGenotypes.Contig> =
+        indexed.contigs.map { IndexedGenotypes.Contig(it.name, it.length) }
 
-    override suspend fun read(region: VcfRegion, progress: ProgressReporter): GenotypeTable {
-        val started = TimeSource.Monotonic.markNow()
-        val table = indexed.read(region, progress).table
-        val elapsed = started.elapsedNow().inWholeMilliseconds
-        val offset = data.minimumOffset?.toString() ?: "none"
-        logAppMessage(
-            "region $fileName ${region.describe()} $elapsed ms " +
-                "bytes=${data.bytes} minOffset=$offset fileSize=${data.size}",
-        )
-        return table
-    }
+    override suspend fun read(region: VcfRegion, progress: ProgressReporter): GenotypeTable =
+        timedRegion(fileName, region, data) { indexed.read(region, progress).table }
 
     override fun close() {
         indexed.close()
@@ -244,14 +266,58 @@ private class IndexedRegionSource(
     }
 }
 
-private fun GenotypeFile.isCompanionIndex(dataName: String): Boolean =
-    name == dataName + CSI_EXTENSION || name == dataName + TBI_EXTENSION
+private class IndexedBcfRegionSource(
+    override val fileName: String,
+    private val indexed: IndexedGenotypes,
+    private val data: CountingRandomAccessSource,
+    private val index: RandomAccessSource,
+) : RegionSource {
+    override val contigs: List<IndexedGenotypes.Contig> get() = indexed.contigs
 
-private fun mismatch(data: GenotypeFile, other: GenotypeFile): OpenPlan.Rejected = OpenPlan.Rejected(
-    data.name,
-    "${data.name} and ${other.name} do not belong together. " +
-        "The index must be named ${data.name}.csi or ${data.name}.tbi.",
-)
+    override suspend fun read(region: VcfRegion, progress: ProgressReporter): GenotypeTable =
+        timedRegion(fileName, region, data) { indexed.read(region, progress).table }
+
+    override fun close() {
+        indexed.close()
+        data.close()
+        index.close()
+    }
+}
+
+private suspend fun timedRegion(
+    fileName: String,
+    region: VcfRegion,
+    data: CountingRandomAccessSource,
+    read: suspend () -> GenotypeTable,
+): GenotypeTable {
+    val started = TimeSource.Monotonic.markNow()
+    val table = read()
+    val elapsed = started.elapsedNow().inWholeMilliseconds
+    val offset = data.minimumOffset?.toString() ?: "none"
+    logAppMessage(
+        "region $fileName ${region.describe()} $elapsed ms " +
+            "bytes=${data.bytes} minOffset=$offset fileSize=${data.size}",
+    )
+    return table
+}
+
+/** A VCF accepts `.csi` and `.tbi`. A BCF accepts `.csi` only (ADR-0022). */
+private fun GenotypeFile.isCompanionIndex(dataName: String): Boolean = when {
+    dataName.endsWith(BCF_EXTENSION) -> name == dataName + CSI_EXTENSION
+    else -> name == dataName + CSI_EXTENSION || name == dataName + TBI_EXTENSION
+}
+
+private fun mismatch(data: GenotypeFile, other: GenotypeFile): OpenPlan.Rejected {
+    val expected = if (data.name.endsWith(BCF_EXTENSION)) {
+        "${data.name}.csi"
+    } else {
+        "${data.name}.csi or ${data.name}.tbi"
+    }
+    return OpenPlan.Rejected(
+        data.name,
+        "${data.name} and ${other.name} do not belong together. The index must be named $expected.",
+    )
+}
 
 /** `chr3B`, `chr3B:1000-2000`, `chr3B:1000-`, or `chr3B:1000`, the forms [parseVcfRegion] accepts. */
 private fun VcfRegion.describe(): String = when {

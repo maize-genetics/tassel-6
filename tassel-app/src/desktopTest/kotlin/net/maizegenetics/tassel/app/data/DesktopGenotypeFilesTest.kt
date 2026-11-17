@@ -8,14 +8,17 @@ import kotlinx.coroutines.withTimeout
 import net.maizegenetics.tassel.app.grid.GridWindow
 import net.maizegenetics.tassel.app.grid.readWindow
 import net.maizegenetics.tassel.app.theme.LightAlleleColors
+import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.ProgressReporter
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -70,6 +73,96 @@ class DesktopGenotypeFilesTest {
         } finally {
             java.io.File(dir.toString()).deleteRecursively()
         }
+    }
+
+    @Test
+    fun siblingIndexForABcfIsCsiOnly() {
+        val dir = Files.createTempDirectory("tassel-bcf-index")
+        try {
+            val bcf = dir.resolve("sample.bcf")
+            Files.write(bcf, byteArrayOf(1))
+            val tbi = dir.resolve("sample.bcf.tbi")
+            Files.write(tbi, byteArrayOf(1))
+            assertNull(siblingIndex(bcf.toString()))
+
+            val csi = dir.resolve("sample.bcf.csi")
+            Files.write(csi, byteArrayOf(1))
+            assertEquals(csi.toString(), siblingIndex(bcf.toString()))
+        } finally {
+            java.io.File(dir.toString()).deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aTutorialBcfMatchesThePlainVcf() = runTest {
+        val root = testDataRoot()
+        val plain = pathGenotypeFile("$root/tutorial/mdp_genotype_w_depth.vcf").readGenotypes()
+        val bcf = pathGenotypeFile("$root/htslib/bcf/tutorial/mdp_genotype_w_depth.bcf").readGenotypes()
+
+        assertEquals(281, bcf.numberOfTaxa)
+        assertEquals(3_093, bcf.numberOfSites)
+        assertSameTable(plain, bcf)
+    }
+
+    @Test
+    fun aRawBcfMatchesTheDecodedVcf() = runTest {
+        val root = testDataRoot()
+        val raw = pathGenotypeFile("$root/htslib/bcf/small/small.raw.bcf").readGenotypes()
+        val view = pathGenotypeFile("$root/htslib/bcf/small/small.view.vcf").readGenotypes()
+
+        assertSameTable(view, raw)
+    }
+
+    @Test
+    fun aBgzippedBcfWithAnUnusualNameIsStillBcf() = runTest {
+        val root = testDataRoot()
+        val dir = Files.createTempDirectory("tassel-bcf-alias")
+        try {
+            val alias = dir.resolve("notes.bin")
+            Files.copy(Path.of("$root/htslib/bcf/tutorial/mdp_genotype_w_depth.bcf"), alias)
+            val table = pathGenotypeFile(alias.toString()).readGenotypes()
+
+            assertEquals(281, table.numberOfTaxa)
+            assertEquals(3_093, table.numberOfSites)
+        } finally {
+            java.io.File(dir.toString()).deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aWheatBcfRegionMatchesIndexedVcfAndKeepsChr6d() = runTest {
+        val root = testDataRoot()
+        val dataPath = "$root/htslib/bcf/wheat/wheat.bcf"
+        val region = parseVcfRegion("chr3B:599000000-601000000")
+        val expected = openRandomAccessSource("$root/htslib/wheat/wheat.vcf.gz").use { data ->
+            openRandomAccessSource("$root/htslib/wheat/wheat.vcf.gz.csi").use { index ->
+                IndexedVcf.open(data, index).use { indexed -> indexed.read(region).table }
+            }
+        }
+
+        val actual = openRegionSource(pathGenotypeFile(dataPath), pathGenotypeFile("$dataPath.csi")).use { session ->
+            assertEquals(495_380_293L, session.contigs.first { it.name == "chr6D" }.length)
+            assertEquals(851_934_019L, session.contigs.first { it.name == "chr3B" }.length)
+            session.read(region, ProgressReporter.None)
+        }
+
+        assertTrue(actual.numberOfSites > 0)
+        assertSameTable(expected, actual)
+    }
+
+    @Test
+    fun aTbiForABcfIsRejectedWithTheVcfIndexMessage() = runTest {
+        val root = testDataRoot()
+        val dataPath = "$root/htslib/bcf/wheat/wheat.bcf"
+        val tbi = "$root/htslib/tutorial/mdp_genotype_w_depth.vcf.gz.tbi"
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            openRegionSource(pathGenotypeFile(dataPath), pathGenotypeFile(tbi))
+        }
+
+        assertTrue(failure.message!!.contains("cannot read index"))
+        assertTrue(failure.message!!.contains("TBI index already contains contig names"))
+        assertTrue(failure.message!!.contains("mdp_genotype_w_depth.vcf.gz.tbi"))
     }
 
     @Test
@@ -135,5 +228,18 @@ class DesktopGenotypeFilesTest {
         for (site in 0 until plain.numberOfSites) {
             assertContentEquals(plain.siteGenotypes(site), gzipped.siteGenotypes(site), "site $site")
         }
+    }
+}
+
+private fun testDataRoot(): String = System.getenv("TASSEL_TESTDATA_DIR")?.trimEnd('/')
+    ?: error("TASSEL_TESTDATA_DIR is not set; run tests through Gradle so it points at testdata/")
+
+private fun assertSameTable(expected: GenotypeTable, actual: GenotypeTable) {
+    assertEquals(expected.taxa.names, actual.taxa.names)
+    assertEquals(expected.numberOfSites, actual.numberOfSites)
+    for (site in 0 until expected.numberOfSites) {
+        assertEquals(expected.positions[site], actual.positions[site], "site $site")
+        assertEquals(expected.positions[site].knownVariants, actual.positions[site].knownVariants, "site $site")
+        assertContentEquals(expected.siteGenotypes(site), actual.siteGenotypes(site), "site $site")
     }
 }

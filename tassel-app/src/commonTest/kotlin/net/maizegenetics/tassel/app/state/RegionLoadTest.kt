@@ -12,7 +12,7 @@ import net.maizegenetics.tassel.app.testing.RecordingResultFiles
 import net.maizegenetics.tassel.app.testing.testEngine
 import net.maizegenetics.tassel.app.testing.testTable
 import net.maizegenetics.tassel.genotype.GenotypeTable
-import net.maizegenetics.tassel.io.IndexedVcf
+import net.maizegenetics.tassel.io.IndexedGenotypes
 import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.VcfRegion
 import net.maizegenetics.tassel.ops.ProgressReporter
@@ -143,15 +143,15 @@ class RegionLoadTest {
 
     private fun fakeSource(onRead: suspend (VcfRegion) -> GenotypeTable = { testTable(1, 1) }): FakeRegionSource =
         FakeRegionSource(
-            contigs = listOf(IndexedVcf.Contig("chr3B", 851_934_019L)),
+            contigs = listOf(IndexedGenotypes.Contig("chr3B", 851_934_019L)),
             onRead = onRead,
         )
 }
 
-/** An indexed VCF that never touches BGZF. [reads] counts [read] calls. */
+/** An indexed file that never touches BGZF. [reads] counts [read] calls. */
 private class FakeRegionSource(
     override val fileName: String = "wheat.vcf.gz",
-    override val contigs: List<IndexedVcf.Contig>,
+    override val contigs: List<IndexedGenotypes.Contig>,
     private val onRead: suspend (VcfRegion) -> GenotypeTable,
 ) : RegionSource {
     var reads: Int = 0

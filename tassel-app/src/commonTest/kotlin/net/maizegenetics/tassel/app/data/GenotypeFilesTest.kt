@@ -118,6 +118,16 @@ class GenotypeFilesTest {
     }
 
     @Test
+    fun aBcfNameThatIsHapMapFailsWithTheBcfMagicMessage() = runTest {
+        // HapMap.read would accept these bytes. The `.bcf` suffix has to reach Bcf.read instead.
+        val file = ByteGenotypeFile("sample.bcf", SMALL_HAPMAP.encodeToByteArray())
+
+        val failure = assertFailsWith<IllegalArgumentException> { file.readGenotypes() }
+
+        assertTrue(failure.message!!.contains("Invalid BCF2 magic string"))
+    }
+
+    @Test
     fun aVcfThatIsNotVcfFailsWithTheReaderMessage() = runTest {
         val file = ByteGenotypeFile("notes.vcf", "not a genotype file\n".encodeToByteArray())
 

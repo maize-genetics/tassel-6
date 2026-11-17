@@ -26,7 +26,7 @@ data class AnalysisResult(val id: Long, val datasetId: Long, val operationId: St
 data class ContigRow(val name: String, val length: Long?)
 
 /**
- * The region step, shown after a bgzipped VCF and its index are open and before any region is read.
+ * The region step, shown after a bgzipped VCF or BCF and its index are open and before any region is read.
  *
  * [message] is blank-field guidance or a validation error. Null means [text] is a region Load may read.
  */
