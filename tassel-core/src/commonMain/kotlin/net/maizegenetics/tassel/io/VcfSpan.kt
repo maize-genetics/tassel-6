@@ -90,7 +90,7 @@ internal fun vcfReferenceSpan(line: String): VcfSpan {
 }
 
 /** htslib `svlen_on_ref_for_vcf_alt`: symbolic CNV, DEL, DUP, or INV, including a subtype before `>`. */
-private fun svlenOnRef(alt: String): Boolean {
+internal fun svlenOnRef(alt: String): Boolean {
     if (alt.length < 5 || alt[0] != '<') return false
     if (alt[4] != '>' && alt[4] != ':') return false
     if (!alt.startsWith("<CNV") && !alt.startsWith("<DEL") && !alt.startsWith("<DUP") && !alt.startsWith("<INV")) {

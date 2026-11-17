@@ -30,6 +30,15 @@ internal fun readBcfRecord(source: Source, header: BcfHeader, calls: ByteArray):
 }
 
 /**
+ * The site [decodeRecord] would build from a record body that is already in memory.
+ *
+ * [body] is the shared block followed by the individual block, without the 8-byte length prefix.
+ * [sharedLength] is `l_shared`.
+ */
+internal fun bcfPosition(body: ByteArray, sharedLength: Int, header: BcfHeader, calls: ByteArray): Position =
+    decodeRecord(body, sharedLength, header, calls)
+
+/**
  * Shared plus individual body length.
  *
  * The same checks [readBcfRecord] applies to the 8-byte prefix, so a whole-file read can pull the body before
@@ -176,7 +185,7 @@ internal class BcfCursor(private val bytes: ByteArray, start: Int = 0, private v
 }
 
 private fun decodeRecord(body: ByteArray, sharedLength: Int, header: BcfHeader, calls: ByteArray): Position {
-    val chromosome = contigName(body, header)
+    val chromosome = bcfContigName(body, header)
     val pos1 = body.int32Le(POS_OFFSET).toLong() + 1L
     val alleleInfo = body.uint32Le(ALLELE_INFO_OFFSET)
     val nInfo = (alleleInfo and 0xffffL).toInt()
@@ -266,7 +275,132 @@ private fun genotypeText(values: IntArray, from: Int, until: Int): ByteArray {
     return text.toString().encodeToByteArray()
 }
 
-private fun contigName(body: ByteArray, header: BcfHeader): String {
+/**
+ * Reference span of one BCF record, in the same coordinates as [vcfReferenceSpan].
+ *
+ * The fixed `rlen` bytes in the shared prefix are not the span htslib queries with. `rlen` is the longest of the
+ * `REF` allele, a valid `INFO/END`, the absolute `INFO/SVLEN` of a symbolic deletion-like allele, and `FORMAT/LEN`
+ * when an allele is `<*>` or `<NON_REF>`. [VcfSpan.overlaps] is the region test.
+ */
+internal fun bcfReferenceSpan(body: ByteArray, sharedLength: Int, header: BcfHeader): VcfSpan {
+    val pos = body.int32Le(POS_OFFSET).toLong() + 1L
+    var beg = pos
+    var end = beg
+    beg -= 1
+    if (beg < 0) beg = 0
+    if (end < 1) end = 1
+
+    val alleleInfo = body.uint32Le(ALLELE_INFO_OFFSET)
+    val nInfo = (alleleInfo and 0xffffL).toInt()
+    val nAllele = (alleleInfo ushr 16).toInt()
+    if (nAllele <= 0) {
+        val chromosome = bcfContigName(body, header)
+        throw IllegalArgumentException("VCF site $chromosome:$pos has no REF or ALT allele: []")
+    }
+    val sampleInfo = body.uint32Le(SAMPLE_OFFSET)
+    val nSample = (sampleInfo and 0xffffffL).toInt()
+    val nFormat = (sampleInfo ushr 24).toInt()
+
+    val shared = BcfCursor(body, SHARED_PREFIX, sharedLength)
+    shared.skip()
+    val alleles = Array(nAllele) { shared.readString() }
+    val reference = alleles[0]
+    val referenceLength = reference.length.toLong()
+    if (reference.isNotEmpty()) end = beg + referenceLength
+
+    val alternateCount = nAllele - 1
+    val useSvlen = BooleanArray(alternateCount)
+    var readFormatLength = false
+    for (index in 0 until alternateCount) {
+        val allele = alleles[index + 1]
+        if (svlenOnRef(allele)) {
+            useSvlen[index] = true
+        } else if (allele == "<*>" || allele == "<NON_REF>") {
+            readFormatLength = true
+        }
+    }
+
+    shared.skip()
+    var svlen = 0L
+    val endId = header.strings.indexOf(END_KEY)
+    val svlenId = header.strings.indexOf(SVLEN_KEY)
+    repeat(nInfo) {
+        val key = shared.readInts().singleOrNull()
+        when {
+            key != null && endId >= 0 && key == endId -> {
+                val values = shared.readInts()
+                if (values.size == 1) {
+                    val infoEnd = plainLength(values[0])
+                    if (infoEnd != null && infoEnd > beg) end = infoEnd
+                }
+            }
+            key != null && svlenId >= 0 && key == svlenId -> {
+                val values = shared.readInts()
+                val limit = minOf(alternateCount, values.size)
+                for (index in 0 until limit) {
+                    val length = if (useSvlen[index]) absoluteBcfLength(values[index]) else 1L
+                    if (length > svlen) svlen = length
+                }
+            }
+            else -> shared.skip()
+        }
+    }
+    if (shared.offset != sharedLength) {
+        throw IllegalArgumentException("BCF record shared block does not match l_shared")
+    }
+
+    val formatLength = if (readFormatLength) formatReferenceLength(body, sharedLength, header, nSample, nFormat) else 0L
+    val fromLengths = beg + maxOf(referenceLength, svlen, formatLength)
+    if (fromLengths > end) end = fromLengths
+    return VcfSpan(pos, beg, end)
+}
+
+/** The longest `FORMAT/LEN` value. A missing field, or a value that is not one integer, contributes nothing. */
+private fun formatReferenceLength(
+    body: ByteArray,
+    sharedLength: Int,
+    header: BcfHeader,
+    nSample: Int,
+    nFormat: Int,
+): Long {
+    val lenId = header.strings.indexOf(LEN_KEY)
+    val indiv = BcfCursor(body, sharedLength, body.size)
+    var longest = 0L
+    repeat(nFormat) {
+        val key = indiv.readInts().singleOrNull()
+        if (key != null && lenId >= 0 && key == lenId && nSample > 0) {
+            val values = indiv.readInts(nSample)
+            if (values.size == nSample) {
+                for (value in values) {
+                    val length = plainLength(value) ?: continue
+                    if (length > longest) longest = length
+                }
+            }
+        } else {
+            indiv.skip(nSample)
+        }
+    }
+    if (indiv.offset != body.size) {
+        throw IllegalArgumentException("BCF record genotype block does not match l_indiv")
+    }
+    return longest
+}
+
+/** A stored integer length, or null for missing and end-of-vector. */
+private fun plainLength(value: Int): Long? {
+    if (value == BCF_INT_MISSING || value == BCF_INT_VECTOR_END) return null
+    return value.toLong()
+}
+
+/** Absolute `SVLEN`. Missing and end-of-vector contribute nothing, which is what `.` does in the VCF text. */
+private fun absoluteBcfLength(value: Int): Long {
+    val length = plainLength(value) ?: return 0L
+    if (length >= 0) return length
+    if (length == Long.MIN_VALUE) return Long.MAX_VALUE
+    return -length
+}
+
+internal fun bcfContigName(body: ByteArray, header: BcfHeader): String {
     val index = body.int32Le(CHROM_OFFSET)
     if (index < 0 || index >= header.contigs.size) {
         throw IllegalArgumentException("BCF record names a contig the header does not list: $index")
@@ -307,6 +441,10 @@ private const val TYPE_INT32 = 3
 private const val TYPE_FLOAT = 5
 private const val TYPE_CHAR = 7
 private const val OVERFLOW_COUNT = 15
+
+private const val END_KEY = "END"
+private const val SVLEN_KEY = "SVLEN"
+private const val LEN_KEY = "LEN"
 
 private const val INT8_MISSING = -128
 private const val INT8_VECTOR_END = -127
