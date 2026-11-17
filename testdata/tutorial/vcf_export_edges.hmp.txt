@@ -1,0 +1,8 @@
+rs#	alleles	chrom	pos	strand	assembly#	center	protLSID	assayLSID	panel	QCcode	t1	t2	t3
+plus_minus	+/-	1	10	+	NA	NA	NA	NA	NA	NA	++	++	--
+n_in_alleles	A/N/C	1	20	+	NA	NA	NA	NA	NA	NA	AA	AA	CC
+triallelic	A/C/G	1	30	+	NA	NA	NA	NA	NA	NA	AA	CA	GG
+no_calls	N	1	40	+	NA	NA	NA	NA	NA	NA	NN	NN	NN
+unlisted	A/C	1	50	+	NA	NA	NA	NA	NA	NA	AA	AA	GG
+n_prefix	+/A	1	60	+	NA	NA	NA	NA	NA	NA	++	++	--
+known_indel	AT/A	1	70	+	NA	NA	NA	NA	NA	NA	TT	TT	--
