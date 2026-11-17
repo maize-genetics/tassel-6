@@ -1,6 +1,6 @@
 # ADR-0022: BCF reading and writing, and BGZF writing
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-17
 
 ## Context
