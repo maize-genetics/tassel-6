@@ -120,11 +120,16 @@ object Vcf {
 }
 
 /**
- * Sites accumulated by [Vcf.read] and [IndexedVcf.read], packed and sorted the same way.
+ * Sites accumulated by [Vcf.read], [IndexedVcf.read], and [Bcf.read], packed and sorted the same way.
  *
- * [calls] is filled in place by [VcfRecordParser]. [add] copies it before the next record overwrites it.
+ * [calls] is filled in place by the record parser. [add] copies it before the next record overwrites it.
+ * [activity] is the progress text, so a BCF read does not say it is reading VCF.
  */
-internal class VcfSites(private val taxa: TaxaList, private val progress: ProgressReporter) {
+internal class VcfSites(
+    private val taxa: TaxaList,
+    private val progress: ProgressReporter,
+    private val activity: String = "Reading VCF",
+) {
     val calls = ByteArray(taxa.size)
     private val positions = ArrayList<Position>()
     private var packed = ByteArray(0)
@@ -146,7 +151,7 @@ internal class VcfSites(private val taxa: TaxaList, private val progress: Progre
         calls.copyInto(packed, packedUsed)
         packedUsed = needed
         positions.add(position)
-        if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, "Reading VCF")
+        if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, activity)
     }
 
     suspend fun finish(): GenotypeTable {
@@ -166,7 +171,7 @@ internal class VcfSites(private val taxa: TaxaList, private val progress: Progre
             }
             ordered = order.map { positions[it] }
         }
-        progress.report(positions.size, positions.size, "Reading VCF")
+        progress.report(positions.size, positions.size, activity)
         return InMemoryGenotypeTable.wrap(taxa, PositionList(ordered), combined)
     }
 

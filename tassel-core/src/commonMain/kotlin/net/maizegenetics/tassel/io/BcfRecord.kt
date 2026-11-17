@@ -10,7 +10,7 @@ import net.maizegenetics.tassel.position.Position
  * line htslib prints.
  *
  * Returns null when [source] is exhausted before the 8-byte length prefix. A prefix whose body is short throws
- * [TRUNCATED_BCF_RECORD]. BGZF framing and the multi-record loop belong to the file reader.
+ * [TRUNCATED_BCF_RECORD]. [Bcf.read] owns BGZF framing and the multi-record loop.
  *
  * The genotype block is turned back into the ASCII htslib would print, including haploid `0`, `10/0`, and
  * end-of-vector padding, and then [call] applies the VCF rules. Phase is a `|` in that text. [call] drops it.
@@ -20,21 +20,30 @@ import net.maizegenetics.tassel.position.Position
  */
 internal fun readBcfRecord(source: Source, header: BcfHeader, calls: ByteArray): Position? {
     if (!source.request(1)) return null
-    if (!source.request(LENGTH_BYTES.toLong())) throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
-    val lengths = source.readByteArray(LENGTH_BYTES)
+    if (!source.request(BCF_RECORD_PREFIX_BYTES.toLong())) throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
+    val lengths = source.readByteArray(BCF_RECORD_PREFIX_BYTES)
     val sharedLength = lengths.uint32Le(0)
-    val indivLength = lengths.uint32Le(LENGTH_BYTES / 2)
-    if (sharedLength > Int.MAX_VALUE.toLong() || indivLength > Int.MAX_VALUE.toLong()) {
+    val indivLength = lengths.uint32Le(BCF_RECORD_PREFIX_BYTES / 2)
+    val bodyLength = bcfBodyLength(sharedLength, indivLength)
+    if (!source.request(bodyLength.toLong())) throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
+    return decodeRecord(source.readByteArray(bodyLength), sharedLength.toInt(), header, calls)
+}
+
+/**
+ * Shared plus individual body length.
+ *
+ * The same checks [readBcfRecord] applies to the 8-byte prefix, so a whole-file read can pull the body before
+ * it calls the decoder. A length that is not a record throws [TRUNCATED_BCF_RECORD].
+ */
+internal fun bcfBodyLength(shared: Long, indiv: Long): Int {
+    if (shared > Int.MAX_VALUE.toLong() || indiv > Int.MAX_VALUE.toLong()) {
         throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
     }
-    val shared = sharedLength.toInt()
-    val indiv = indivLength.toInt()
-    val bodyLength = shared.toLong() + indiv
-    if (shared < SHARED_PREFIX || bodyLength > Int.MAX_VALUE.toLong()) {
+    val body = shared + indiv
+    if (shared < SHARED_PREFIX || body > Int.MAX_VALUE.toLong()) {
         throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
     }
-    if (!source.request(bodyLength)) throw IllegalArgumentException(TRUNCATED_BCF_RECORD)
-    return decodeRecord(source.readByteArray(bodyLength.toInt()), shared, header, calls)
+    return body.toInt()
 }
 
 /** Missing and end-of-vector, promoted from every integer width the way htslib promotes them. */
@@ -281,14 +290,10 @@ private fun width(type: Int): Int = when (type) {
     else -> throw IllegalArgumentException("BCF typed value has type $type")
 }
 
-private fun ByteArray.uint32Le(at: Int): Long = (this[at].toLong() and 0xff) or
-    ((this[at + 1].toLong() and 0xff) shl 8) or
-    ((this[at + 2].toLong() and 0xff) shl 16) or
-    ((this[at + 3].toLong() and 0xff) shl 24)
-
 private fun ByteArray.int32Le(at: Int): Int = uint32Le(at).toInt()
 
-private const val LENGTH_BYTES = 8
+/** `l_shared` and `l_indiv`, the 8 bytes in front of every record body. */
+internal const val BCF_RECORD_PREFIX_BYTES = 8
 private const val CHROM_OFFSET = 0
 private const val POS_OFFSET = 4
 private const val ALLELE_INFO_OFFSET = 16
