@@ -83,12 +83,7 @@ internal class VcfRecordParser(private val header: VcfHeader) {
         val asLong = text.toLongOrNull()
             ?: throw IllegalArgumentException("VCF position must be an integer: [${text.trim()}] in $site")
         // The index and BGZF layers keep Long. Position is the GenotypeTable boundary (ADR-0021).
-        if (asLong !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
-            throw IllegalArgumentException(
-                "VCF position $asLong is past TASSEL's position limit of ${Int.MAX_VALUE} in $site",
-            )
-        }
-        val position = asLong.toInt()
+        val position = requireVcfPosition(asLong, site)
         val variants = splitVariants(
             variantsOf(field(window, from, header.referenceColumn), field(window, from, header.alternateColumn)),
             site,
@@ -161,6 +156,21 @@ internal class VcfRecordParser(private val header: VcfHeader) {
             return false
         }
     }
+}
+
+/**
+ * The [Int] position both readers keep, or [Vcf.read]'s limit message.
+ *
+ * BCF stores a 0-based coordinate. The caller adds one in a [Long] first, so 0-based [Int.MAX_VALUE] is rejected
+ * here and 1-based [Int.MAX_VALUE] is accepted.
+ */
+internal fun requireVcfPosition(position: Long, site: String): Int {
+    if (position !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+        throw IllegalArgumentException(
+            "VCF position $position is past TASSEL's position limit of ${Int.MAX_VALUE} in $site",
+        )
+    }
+    return position.toInt()
 }
 
 internal const val VCF_EXCERPT_LENGTH = 25
