@@ -2,6 +2,7 @@ package net.maizegenetics.tassel.io
 
 import kotlinx.io.Source
 import kotlinx.io.readByteArray
+import net.maizegenetics.tassel.position.Chromosome
 
 /**
  * A BCF 2.2 header: the VCF column layout plus the dictionaries a record indexes by `IDX`.
@@ -9,8 +10,35 @@ import kotlinx.io.readByteArray
  * [strings] is the shared FILTER, INFO, and FORMAT dictionary. [contigs] is a separate dictionary. A null slot is
  * an `IDX` gap. [gtId] is the string-dictionary index of `FORMAT/GT`, or null when the header has no GT field.
  * [vcf] is the column layout from [readVcfHeaderLines]. A header with no samples has an empty taxa list.
+ * [chromosome] remembers [Chromosome.of] for a contig index. That function is pure, so the cached value is the
+ * one every record would have built.
  */
-internal class BcfHeader(val vcf: VcfHeader, val strings: List<String?>, val contigs: List<VcfContig?>, val gtId: Int?)
+internal class BcfHeader(
+    val vcf: VcfHeader,
+    val strings: List<String?>,
+    val contigs: List<VcfContig?>,
+    val gtId: Int?,
+) {
+    private val chromosomes = arrayOfNulls<Chromosome>(contigs.size)
+
+    /**
+     * The normalized chromosome for contig [index].
+     *
+     * An index this header does not list fails as [bcfContigName] fails.
+     */
+    internal fun chromosome(index: Int): Chromosome {
+        if (index < 0 || index >= chromosomes.size) {
+            throw IllegalArgumentException("BCF record names a contig the header does not list: $index")
+        }
+        val cached = chromosomes[index]
+        if (cached != null) return cached
+        val contig = contigs[index]
+            ?: throw IllegalArgumentException("BCF record names a contig the header does not list: $index")
+        val created = Chromosome.of(contig.id)
+        chromosomes[index] = created
+        return created
+    }
+}
 
 /**
  * Reads the BCF preamble and header from an inflated byte stream and stops after the trailing NUL.

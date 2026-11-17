@@ -2,7 +2,7 @@ package net.maizegenetics.tassel.io
 
 import kotlinx.io.Source
 import kotlinx.io.readByteArray
-import net.maizegenetics.tassel.position.Chromosome
+import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.position.Position
 
 /**
@@ -12,8 +12,10 @@ import net.maizegenetics.tassel.position.Position
  * Returns null when [source] is exhausted before the 8-byte length prefix. A prefix whose body is short throws
  * [TRUNCATED_BCF_RECORD]. [Bcf.read] owns BGZF framing and the multi-record loop.
  *
- * The genotype block is turned back into the ASCII htslib would print, including haploid `0`, `10/0`, and
- * end-of-vector padding, and then [call] applies the VCF rules. Phase is a `|` in that text. [call] drops it.
+ * Genotypes are decoded from the integer block. [bcfGenotype] applies [call]'s rules when each allele index is
+ * one digit at text offsets 0 and 2, which covers haploid `0`, `0/1`, and end-of-vector padding. A multi-digit
+ * index such as `10/0`, a negative token, and every error go through [bcfTextGenotype], the ASCII [call] reads.
+ * Phase is the low bit of a later allele. [call] drops the separator, and the direct path does too.
  *
  * The layout is VCF 4.3 section 6, as htslib 1.25 writes it. `rlen` and `QUAL` are not stored. A missing `QUAL` is
  * the float bits [BCF_FLOAT_MISSING] and is not decoded as a [Float].
@@ -74,25 +76,40 @@ internal const val TRUNCATED_BCF_RECORD = "BCF record is truncated"
  * A cursor over one typed-value region.
  *
  * The high nibble of the descriptor is the element count. Fifteen means the next typed integer is the real count.
- * [readInts], [readFloatBits], [readString], and [skip] consume one value. A FORMAT value's count is per sample, so
- * the genotype block passes the sample count and the payload is that many times longer.
+ * [intBlock], [readInts], [readFloatBits], [readString], and [skip] consume one value. [readInts] copies [intBlock].
+ * A FORMAT value's count is per sample, so the genotype block passes the sample count and the payload is that many
+ * times longer.
  */
 internal class BcfCursor(private val bytes: ByteArray, start: Int = 0, private val end: Int = bytes.size) {
     var offset: Int = start
         private set
 
-    /** Integers in this vector, with each width's sentinels promoted to [BCF_INT_MISSING] and [BCF_INT_VECTOR_END]. */
-    fun readInts(times: Int = 1): IntArray {
+    /**
+     * A view of one integer vector. The descriptor is checked the way [readInts] checks it, and the payload is
+     * skipped in one step, so a short body throws [TRUNCATED_BCF_RECORD] before any element is read.
+     *
+     * [get] promotes each width's sentinels to [BCF_INT_MISSING] and [BCF_INT_VECTOR_END].
+     */
+    fun intBlock(times: Int = 1): BcfIntBlock {
         val typed = descriptor()
         val count = elementCount(typed.count, times)
         if (typed.type == TYPE_NULL) {
             if (count != 0) throw IllegalArgumentException("BCF integer has type ${typed.type}")
-            return IntArray(0)
+            return BcfIntBlock(bytes, TYPE_NULL, 0, offset, 0)
         }
         if (typed.type != TYPE_INT8 && typed.type != TYPE_INT16 && typed.type != TYPE_INT32) {
             throw IllegalArgumentException("BCF integer has type ${typed.type}")
         }
-        return IntArray(count) { readInt(typed.type) }
+        val start = offset
+        val elementWidth = width(typed.type)
+        advance(count.toLong() * elementWidth)
+        return BcfIntBlock(bytes, typed.type, count, start, elementWidth)
+    }
+
+    /** Integers in this vector, with each width's sentinels promoted to [BCF_INT_MISSING] and [BCF_INT_VECTOR_END]. */
+    fun readInts(times: Int = 1): IntArray {
+        val block = intBlock(times)
+        return IntArray(block.count) { block[it] }
     }
 
     /** Raw float bits, including [BCF_FLOAT_MISSING] and [BCF_FLOAT_VECTOR_END]. */
@@ -142,19 +159,13 @@ internal class BcfCursor(private val bytes: ByteArray, start: Int = 0, private v
         return value
     }
 
-    private fun readInt(type: Int): Int = when (type) {
-        TYPE_INT8 -> when (val value = int8()) {
-            INT8_MISSING -> BCF_INT_MISSING
-            INT8_VECTOR_END -> BCF_INT_VECTOR_END
-            else -> value
+    private fun readInt(type: Int): Int {
+        if (type != TYPE_INT8 && type != TYPE_INT16 && type != TYPE_INT32) {
+            throw IllegalArgumentException("BCF integer has type $type")
         }
-        TYPE_INT16 -> when (val value = int16()) {
-            INT16_MISSING -> BCF_INT_MISSING
-            INT16_VECTOR_END -> BCF_INT_VECTOR_END
-            else -> value
-        }
-        TYPE_INT32 -> int32()
-        else -> throw IllegalArgumentException("BCF integer has type $type")
+        val at = offset
+        advance(width(type).toLong())
+        return promotedAt(bytes, type, at)
     }
 
     private fun uint8(): Int {
@@ -162,16 +173,6 @@ internal class BcfCursor(private val bytes: ByteArray, start: Int = 0, private v
         val value = bytes[offset].toInt() and 0xff
         offset += 1
         return value
-    }
-
-    private fun int8(): Int {
-        val value = uint8()
-        return if (value < 0x80) value else value - 0x100
-    }
-
-    private fun int16(): Int {
-        val unsigned = uint8() or (uint8() shl 8)
-        return (unsigned shl 16) shr 16
     }
 
     private fun int32(): Int = uint8() or (uint8() shl 8) or (uint8() shl 16) or (uint8() shl 24)
@@ -184,6 +185,62 @@ internal class BcfCursor(private val bytes: ByteArray, start: Int = 0, private v
     private class Typed(val type: Int, val count: Int)
 }
 
+/**
+ * One integer vector inside a record, viewed in place.
+ *
+ * [get] promotes sentinels. The cursor has already checked that [start] plus [count] elements of [width] bytes
+ * lies inside the record, and a short record never builds this view.
+ */
+internal class BcfIntBlock(
+    private val bytes: ByteArray,
+    private val type: Int,
+    val count: Int,
+    private val start: Int,
+    private val width: Int,
+) {
+    operator fun get(index: Int): Int {
+        if (index < 0 || index >= count) throw IndexOutOfBoundsException("BCF integer index $index of $count")
+        return promotedAt(bytes, type, start + index * width)
+    }
+}
+
+/** The integer at [at], with this width's missing and end-of-vector values promoted. */
+private fun promotedAt(bytes: ByteArray, type: Int, at: Int): Int = when (type) {
+    TYPE_INT8 -> when (val value = signed8(bytes, at)) {
+        INT8_MISSING -> BCF_INT_MISSING
+        INT8_VECTOR_END -> BCF_INT_VECTOR_END
+        else -> value
+    }
+    TYPE_INT16 -> when (val value = signed16(bytes, at)) {
+        INT16_MISSING -> BCF_INT_MISSING
+        INT16_VECTOR_END -> BCF_INT_VECTOR_END
+        else -> value
+    }
+    TYPE_INT32 -> signed32(bytes, at)
+    else -> throw IllegalArgumentException("BCF integer has type $type")
+}
+
+private fun signed8(bytes: ByteArray, at: Int): Int {
+    val value = bytes[at].toInt() and 0xff
+    return if (value < 0x80) value else value - 0x100
+}
+
+private fun signed16(bytes: ByteArray, at: Int): Int {
+    val unsigned = (bytes[at].toInt() and 0xff) or ((bytes[at + 1].toInt() and 0xff) shl 8)
+    return (unsigned shl 16) shr 16
+}
+
+private fun signed32(bytes: ByteArray, at: Int): Int = (bytes[at].toInt() and 0xff) or
+    ((bytes[at + 1].toInt() and 0xff) shl 8) or
+    ((bytes[at + 2].toInt() and 0xff) shl 16) or
+    ((bytes[at + 3].toInt() and 0xff) shl 24)
+
+/**
+ * One site from a record body that is already in memory.
+ *
+ * The genotype stays in the integer block. [bcfGenotype] returns the call when [call] would read one digit at
+ * offsets 0 and 2. Every other shape is [bcfTextGenotype].
+ */
 private fun decodeRecord(body: ByteArray, sharedLength: Int, header: BcfHeader, calls: ByteArray): Position {
     val chromosome = bcfContigName(body, header)
     val pos1 = body.int32Le(POS_OFFSET).toLong() + 1L
@@ -224,13 +281,11 @@ private fun decodeRecord(body: ByteArray, sharedLength: Int, header: BcfHeader, 
         if (key.size != 1) throw IllegalArgumentException("BCF FORMAT key must be one integer")
         if (key[0] == header.gtId && !sawGt) {
             // The descriptor count is per sample. Values are grouped by sample, not by allele.
-            val values = indiv.readInts(nSample)
+            val block = indiv.intBlock(nSample)
             if (nSample > 0) {
-                val perSample = values.size / nSample
+                val perSample = block.count / nSample
                 for (sample in 0 until nSample) {
-                    val start = sample * perSample
-                    val text = genotypeText(values, start, start + perSample)
-                    calls[sample] = call(text, 0, text.size, alleles, site)
+                    calls[sample] = bcfGenotype(block, sample * perSample, perSample, alleles, site)
                 }
                 sawGt = true
             }
@@ -243,11 +298,54 @@ private fun decodeRecord(body: ByteArray, sharedLength: Int, header: BcfHeader, 
         throw IllegalArgumentException("BCF record genotype block does not match l_indiv")
     }
     return Position(
-        chromosome = Chromosome.of(chromosome),
+        chromosome = header.chromosome(body.int32Le(CHROM_OFFSET)),
         position = position,
         snpId = snpId,
         knownVariants = variants,
     )
+}
+
+/**
+ * The call [call] would return for one sample, read from the integer block.
+ *
+ * A single digit at text offsets 0 and 2 is decided here. [bcfTextGenotype] handles a multi-digit index, a
+ * negative token, an empty column, and every allele past the site's list, so the exception stays the one [call]
+ * builds. Values after the second allele are ignored, which is why triploid `0/1/2` is read as `0/1`.
+ */
+internal fun bcfGenotype(block: BcfIntBlock, from: Int, perSample: Int, alleles: ByteArray, site: String): Byte {
+    if (perSample == 0) return bcfTextGenotype(block, from, perSample, alleles, site)
+    val v0 = block[from]
+    if (v0 == BCF_INT_VECTOR_END) return bcfTextGenotype(block, from, perSample, alleles, site)
+    if (v0 == 0 || v0 == BCF_INT_MISSING) return Genotype.UNKNOWN
+    val a0 = (v0 shr 1) - 1
+    if (a0 !in 0..9) return bcfTextGenotype(block, from, perSample, alleles, site)
+    val last = alleles.size - 1
+    if (perSample == 1) {
+        if (a0 <= last) return Genotype.of(alleles[a0], alleles[a0])
+        return bcfTextGenotype(block, from, perSample, alleles, site)
+    }
+    val v1 = block[from + 1]
+    if (v1 == BCF_INT_VECTOR_END) {
+        if (a0 <= last) return Genotype.of(alleles[a0], alleles[a0])
+        return bcfTextGenotype(block, from, perSample, alleles, site)
+    }
+    if (v1 == 0 || v1 == BCF_INT_MISSING) {
+        if (a0 <= last) return Genotype.UNKNOWN
+        return bcfTextGenotype(block, from, perSample, alleles, site)
+    }
+    val a1 = (v1 shr 1) - 1
+    if (a1 in 0..9 && a0 <= last && a1 <= last) return Genotype.of(alleles[a0], alleles[a1])
+    return bcfTextGenotype(block, from, perSample, alleles, site)
+}
+
+/**
+ * [call] on the ASCII one sample would print.
+ *
+ * The direct decoder falls back to this, and the tests compare against it.
+ */
+internal fun bcfTextGenotype(block: BcfIntBlock, from: Int, perSample: Int, alleles: ByteArray, site: String): Byte {
+    val text = genotypeText(block, from, from + perSample)
+    return call(text, 0, text.size, alleles, site)
 }
 
 /**
@@ -256,12 +354,12 @@ private fun decodeRecord(body: ByteArray, sharedLength: Int, header: BcfHeader, 
  * End-of-vector stops the sample, so a haploid call stored in a diploid slot is `0` and not `0/.`. The separator
  * before every later allele is `|` when that value's low bit is set. [call] then reads the text.
  */
-private fun genotypeText(values: IntArray, from: Int, until: Int): ByteArray {
+private fun genotypeText(block: BcfIntBlock, from: Int, until: Int): ByteArray {
     val text = StringBuilder()
     var written = 0
     var index = from
     while (index < until) {
-        val value = values[index]
+        val value = block[index]
         if (value == BCF_INT_VECTOR_END) break
         if (written > 0) text.append(if ((value and 1) != 0) '|' else '/')
         if (value == BCF_INT_MISSING || value == 0) {
