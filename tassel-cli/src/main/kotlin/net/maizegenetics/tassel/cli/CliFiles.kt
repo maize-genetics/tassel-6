@@ -10,10 +10,13 @@ import net.maizegenetics.tassel.analysis.GenotypeSummary
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.io.Bcf
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.IndexedGenotypes
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.decompressing
+import net.maizegenetics.tassel.io.isBcf22
 import net.maizegenetics.tassel.io.isBgzf
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
@@ -34,20 +37,28 @@ const val VCF_EXTENSION: String = ".vcf"
 const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
 
 /**
+ * BCF 2.2, bgzipped or raw. A file with this suffix is always read as BCF. A BGZF BCF under another
+ * name is recognized by [isBcf22] instead.
+ */
+const val BCF_EXTENSION: String = ".bcf"
+
+/**
  * Reads a genotype file. `tassel-core` takes a `kotlinx.io.Source` and knows nothing about paths
  * (ADR-0017), so opening the file is the CLI's job.
  *
- * The format comes from the extension, as in TASSEL 5: [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are
- * read as VCF, and everything else, including a gzipped HapMap, as HapMap. `.vcf.gz` does not end
- * with `.vcf`, so the gzipped suffix is matched on its own. A `.vcf.gz` whose first member is BGZF
- * is read from a random-access source, so inflate can use more than one worker. Plain gzip stays on
- * the sequential source. Gzip itself is detected from the first bytes. A missing BGZF EOF block is a
- * warning on standard error.
+ * [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are read as VCF. [BCF_EXTENSION] is always read as BCF,
+ * and a BGZF file with any other name is read as BCF when [isBcf22] is true, so a BCF misnamed
+ * `.vcf.gz` does not reach [Vcf.read]. Everything else, including a gzipped HapMap, is HapMap.
+ * HapMap bytes named `.bcf` are an error from [Bcf.read]. `.vcf.gz` does not end with `.vcf`, so
+ * the gzipped suffix is matched on its own. BGZF is read from a random-access source, so inflate
+ * can use more than one worker. Plain gzip and raw BCF stay on the sequential source. Gzip itself
+ * is detected from the first bytes. A missing BGZF EOF block is a warning on standard error.
  *
- * [region] reads one region of a bgzipped VCF through [IndexedVcf]. [index] overrides the sibling
- * lookup, which is `<path>.csi` and then `<path>.tbi` (ADR-0021). A `.csi` that is present is the
- * index even when a `.tbi` is beside it. Without [region], [index] is ignored; the command rejects
- * that combination before calling this.
+ * [region] reads one region of a bgzipped VCF through [IndexedVcf], or of a bgzipped BCF through
+ * [IndexedGenotypes]. [index] overrides the sibling lookup. For a VCF that lookup is `<path>.csi`
+ * and then `<path>.tbi`. For a BCF it is `<path>.csi` only (ADR-0022). A `.csi` that is present is
+ * the index even when a `.tbi` is beside it. Without [region], [index] is ignored; the command
+ * rejects that combination before calling this.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
  * @throws IllegalArgumentException if it is not a file, the bytes are not a format the reader accepts,
@@ -65,13 +76,25 @@ suspend fun readGenotypes(
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
     CliLog.info("reading $path")
-    if (path.endsWith(VCF_GZIP_EXTENSION)) {
-        openRandomAccessSource(path).use { random ->
-            if (random.isBgzf()) {
+    openRandomAccessSource(path).use { random ->
+        if (random.isBgzf()) {
+            if (path.endsWith(BCF_EXTENSION) || random.isBcf22()) {
+                val read = Bcf.read(random, progress)
+                read.warnings.forEach(CliLog::warn)
+                return read.table
+            }
+            if (path.endsWith(VCF_GZIP_EXTENSION)) {
                 val read = Vcf.read(random, progress)
                 read.warnings.forEach(CliLog::warn)
                 return read.table
             }
+        }
+    }
+    if (path.endsWith(BCF_EXTENSION)) {
+        return SystemFileSystem.source(file).buffered().use { raw ->
+            val read = Bcf.read(raw, progress)
+            read.warnings.forEach(CliLog::warn)
+            read.table
         }
     }
     return SystemFileSystem.source(file).buffered().use { raw ->
@@ -90,12 +113,14 @@ suspend fun readGenotypes(
 private fun isVcfPath(path: String): Boolean = path.endsWith(VCF_GZIP_EXTENSION) || path.endsWith(VCF_EXTENSION)
 
 /**
- * Reads [region] from the bgzipped VCF at [path].
+ * Reads [region] from the bgzipped VCF or BCF at [path].
  *
- * The index is [index] when the user named one, otherwise the `.csi` beside [path], then the `.tbi`.
- * A header that lists `##contig` ids must name every index contig. The tutorial header lists none, so
- * that check does not apply to it. Wheat's `chr6D` is in the header and absent from the CSI, so an
- * index is allowed to be a subset.
+ * The index is [index] when the user named one. Otherwise a BCF, by [BCF_EXTENSION] or by
+ * [isBcf22], uses `<path>.csi` only. A VCF uses `<path>.csi` and then `<path>.tbi`. A header that
+ * lists `##contig` ids must name every VCF index contig. The tutorial header lists none, so that
+ * check does not apply to it. Wheat's `chr6D` is in the VCF header and absent from the VCF CSI, so
+ * an index is allowed to be a subset. BCF contig names come from the header, so that check is not
+ * applied to a BCF.
  */
 private suspend fun readIndexedRegion(
     path: String,
@@ -104,47 +129,79 @@ private suspend fun readIndexedRegion(
     progress: ProgressReporter,
 ): GenotypeTable {
     val parsed = parseVcfRegion(region)
-    if (!path.endsWith(VCF_GZIP_EXTENSION)) {
+    val namedBcf = path.endsWith(BCF_EXTENSION)
+    val namedVcfGz = path.endsWith(VCF_GZIP_EXTENSION)
+    // A missing HapMap or plain VCF keeps the suffix error. A missing .bcf or .vcf.gz is "no such file".
+    if (!namedBcf && !namedVcfGz && !isRegularFile(path)) {
         throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
     }
     val file = Path(path)
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
-    CliLog.info("reading $path region $region")
     return openRandomAccessSource(path).use { data ->
         if (!data.isBgzf()) {
-            throw IllegalArgumentException("--region needs a bgzipped VCF; $path is not bgzip compressed")
-        }
-        val indexPath = resolveIndex(path, index)
-        openRandomAccessSource(indexPath).use { indexSource ->
-            val opened = try {
-                IndexedVcf.open(data, indexSource)
-            } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+            if (!namedBcf && !namedVcfGz) {
+                throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
             }
-            opened.use { vcf ->
-                rejectMismatchedIndex(vcf, path, indexPath)
-                val read = vcf.read(parsed, progress)
-                read.warnings.forEach(CliLog::warn)
-                read.table
+            val kind = if (namedBcf) "BCF" else "VCF"
+            throw IllegalArgumentException("--region needs a bgzipped $kind; $path is not bgzip compressed")
+        }
+        val bcf = namedBcf || data.isBcf22()
+        if (!bcf && !namedVcfGz) {
+            throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
+        }
+        CliLog.info("reading $path region $region")
+        val indexPath = resolveIndex(path, index, bcf)
+        openRandomAccessSource(indexPath).use { indexSource ->
+            if (bcf) {
+                val opened = try {
+                    IndexedGenotypes.open(data, indexSource)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+                }
+                opened.use { genotypes ->
+                    val read = genotypes.read(parsed, progress)
+                    read.warnings.forEach(CliLog::warn)
+                    read.table
+                }
+            } else {
+                val opened = try {
+                    IndexedVcf.open(data, indexSource)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+                }
+                opened.use { vcf ->
+                    rejectMismatchedIndex(vcf, path, indexPath)
+                    val read = vcf.read(parsed, progress)
+                    read.warnings.forEach(CliLog::warn)
+                    read.table
+                }
             }
         }
     }
 }
 
 /**
- * The index for [vcfPath]: [explicit] when the user passed `--index`, otherwise `<vcfPath>.csi`,
- * then `<vcfPath>.tbi`. A `.csi` that exists is used even if it cannot be read.
+ * The index for [dataPath]: [explicit] when the user passed `--index`, otherwise `<dataPath>.csi`.
+ * A VCF then falls back to `<dataPath>.tbi`. A BCF does not. A `.csi` that exists is used even if
+ * it cannot be read.
  */
-private fun resolveIndex(vcfPath: String, explicit: String?): String {
+private fun resolveIndex(dataPath: String, explicit: String?, bcf: Boolean): String {
     if (explicit != null) return explicit
-    val csi = "$vcfPath.csi"
+    val csi = "$dataPath.csi"
     if (isRegularFile(csi)) return csi
-    val tbi = "$vcfPath.tbi"
-    if (isRegularFile(tbi)) return tbi
+    if (!bcf) {
+        val tbi = "$dataPath.tbi"
+        if (isRegularFile(tbi)) return tbi
+    }
+    if (bcf) {
+        throw IllegalArgumentException(
+            "no index found for $dataPath. Run `bcftools index -c $dataPath`.",
+        )
+    }
     throw IllegalArgumentException(
-        "no index found for $vcfPath. Run `bcftools index -c $vcfPath`. " +
+        "no index found for $dataPath. Run `bcftools index -c $dataPath`. " +
             "`tabix -p vcf` only works for contigs under 2^29.",
     )
 }

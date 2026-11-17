@@ -111,6 +111,7 @@ class OperationCommandTest {
             assertContains(text, "--index", message = operation.id)
             assertContains(text, "chr3B:600000000-650000000", message = operation.id)
             assertContains(text, ".csi, then .tbi", message = operation.id)
+            assertContains(text, ".bcf", message = operation.id)
         }
     }
 
