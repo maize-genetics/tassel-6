@@ -1,6 +1,6 @@
 # ADR-0021: Pure-Kotlin compressed and indexed VCF reading
 
-- Status: Accepted
+- Status: Superseded by ADR-0022
 - Date: 2026-11-07
 
 ## Context
