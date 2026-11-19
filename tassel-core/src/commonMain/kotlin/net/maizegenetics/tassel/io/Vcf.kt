@@ -1,6 +1,8 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlinx.io.writeString
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.ops.ProgressReporter
@@ -16,6 +18,9 @@ import net.maizegenetics.tassel.taxa.TaxaList
  * which TASSEL 5 also requires to be `GT`. Both phased (`0|1`) and unphased (`0/1`) diploid calls are read, and the
  * two are indistinguishable afterwards, because the genotype byte has no phase bit. Every other `FORMAT` field,
  * including `AD`, `DP`, `GQ`, and `PL`, is skipped, so read depth does not survive (tassel-6#14 scope).
+ *
+ * [write] exports the text TASSEL 5 writes for a table with no reference allele: the `##Tassel` line, one `GT`
+ * record per site, and `.` for QUAL and INFO. `##SAMPLE` and `##contig` lines are not written.
  *
  * [read] of a [kotlinx.io.Source] does not decompress: hand it an already-inflated source. [read] of a
  * [RandomAccessSource] inflates BGZF itself, in parallel when the host has more than one worker.
@@ -69,6 +74,42 @@ object Vcf {
         } finally {
             reader.close()
         }
+    }
+
+    /**
+     * Writes [table] as the VCF TASSEL 5 exports when the reference allele is unknown.
+     *
+     * The header is `##fileformat=VCFv4.0`, the `##Tassel` line, the FORMAT and INFO dictionary lines, and then the
+     * `#CHROM` line. Each record has QUAL `.`, FILTER `PASS`, INFO `.`, and a `GT` field joined with `/`. Depth,
+     * INFO annotations, and `##SAMPLE` lines are not written: the table does not carry them (tassel-6#14). REF is
+     * the major allele, then the indel and `N`-prefix rules. A site with no called allele is `.` / `.` and `./.`
+     * for every taxon.
+     *
+     * Sites are visited through [GenotypeTable.siteBlocks]. The sink is flushed and left open. Line endings are `\n`.
+     *
+     * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
+     */
+    suspend fun write(table: GenotypeTable, sink: Sink, progress: ProgressReporter = ProgressReporter.None) {
+        for (header in VCF_EXPORT_HEADER) sink.writeString(header + "\n")
+        val line = StringBuilder()
+        line.append(FIXED_COLUMNS.joinToString("\t"))
+        for (taxon in table.taxa) line.append('\t').append(taxon.name.trim())
+        sink.writeString(line.append('\n').toString())
+
+        val numberOfSites = table.numberOfSites
+        val genotypes = ByteArray(table.numberOfTaxa)
+        for (block in table.siteBlocks()) {
+            for (site in block.sites) {
+                val position = table.positions[site]
+                block.copySiteGenotypes(site, genotypes)
+                val record = vcfSiteRecord(position.knownVariants, block.siteStats(site), genotypes)
+                line.clear()
+                appendVcfRecord(line, position, record)
+                sink.writeString(line.toString())
+            }
+            progress.report(block.sites.last + 1, numberOfSites, "Writing VCF")
+        }
+        sink.flush()
     }
 
     private suspend fun readRecords(
