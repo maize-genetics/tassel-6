@@ -19,7 +19,8 @@ import net.maizegenetics.tassel.taxa.TaxaList
  * block boundaries. The next record starts at the next inflated byte, including when htslib put the header in its
  * own block.
  *
- * [write] emits the records [Vcf.write] prints as BCF 2.2 inside BGZF stored blocks. TASSEL 5 has no BCF writer.
+ * [write] emits the records [Vcf.write] prints as BCF 2.2 inside BGZF at the writer's fixed DEFLATE level.
+ * TASSEL 5 has no BCF writer.
  *
  * [BcfRead.warnings] carries a missing terminal BGZF EOF block, the same text [Vcf.read] records on [VcfRead].
  *
@@ -62,7 +63,7 @@ object Bcf {
     }
 
     /**
-     * Writes [table] as BCF 2.2 inside BGZF stored blocks.
+     * Writes [table] as BCF 2.2 inside BGZF at the fixed DEFLATE level.
      *
      * The header is the lines [Vcf.write] emits, plus the PASS filter line, `IDX` on each FORMAT and INFO line,
      * and one `##contig` line per distinct chromosome in site order. Each record uses that site's REF, ALT, and
