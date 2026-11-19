@@ -2,15 +2,22 @@ package net.maizegenetics.tassel.app.state
 
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.Buffer
 import kotlinx.io.Sink
+import kotlinx.io.readByteArray
+import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.app.export.ResultFiles
 import net.maizegenetics.tassel.app.testing.FakeGenotypeFiles
 import net.maizegenetics.tassel.app.testing.RecordingResultFiles
 import net.maizegenetics.tassel.app.testing.SMALL_HAPMAP
 import net.maizegenetics.tassel.app.testing.TextGenotypeFile
 import net.maizegenetics.tassel.app.testing.testEngine
+import net.maizegenetics.tassel.io.Bcf
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.Vcf
+import net.maizegenetics.tassel.io.decompressing
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -69,6 +76,30 @@ class ExportTest {
     }
 
     @Test
+    fun eachGenotypeFormatWritesThatWritersBytes() = runTest {
+        val saved = RecordingResultFiles()
+        val viewModel = loaded(this, saved)
+        val dataset = viewModel.state.value.datasets.single()
+
+        GenotypeExportFormat.entries.forEach { format ->
+            viewModel.handle(AppEvent.ExportDataset(dataset.id, format))
+            testScheduler.advanceUntilIdle()
+        }
+
+        assertEquals(
+            listOf("tutorial.hmp.txt", "tutorial.vcf", "tutorial.vcf.gz", "tutorial.bcf"),
+            saved.names,
+        )
+        val table = dataset.table
+        val vcf = writerBytes { Vcf.write(table, it) }
+        assertContentEquals(writerBytes { HapMap.write(table, it) }, saved.bytes[0])
+        assertContentEquals(vcf, saved.bytes[1])
+        val inflated = Buffer().apply { write(saved.bytes[2]) }.decompressing().source.readByteArray()
+        assertContentEquals(vcf, inflated)
+        assertContentEquals(writerBytes { Bcf.write(table, it) }, saved.bytes[3])
+    }
+
+    @Test
     fun aFilteredGenotypeTableIsExportedAsHapMap() = runTest {
         val saved = RecordingResultFiles()
         val viewModel = loaded(this, saved)
@@ -120,6 +151,9 @@ class ExportTest {
         assertEquals("mdp_genotype.kinship", baseName("mdp_genotype.hmp.txt", "kinship"))
         assertEquals("result.pca", baseName("", "pca"))
     }
+
+    private suspend fun writerBytes(write: suspend (Sink) -> Unit): ByteArray =
+        Buffer().also { write(it) }.readByteArray()
 
     private fun loaded(scope: TestScope, saved: RecordingResultFiles): AppViewModel {
         val files = FakeGenotypeFiles(tutorial = TextGenotypeFile("tutorial.hmp.txt", SMALL_HAPMAP))

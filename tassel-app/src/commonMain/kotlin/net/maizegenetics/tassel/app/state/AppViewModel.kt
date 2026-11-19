@@ -11,7 +11,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import net.maizegenetics.tassel.app.analysis.AnalysisEngine
 import net.maizegenetics.tassel.app.analysis.analysisForm
-import net.maizegenetics.tassel.app.analysis.genotypeFileName
 import net.maizegenetics.tassel.app.analysis.resultParts
 import net.maizegenetics.tassel.app.analysis.withProblems
 import net.maizegenetics.tassel.app.data.GenotypeFile
@@ -22,12 +21,14 @@ import net.maizegenetics.tassel.app.data.openRegionSource
 import net.maizegenetics.tassel.app.data.readGenotypes
 import net.maizegenetics.tassel.app.data.resolveOpen
 import net.maizegenetics.tassel.app.data.validateRegion
+import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.app.export.ResultFiles
+import net.maizegenetics.tassel.app.export.genotypeFileName
+import net.maizegenetics.tassel.app.export.writeGenotype
 import net.maizegenetics.tassel.app.yieldToEventLoop
 import net.maizegenetics.tassel.engine.DataHandle
 import net.maizegenetics.tassel.engine.RunRequest
 import net.maizegenetics.tassel.genotype.GenotypeTable
-import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.InvalidParametersException
 import net.maizegenetics.tassel.ops.Progress
@@ -90,7 +91,7 @@ class AppViewModel internal constructor(
             AppEvent.CancelRegion -> cancelRegion()
             is AppEvent.Select -> mutate { copy(showing = Showing.Dataset(event.id)) }
             is AppEvent.Close -> close(event.id)
-            is AppEvent.ExportDataset -> exportDataset(event.id)
+            is AppEvent.ExportDataset -> exportDataset(event.id, event.format)
             is AppEvent.ShowForm -> showForm(event.operationId)
             is AppEvent.SetParameter -> mutate { copy(form = form?.with(event.name, event.value)) }
             AppEvent.CloseForm -> mutate { copy(form = null) }
@@ -378,13 +379,16 @@ class AppViewModel internal constructor(
         }
     }
 
-    /** Writes a dataset out as HapMap, which is how TASSEL 5 exports genotypes. */
-    private fun exportDataset(id: Long) {
+    /**
+     * Writes a dataset in [format]. The name is fixed before the save dialog, and the dialog does not
+     * choose the writer.
+     */
+    private fun exportDataset(id: Long, format: GenotypeExportFormat) {
         val dataset = state.value.datasets.firstOrNull { it.id == id } ?: return
-        val fileName = genotypeFileName(dataset.name)
+        val fileName = genotypeFileName(dataset.name, format)
         export?.cancel()
         export = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            saving(fileName) { results.save(fileName) { sink -> HapMap.write(dataset.table, sink) } }
+            saving(fileName) { results.save(fileName) { sink -> writeGenotype(dataset.table, format, sink) } }
         }
     }
 

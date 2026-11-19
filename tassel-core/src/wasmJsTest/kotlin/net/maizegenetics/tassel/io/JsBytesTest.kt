@@ -5,6 +5,7 @@ package net.maizegenetics.tassel.io
 import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 
 /**
@@ -30,6 +31,33 @@ class JsBytesTest {
         assertEquals((CHUNK - 1).toByte(), bytes[CHUNK - 1])
         assertEquals(0.toByte(), bytes[CHUNK])
         assertEquals((CHUNK_BOUNDARY - 1 and 0xFF).toByte(), bytes[CHUNK_BOUNDARY - 1])
+    }
+
+    @Test
+    fun bytesZeroThrough255SurviveTheExportCopy() {
+        val original = ByteArray(256) { it.toByte() }
+
+        val copied = arrayBufferToByteArray(byteArrayToArrayBuffer(original))
+
+        assertContentEquals(original, copied)
+        assertEquals(0.toByte(), copied[0])
+        assertEquals(0x80.toByte(), copied[0x80])
+        assertEquals(0x9F.toByte(), copied[0x9F])
+    }
+
+    @Test
+    fun aBufferLongerThanOneChunkSurvivesTheExportCopy() {
+        val original = ByteArray(CHUNK_BOUNDARY) { (it and 0xFF).toByte() }
+
+        val copied = arrayBufferToByteArray(byteArrayToArrayBuffer(original))
+
+        assertContentEquals(original, copied)
+        assertEquals(0.toByte(), copied[0])
+        assertEquals(0x80.toByte(), copied[0x80])
+        assertEquals(0x9F.toByte(), copied[0x9F])
+        assertEquals((CHUNK - 1).toByte(), copied[CHUNK - 1])
+        assertEquals(0.toByte(), copied[CHUNK])
+        assertEquals((CHUNK_BOUNDARY - 1 and 0xFF).toByte(), copied[CHUNK_BOUNDARY - 1])
     }
 
     @Test

@@ -13,9 +13,6 @@ import net.maizegenetics.tassel.table.floatToString
 /** TASSEL 5's extension for a table, matrix, or phenotype export, as `tassel-cli` uses it. */
 private const val TEXT_EXTENSION = ".txt"
 
-/** TASSEL 5's extension for a HapMap export. */
-private const val HAPMAP_EXTENSION = ".hmp.txt"
-
 /**
  * Read-only access to any table the app shows, whatever core type it came from, with cells already spelled the way
  * the exported file spells them. One renderer then draws a genotype summary, a set of eigenvalues, and a kinship
@@ -92,12 +89,6 @@ fun resultParts(result: Any, baseName: String): List<ResultPart> = when (result)
         "no view for a ${result::class.simpleName} result; add one to resultParts()",
     )
 }
-
-/**
- * The file name a genotype dataset is exported under. TASSEL 5 writes genotypes as HapMap rather than as a
- * delimited table, and `HapMap.write` takes the sink straight, which is why this is not a [ResultPart].
- */
-fun genotypeFileName(baseName: String): String = baseName.removeSuffix(HAPMAP_EXTENSION) + HAPMAP_EXTENSION
 
 private fun tablePart(table: ResultTable, baseName: String, part: String?) = ResultPart(
     title = table.title,
