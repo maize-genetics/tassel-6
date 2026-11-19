@@ -275,3 +275,177 @@ suspend fun RandomAccessSource.isBgzf(): Boolean {
         needed = want
     }
 }
+
+/**
+ * Ordered deflate of BGZF slices, on [Dispatchers.Default].
+ *
+ * The caller copies a closed slice and [submit]s it. [workers] coroutines compress them, each with its own
+ * compressor. The caller frames the results, in submit order: [write] runs on the caller, which is the only
+ * thread that may touch the sink. At most [maxBlocksInFlight] slices are copied and not yet framed.
+ * [trySubmit] queues without parking; it returns false when the next slice would have to wait. A compress
+ * failure records the cause, cancels the other workers, and fails the [submit] or [drain] that frames that
+ * slice.
+ *
+ * [beforeCompress] runs on the worker, before that slice is compressed. Tests use it to stall.
+ */
+internal class BgzfEncodeWindow(
+    workers: Int,
+    private val maxBlocksInFlight: Int,
+    private val newCompressor: () -> BgzfCompressor,
+    private val beforeCompress: suspend (Int) -> Unit,
+    parent: Job? = null,
+) {
+    private val job = SupervisorJob(parent)
+    private val scope = CoroutineScope(job + Dispatchers.Default)
+    private val permits = Semaphore(maxBlocksInFlight)
+    private val ordered = Channel<Pending>(maxBlocksInFlight)
+    private val work = Channel<Task>(maxBlocksInFlight)
+    private val failure = AtomicReference<Throwable?>(null)
+    private val inFlight = AtomicInt(0)
+    private val peak = AtomicInt(0)
+    private var nextIndex = 0
+
+    /** Slices copied and not yet framed. */
+    val blocksInFlight: Int get() = inFlight.load()
+
+    /** Largest [blocksInFlight] seen. Never above [maxBlocksInFlight]. */
+    val peakBlocksInFlight: Int get() = peak.load()
+
+    /** The first compress or frame failure, if one has been recorded. */
+    fun takeFailure(): Throwable? = failure.load()
+
+    init {
+        require(workers >= 1) { "workers must be positive: $workers" }
+        require(maxBlocksInFlight >= 1) { "blocks in flight must be positive: $maxBlocksInFlight" }
+        repeat(workers) {
+            scope.launch { worker() }
+        }
+    }
+
+    fun shutdown() {
+        job.cancel()
+    }
+
+    /**
+     * Queues [input] when a permit is free.
+     *
+     * Returns false when [maxBlocksInFlight] slices are already outstanding. [input] is not copied again;
+     * it must stay unchanged until [write] frames it.
+     */
+    fun trySubmit(input: ByteArray): Boolean {
+        takeFailure()?.let { throw it }
+        if (!permits.tryAcquire()) return false
+        enqueue(input)
+        return true
+    }
+
+    /**
+     * Queues [input], framing the oldest finished slice first when the window is full.
+     *
+     * [write] runs inline on the caller.
+     */
+    suspend fun submit(input: ByteArray, write: (ByteArray, ByteArray?) -> Unit) {
+        takeFailure()?.let { throw it }
+        if (!permits.tryAcquire()) {
+            frameOne(write)
+            takeFailure()?.let { throw it }
+            permits.acquire()
+        }
+        enqueue(input)
+    }
+
+    /** Frames every slice already submitted, in order. [write] runs inline on the caller. */
+    suspend fun drain(write: (ByteArray, ByteArray?) -> Unit) {
+        while (inFlight.load() > 0) frameOne(write)
+    }
+
+    private fun enqueue(input: ByteArray) {
+        val index = nextIndex++
+        val deferred = CompletableDeferred<ByteArray?>(job)
+        noteQueued()
+        val published = ordered.trySend(Pending(input, deferred))
+        if (!published.isSuccess) {
+            noteTaken()
+            permits.release()
+            deferred.cancel()
+            reject(index)
+        }
+        val accepted = work.trySend(Task(index, input, deferred))
+        if (!accepted.isSuccess) {
+            val cause = IllegalStateException("BGZF encode workers rejected block $index")
+            deferred.completeExceptionally(cause)
+            fail(cause)
+            throw cause
+        }
+    }
+
+    private fun reject(index: Int): Nothing {
+        val cause = IllegalStateException("BGZF encode queue rejected block $index")
+        fail(cause)
+        throw cause
+    }
+
+    private suspend fun frameOne(write: (ByteArray, ByteArray?) -> Unit) {
+        val pending = try {
+            ordered.receive()
+        } catch (e: Throwable) {
+            throw preferred(e)
+        }
+        try {
+            val deflate = try {
+                pending.deferred.await()
+            } catch (e: Throwable) {
+                throw preferred(e)
+            }
+            try {
+                write(pending.input, deflate)
+            } catch (e: Throwable) {
+                fail(e)
+                throw e
+            }
+        } finally {
+            noteTaken()
+            permits.release()
+        }
+    }
+
+    private suspend fun worker() {
+        val compressor = newCompressor()
+        for (task in work) {
+            try {
+                beforeCompress(task.index)
+                coroutineContext.ensureActive()
+                task.deferred.complete(compressor.compress(task.input, 0, task.input.size))
+            } catch (e: Throwable) {
+                task.deferred.completeExceptionally(e)
+                if (e is CancellationException) throw e
+                fail(e)
+                throw CancellationException("BGZF compress failed", e)
+            }
+        }
+    }
+
+    private fun preferred(fallback: Throwable): Throwable = failure.load() ?: fallback
+
+    private fun fail(cause: Throwable) {
+        if (cause is CancellationException) return
+        failure.compareAndSet(null, cause)
+        job.cancel()
+    }
+
+    private fun noteQueued() {
+        val now = inFlight.addAndFetch(1)
+        while (true) {
+            val seen = peak.load()
+            if (now <= seen || peak.compareAndSet(seen, now)) return
+        }
+    }
+
+    private fun noteTaken() {
+        inFlight.addAndFetch(-1)
+    }
+
+    private class Pending(val input: ByteArray, val deferred: CompletableDeferred<ByteArray?>)
+
+    private class Task(val index: Int, val input: ByteArray, val deferred: CompletableDeferred<ByteArray?>)
+}

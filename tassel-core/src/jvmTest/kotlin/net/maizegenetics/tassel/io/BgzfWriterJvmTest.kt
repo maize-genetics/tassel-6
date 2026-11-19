@@ -44,9 +44,14 @@ class BgzfWriterJvmTest {
         assertEquals(plain.size, offset)
     }
 
-    private fun framed(plain: ByteArray, compressor: BgzfCompressor = BgzfCompressor.deflate()): ByteArray {
+    private fun framed(plain: ByteArray, compressor: BgzfCompressor? = null): ByteArray {
         val sink = Buffer()
-        BgzfWriter(sink, BgzfLayout.Vcf, compressor).use { it.write(plain) }
+        val writer = if (compressor == null) {
+            BgzfWriter(sink, BgzfLayout.Vcf)
+        } else {
+            BgzfWriter(sink, BgzfLayout.Vcf, compressor)
+        }
+        writer.use { it.write(plain) }
         return sink.readByteArray()
     }
 
