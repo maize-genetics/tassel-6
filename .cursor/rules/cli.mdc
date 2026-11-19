@@ -19,8 +19,10 @@ alwaysApply: false
   and default shown in `--help`.
 - Logging goes to stderr; results go to files or stdout. Exit codes: 0 success,
   1 user error (bad input or options), 2 internal error.
-- Output files use the TASSEL 5 text formats so results diff cleanly against
-  TASSEL 5 and load in existing tools.
+- Text output files use the TASSEL 5 text formats so results diff cleanly against
+  TASSEL 5 and load in existing tools. A genotype `--output` ending in `.vcf.gz`
+  or `.bcf` is BGZF at the fixed DEFLATE level (ADR-0022); `.vcf` and `.hmp.txt`
+  stay text.
 
 ```bash
 tassel filter-sites --input mdp_genotype.hmp.txt --min-maf 0.05 --output filtered.hmp.txt
