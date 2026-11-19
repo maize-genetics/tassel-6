@@ -19,6 +19,49 @@ internal const val GZIP_RESERVED = 0xE0
 internal const val BGZF_MAX_BLOCK = 65536
 internal const val BGZF_MAX_UNCOMPRESSED = 65536
 
+/** Uncompressed bytes htslib 1.25 puts in one BGZF block (`BGZF_BLOCK_SIZE`, `0xFF00`). */
+internal const val BGZF_BLOCK_SIZE = 0xFF00
+
+/** Gzip header through the BGZF `BC` subfield. The last two bytes are `BSIZE`. */
+internal const val BGZF_HEADER_LENGTH = 18
+
+/**
+ * htslib's 28-byte empty BGZF member.
+ *
+ * The deflate payload is the fixed-Huffman empty block `03 00`, not a stored block. Writers append this
+ * constant on close. A compressor does not see it.
+ */
+internal val BGZF_EOF_BLOCK: ByteArray = byteArrayOf(
+    0x1f,
+    0x8b.toByte(),
+    0x08,
+    0x04,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0xff.toByte(),
+    0x06,
+    0x00,
+    0x42,
+    0x43,
+    0x02,
+    0x00,
+    0x1b,
+    0x00,
+    0x03,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+)
+
 private const val BGZF_ID_B = 'B'.code
 private const val BGZF_ID_C = 'C'.code
 
