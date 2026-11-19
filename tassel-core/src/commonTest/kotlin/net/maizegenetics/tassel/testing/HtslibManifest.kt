@@ -2,7 +2,7 @@ package net.maizegenetics.tassel.testing
 
 /**
  * Parsed `testdata/htslib/MANIFEST`, written by `scripts/generate-htslib-fixtures.sh`
- * (ADR-0021, tassel-6#80; BCF fixtures, ADR-0022, tassel-6#118).
+ * (ADR-0021, tassel-6#80; BCF fixtures, ADR-0022, tassel-6#118; golden BCF encodings, tassel-6#129).
  *
  * The format matches `testdata/golden/MANIFEST`: `[section]` headers, `key = value` lines,
  * and `#` comments. `command`, `file`, and `identical` may repeat. A `file` value is a path
