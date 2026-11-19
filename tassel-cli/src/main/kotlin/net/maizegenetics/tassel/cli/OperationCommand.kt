@@ -82,7 +82,9 @@ class OperationCommand(
     private val output = option(
         "--output",
         "-o",
-        help = "Base name for the result files; omit to write to standard output",
+        help = "Where to write the result. For a genotype, the suffix selects the format, ignoring case: " +
+            "filtered.hmp.txt, filtered.vcf, filtered.vcf.gz, or filtered.bcf. " +
+            "Any other name stays HapMap, and so does standard output. Omit to write to standard output.",
         metavar = "PATH",
     ).also { registerOption(it) }
 

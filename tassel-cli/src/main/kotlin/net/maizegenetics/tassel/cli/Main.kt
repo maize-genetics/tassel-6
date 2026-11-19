@@ -22,6 +22,8 @@ class Tassel : CliktCommand(name = "tassel") {
     }
 
     override fun help(context: Context): String = "TASSEL 6: genotype analysis. Reads HapMap, VCF, and BCF. " +
+        "A genotype --output ending in .hmp.txt, .vcf, .vcf.gz, or .bcf selects that format; " +
+        "any other name, and standard output, stay HapMap. " +
         "Every analysis subcommand is generated from its operation spec."
 
     override fun run() {
