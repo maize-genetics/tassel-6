@@ -17,30 +17,91 @@ import net.maizegenetics.tassel.io.deflate.writeBgzfMember
  * block. [BgzfLayout.Bcf] packs 65280 uncompressed bytes and may split a record. [endHeader] ends the
  * header block.
  *
- * The default [compressor] is one fixed DEFLATE level. A null payload, or one that would not fit in 65536
+ * The no-compressor constructor uses one fixed DEFLATE level on [bgzfWorkerCount] workers. One worker,
+ * which is the count on wasmJs, compresses on the caller. More workers compress on
+ * [kotlinx.coroutines.Dispatchers.Default], and the caller writes the members in block order. At most
+ * twice the worker count are copied and not yet framed. A caller-supplied [BgzfCompressor] stays on the
+ * caller, because one instance is not safe to share. A null payload, or one that would not fit in 65536
  * bytes, is stored instead. [close] appends the 28-byte EOF member and leaves [sink] open. [write] does not
- * suspend. [flush] pushes bytes already framed and does not end a block. [tell] is the virtual offset of
- * the next byte still held in the window: the compressed offset of that open block, and how many
- * uncompressed bytes are buffered. A VCF scan can move a held tail into the next block, so a mid-window
- * [tell] is not an index offset. This epic does not write an index.
+ * suspend. A block [write] has closed may still be compressing when [write] returns; [tell], [flush], and
+ * [close] finish those blocks in order before they observe the sink. [flush] pushes bytes already framed
+ * and does not end a block. [tell] is the virtual offset of the next byte still held in the window: the
+ * compressed offset of that open block, and how many uncompressed bytes are buffered. A VCF scan can move
+ * a held tail into the next block, so a mid-window [tell] is not an index offset. This epic does not write
+ * an index.
  *
- * Not safe for concurrent calls. The same input and layout produce the same bytes on every target.
+ * Not safe for concurrent calls. The same input and layout produce the same bytes on every target and for
+ * any worker count.
  *
  * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
  */
-class BgzfWriter(
+class BgzfWriter internal constructor(
     private val sink: Sink,
     private val layout: BgzfLayout,
-    private val compressor: BgzfCompressor = BgzfCompressor.deflate(),
+    private val workers: Int,
+    private val maxBlocksInFlight: Int,
+    private val newCompressor: () -> BgzfCompressor,
+    private val beforeCompress: suspend (Int) -> Unit,
 ) : AutoCloseable {
+    /** Fixed DEFLATE level, on [bgzfWorkerCount] workers. */
+    constructor(sink: Sink, layout: BgzfLayout) : this(
+        sink,
+        layout,
+        bgzfWorkerCount(),
+        bgzfMaxBlocksInFlight(bgzfWorkerCount()),
+        { BgzfCompressor.deflate() },
+        { _ -> },
+    )
+
+    /**
+     * Compresses every block with [compressor], on the caller.
+     *
+     * One instance is not shared across workers. Pass no compressor for the parallel default.
+     */
+    constructor(sink: Sink, layout: BgzfLayout, compressor: BgzfCompressor) : this(
+        sink,
+        layout,
+        1,
+        1,
+        { compressor },
+        { _ -> },
+    )
+
+    /**
+     * Fixed DEFLATE level on [workers] threads.
+     *
+     * Tests and [openBgzfWriter] use this. The public constructors take no worker count.
+     */
+    internal constructor(
+        sink: Sink,
+        layout: BgzfLayout,
+        workers: Int,
+        beforeCompress: suspend (Int) -> Unit = { _ -> },
+    ) : this(
+        sink,
+        layout,
+        workers.coerceAtLeast(1),
+        bgzfMaxBlocksInFlight(workers.coerceAtLeast(1)),
+        { BgzfCompressor.deflate() },
+        beforeCompress,
+    )
+
     private val window = ByteArray(BGZF_BLOCK_SIZE)
     private val crc = Crc32()
+    private val inlineCompressor: BgzfCompressor? = if (workers == 1) newCompressor() else null
+    private var pipeline: BgzfEncodeWindow? = null
     private var length = 0
     private var blockAddress = 0L
     private var inHeader = layout == BgzfLayout.Vcf
     private var longLine = false
     private var needsScan = false
     private var closed = false
+    private var failed = false
+
+    init {
+        require(workers >= 1) { "workers must be positive: $workers" }
+        require(maxBlocksInFlight >= 1) { "blocks in flight must be positive: $maxBlocksInFlight" }
+    }
 
     /**
      * Accepts `source[startIndex, endIndex)`.
@@ -78,12 +139,14 @@ class BgzfWriter(
      */
     fun tell(): Long {
         ensureOpen()
+        drainPipeline()
         return bgzfVirtualOffset(blockAddress, length)
     }
 
     /** Pushes framed bytes to [sink]. Bytes still in the window stay there, and [tell] does not move. */
     fun flush() {
         ensureOpen()
+        drainPipeline()
         sink.flush()
     }
 
@@ -111,17 +174,27 @@ class BgzfWriter(
 
     /** Writes the 28-byte EOF member. [sink] stays open. A second call writes nothing. */
     override fun close() {
-        if (closed) return
-        when (layout) {
-            BgzfLayout.Vcf -> {
-                if (needsScan && length > 0) scanWindow()
-                if (length > 0) emitOpenBlock()
+        if (closed || failed) return
+        try {
+            pipeline?.takeFailure()?.let { throw it }
+            when (layout) {
+                BgzfLayout.Vcf -> {
+                    if (needsScan && length > 0) scanWindow()
+                    if (length > 0) emitOpenBlock()
+                }
+                BgzfLayout.Bcf -> if (length > 0) emitOpenBlock()
             }
-            BgzfLayout.Bcf -> if (length > 0) emitOpenBlock()
+            drainPipeline()
+            pipeline?.takeFailure()?.let { throw it }
+            sink.write(BGZF_EOF_BLOCK)
+            blockAddress += BGZF_EOF_BLOCK.size
+            closed = true
+        } catch (e: Throwable) {
+            failed = true
+            throw e
+        } finally {
+            pipeline?.shutdown()
         }
-        sink.write(BGZF_EOF_BLOCK)
-        blockAddress += BGZF_EOF_BLOCK.size
-        closed = true
     }
 
     /**
@@ -178,12 +251,39 @@ class BgzfWriter(
 
     private fun emit(count: Int) {
         if (count == 0) return
-        val deflate = compressor.compress(window, 0, count)
-        blockAddress += sink.writeBgzfMember(window, 0, count, deflate, crc)
+        val inline = inlineCompressor
+        if (inline != null) {
+            val deflate = inline.compress(window, 0, count)
+            blockAddress += sink.writeBgzfMember(window, 0, count, deflate, crc)
+            return
+        }
+        // Copy before the caller slides a held tail over [window].
+        val copy = window.copyOf(count)
+        val encode = ensurePipeline()
+        if (!encode.trySubmit(copy)) {
+            bgzfBlocking {
+                encode.submit(copy) { input, deflate ->
+                    blockAddress += sink.writeBgzfMember(input, 0, input.size, deflate, crc)
+                }
+            }
+        }
+    }
+
+    private fun ensurePipeline(): BgzfEncodeWindow =
+        pipeline ?: BgzfEncodeWindow(workers, maxBlocksInFlight, newCompressor, beforeCompress).also { pipeline = it }
+
+    private fun drainPipeline() {
+        val encode = pipeline ?: return
+        if (encode.blocksInFlight == 0) return
+        bgzfBlocking {
+            encode.drain { input, deflate ->
+                blockAddress += sink.writeBgzfMember(input, 0, input.size, deflate, crc)
+            }
+        }
     }
 
     private fun ensureOpen() {
-        if (closed) throw IllegalStateException("BGZF writer is closed")
+        if (closed || failed) throw IllegalStateException("BGZF writer is closed")
     }
 
     private companion object {
@@ -224,3 +324,12 @@ fun interface BgzfCompressor {
         fun deflate(): BgzfCompressor = DeflateCompressor()
     }
 }
+
+/**
+ * A [BgzfWriter] that compresses on [workers] threads.
+ *
+ * [BgzfWriter]'s public constructors take no worker count, and [Bcf.write] uses those. This is the bench
+ * seam. Bytes do not depend on [workers].
+ */
+fun openBgzfWriter(sink: Sink, layout: BgzfLayout, workers: Int): BgzfWriter =
+    BgzfWriter(sink, layout, workers.coerceAtLeast(1))

@@ -16,8 +16,9 @@
 # VCF and a bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the
 # TASSEL 6 CLI on the plain and bgzipped files, TASSEL 5 -vcf on both, BGZF inflate at 1 worker and
 # at the host worker count, htslib, and indexed region reads of chr3B (tassel-6#90). It also converts
-# the loadable VCF to BCF and times in-process Bcf.read against Vcf.read (tassel-6#123). vcf needs
-# --heap 8g, plus bgzip and bcftools from htslib 1.25.
+# the loadable VCF to BCF and times in-process Bcf.read against Vcf.read (tassel-6#123), then times
+# BGZF compression of the plain VCF and of uncompressed BCF at 1 worker and at the host count
+# (tassel-6#132). vcf needs --heap 8g, plus bgzip and bcftools from htslib 1.25.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
 # JDK 25 through the Gradle toolchain. --only vcf also requires htslib 1.25.
@@ -415,6 +416,59 @@ run_vcf() {
   printf '|------|------|-------|-------:|-----:|:--------|\n'
   reader_bench_row bcf "$load_bcf" "loadable .bcf"
   reader_bench_row vcf "$load_gz" "loadable .vcf.gz"
+
+  local load_ubcf="${load%.vcf}.uncompressed.bcf"
+  if [[ ! -f "$load_ubcf" || "$load_gz" -nt "$load_ubcf" ]]; then
+    echo "Writing uncompressed BCF: bcftools view --no-version -Ou"
+    bcftools view --no-version -Ou -o "$load_ubcf" "$load_gz"
+  fi
+  local ubcf_bytes
+  ubcf_bytes=$(file_bytes "$load_ubcf")
+  echo
+  echo "BGZF writing. One warm-up is discarded and JVM startup is excluded."
+  echo "VCF rows stream the plain loadable VCF through BgzfWriter. BCF rows stream uncompressed BCF."
+  echo "Output bytes are counted and dropped. htslib rows are bgzip of the plain VCF."
+  echo "  uncompressed bcf $(file_bytes_human "$ubcf_bytes") ($ubcf_bytes bytes) $load_ubcf"
+  printf '| Tool | Write | Input | Median | Peak | Command |\n'
+  printf '|------|-------|-------|-------:|-----:|:--------|\n'
+  bgzf_write_row "$load" vcf 1 "plain .vcf"
+  bgzf_write_row "$load" vcf "" "plain .vcf"
+  bgzf_write_row "$load_ubcf" bcf 1 "uncompressed .bcf"
+  bgzf_write_row "$load_ubcf" bcf "" "uncompressed .bcf"
+  command="bgzip -@ 1 -o /dev/null $load"
+  result=$(repeat_measure bgzip -@ 1 -o /dev/null "$load")
+  vcf_row "htslib" "compress, 1 thread" "plain .vcf" "$result" "$command"
+  command="bgzip -@ $VCF_BGZIP_THREADS -o /dev/null $load"
+  result=$(repeat_measure bgzip -@ "$VCF_BGZIP_THREADS" -o /dev/null "$load")
+  vcf_row "htslib" "compress, $VCF_BGZIP_THREADS threads" "plain .vcf" "$result" "$command"
+}
+
+# One dev bgzf-write-bench invocation. [workers] empty means the host count. Prints a table row.
+bgzf_write_row() {
+  local input="$1" layout="$2" workers="$3" label="$4"
+  local -a args=(--quiet dev bgzf-write-bench --input "$input" --layout "$layout" --runs "$RUNS")
+  if [[ -n "$workers" ]]; then
+    args+=(--workers "$workers")
+  fi
+  local stats="$WORK/.time" out="$WORK/bgzf-write-bench.out" rss line median count command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "bgzf-write-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  count=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "workers") print p[2] } }' <<<"$line")
+  [[ -n "$median" && -n "$count" ]] || die "bgzf-write-bench wrote no median: $(cat "$out")"
+  local what="compress, $count worker"
+  if [[ "$count" != "1" ]]; then
+    what="compress, $count workers"
+  fi
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "$what" "$label" "$median" "${rss:-0}" "$command"
 }
 
 # One dev bgzf-bench invocation. [workers] empty means the host count. Prints a table row.

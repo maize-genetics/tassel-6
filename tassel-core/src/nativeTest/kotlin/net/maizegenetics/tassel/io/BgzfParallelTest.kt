@@ -12,4 +12,9 @@ class BgzfParallelTest {
     fun parallelDecodeIsIndependentOfWorkerCount() = runBlocking {
         assertParallelBgzf()
     }
+
+    @Test
+    fun parallelEncodeIsIndependentOfWorkerCount() = runBlocking {
+        assertParallelBgzfWrite()
+    }
 }

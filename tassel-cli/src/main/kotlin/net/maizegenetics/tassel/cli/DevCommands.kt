@@ -13,6 +13,11 @@ import com.github.ajalt.clikt.parameters.types.restrictTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.io.Buffer
+import kotlinx.io.RawSink
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
 import net.maizegenetics.tassel.distance.centeredIbs
 import net.maizegenetics.tassel.distance.centeredIbsPanelColumns
 import net.maizegenetics.tassel.distance.centeredIbsPanelSites
@@ -21,11 +26,13 @@ import net.maizegenetics.tassel.genotype.Genotype
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.io.Bcf
+import net.maizegenetics.tassel.io.BgzfLayout
 import net.maizegenetics.tassel.io.BgzfReader
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.RandomAccessSource
 import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.bgzfWorkerCount
+import net.maizegenetics.tassel.io.openBgzfWriter
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.position.Chromosome
@@ -164,6 +171,51 @@ class BgzfBench : CliktCommand(name = "bgzf-bench") {
 }
 
 /**
+ * Times BGZF compression of one uncompressed file.
+ *
+ * Not an analysis: hand-written, like [BgzfBench]. The printed median is the compress after one discarded
+ * warm-up. Omit `--workers` to use [bgzfWorkerCount]. Output bytes are counted and dropped. `--layout vcf`
+ * splits on newlines; `--layout bcf` packs 65280-byte blocks.
+ */
+class BgzfWriteBench : CliktCommand(name = "bgzf-write-bench") {
+    override fun help(context: Context): String =
+        "Time BGZF compression of one plain file, at 1 worker or at the host count"
+
+    private val input by option("--input", help = "Uncompressed file to compress", metavar = "PATH").required()
+    private val layoutName by option("--layout", help = "vcf or bcf", metavar = "LAYOUT").required()
+    private val runs by option("--runs", help = "Timed runs after one discarded warm-up", metavar = "INT")
+        .int().restrictTo(min = 1).default(3)
+    private val workers by option(
+        "--workers",
+        help = "Compress workers. Omit for one worker per processor.",
+        metavar = "INT",
+    ).int().restrictTo(min = 1)
+
+    override fun run() = cliRun {
+        val layout = when (layoutName) {
+            "vcf" -> BgzfLayout.Vcf
+            "bcf" -> BgzfLayout.Bcf
+            else -> throw CliktError("layout must be vcf or bcf", statusCode = EXIT_USER_ERROR)
+        }
+        val count = workers ?: bgzfWorkerCount()
+        val seconds = DoubleArray(runs)
+        var bytes = 0L
+        repeat(runs + 1) { iteration ->
+            val started = TimeSource.Monotonic.markNow()
+            bytes = compressPlain(input, layout, count)
+            val elapsed = started.elapsedNow().inWholeNanoseconds / 1e9
+            if (iteration > 0) seconds[iteration - 1] = elapsed
+        }
+        seconds.sort()
+        val medianAt = (runs + 1) / 2 - 1
+        echo(
+            "bytes=$bytes workers=$count layout=$layoutName min=${formatSeconds(seconds.first())} " +
+                "median=${formatSeconds(seconds[medianAt])}",
+        )
+    }
+}
+
+/**
  * Times one indexed region read.
  *
  * Not an analysis: hand-written, like [BgzfBench]. The printed median is the read after one discarded
@@ -256,6 +308,40 @@ class BcfBench : CliktCommand(name = "bcf-bench") {
         }
     }
 }
+
+/** Streams [path] through [openBgzfWriter] and returns the compressed size. The bytes are not kept. */
+private fun compressPlain(path: String, layout: BgzfLayout, workers: Int): Long {
+    val counted = CountingRawSink()
+    counted.buffered().use { sink ->
+        openBgzfWriter(sink, layout, workers).use { writer ->
+            SystemFileSystem.source(Path(path)).buffered().use { source ->
+                val chunk = ByteArray(COMPRESS_CHUNK)
+                while (true) {
+                    val n = source.readAtMostTo(chunk)
+                    if (n < 0) break
+                    writer.write(chunk, 0, n)
+                }
+            }
+        }
+    }
+    return counted.bytes
+}
+
+/** Drops written bytes and counts them. The writer receives this sink wrapped with `buffered()`. */
+private class CountingRawSink : RawSink {
+    var bytes: Long = 0L
+
+    override fun write(source: Buffer, byteCount: Long) {
+        bytes += byteCount
+        source.skip(byteCount)
+    }
+
+    override fun flush() = Unit
+
+    override fun close() = Unit
+}
+
+private const val COMPRESS_CHUNK = 1024 * 1024
 
 private suspend fun scanBgzf(source: RandomAccessSource, workers: Int): Long {
     var total = 0L

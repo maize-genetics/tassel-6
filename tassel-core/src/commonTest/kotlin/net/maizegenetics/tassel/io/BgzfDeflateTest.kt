@@ -115,13 +115,11 @@ class BgzfDeflateTest {
         const val COMPRESSED_TUTORIAL_SHA256 =
             "ce705a1f19a5b7e67d06edf06ad2d80c993a589fc0724c3c9a4957f52390550f"
 
-        fun write(
-            plain: ByteArray,
-            layout: BgzfLayout,
-            compressor: BgzfCompressor = BgzfCompressor.deflate(),
-        ): ByteArray {
+        fun write(plain: ByteArray, layout: BgzfLayout, compressor: BgzfCompressor? = null): ByteArray {
             val sink = Buffer()
-            BgzfWriter(sink, layout, compressor).use { it.write(plain) }
+            // A null compressor is the public default: parallel where the host has workers.
+            val writer = if (compressor == null) BgzfWriter(sink, layout) else BgzfWriter(sink, layout, compressor)
+            writer.use { it.write(plain) }
             return sink.readByteArray()
         }
     }
