@@ -10,9 +10,6 @@ import net.maizegenetics.tassel.filter.filterTaxa
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.genotype.Nucleotide
-import net.maizegenetics.tassel.io.deflate.BGZF_EOF_BLOCK
-import net.maizegenetics.tassel.io.deflate.BGZF_HEADER_LENGTH
-import net.maizegenetics.tassel.io.deflate.GZIP_TRAILER
 import net.maizegenetics.tassel.io.deflate.bgzfBlocks
 import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.position.Chromosome
@@ -29,10 +26,9 @@ import kotlin.test.assertTrue
 /**
  * BCF export against htslib 1.25's encoding of the TASSEL 5 VCF-export goldens.
  *
- * Inflated bytes match the committed `.bcf`. On disk, each stored data member is that uncompressed
- * size plus the BGZF framing, and the EOF member is the fixed 28 bytes. `vcf_export_edges.blocks-l0.txt`
- * is that list. The other `blocks.txt` files are default `bcftools view -Ob` sizes, which a stored
- * writer does not reproduce.
+ * Inflated bytes match the committed `.bcf`, and the uncompressed size of each BGZF member matches
+ * htslib. On-disk members use the fixed DEFLATE level, so they are not the stored sizes in
+ * `vcf_export_edges.blocks-l0.txt`.
  */
 class BcfWriteTest {
     @Test
@@ -99,22 +95,6 @@ class BcfWriteTest {
         )
         assertEquals(0, writtenBlocks.last().uncompressedSize, "$name EOF")
         assertTrue(writtenBlocks.dropLast(1).all { it.uncompressedSize > 0 }, "$name has an empty data block")
-        val members = writtenBlocks.mapIndexed { index, block ->
-            if (index == writtenBlocks.lastIndex) {
-                BGZF_EOF_BLOCK.size
-            } else {
-                block.uncompressedSize + STORED_MEMBER_OVERHEAD
-            }
-        }
-        assertEquals(members, memberSizes(written), "$name stored member sizes")
-        if (name == "vcf_export_edges") {
-            val expected = TestData.readText("htslib/bcf/golden/$name.blocks-l0.txt")
-                .lineSequence()
-                .filter { it.isNotEmpty() }
-                .map { it.toInt() }
-                .toList()
-            assertEquals(expected, members, "$name level-0 block list")
-        }
     }
 
     private suspend fun bcfRoundTrip(table: GenotypeTable): GenotypeTable {
@@ -157,51 +137,9 @@ class BcfWriteTest {
         return (at until end).joinToString(" ") { (bytes[it].toInt() and 0xFF).toString(16).padStart(2, '0') }
     }
 
-    /** `BSIZE + 1` of each BGZF member, which is the on-disk size. */
-    private fun memberSizes(file: ByteArray): List<Int> {
-        val sizes = ArrayList<Int>()
-        var start = 0
-        while (start < file.size) {
-            val size = memberSize(file, start)
-            sizes.add(size)
-            start += size
-        }
-        return sizes
-    }
-
-    private fun memberSize(file: ByteArray, start: Int): Int {
-        require(start + BGZF_HEADER_LENGTH <= file.size) { "truncated gzip header at $start" }
-        val flags = file[start + 3].toInt() and 0xFF
-        require(flags and 4 != 0) { "BGZF block at $start has no extra field" }
-        var cursor = start + 10
-        val extraLength = u16(file, cursor)
-        cursor += 2
-        val extraEnd = cursor + extraLength
-        var blockSize = -1
-        var sub = cursor
-        while (sub + 4 <= extraEnd) {
-            val id1 = file[sub].toInt() and 0xFF
-            val id2 = file[sub + 1].toInt() and 0xFF
-            val subLength = u16(file, sub + 2)
-            if (id1 == 'B'.code && id2 == 'C'.code && subLength == 2) {
-                blockSize = u16(file, sub + 4)
-            }
-            sub += 4 + subLength
-        }
-        require(blockSize >= 0) { "BGZF block at $start has no BC subfield" }
-        return blockSize + 1
-    }
-
-    private fun u16(file: ByteArray, at: Int): Int =
-        (file[at].toInt() and 0xFF) or ((file[at + 1].toInt() and 0xFF) shl 8)
-
     private companion object {
         const val TUTORIAL = "tutorial/mdp_genotype.hmp.txt"
         const val EDGES = "tutorial/vcf_export_edges.hmp.txt"
-
-        /** Stored DEFLATE header in front of the uncompressed bytes: `BFINAL`, `LEN`, `NLEN`. */
-        const val STORED_DEFLATE_HEADER = 5
-        const val STORED_MEMBER_OVERHEAD = BGZF_HEADER_LENGTH + STORED_DEFLATE_HEADER + GZIP_TRAILER
 
         val tutorial = SuspendLazy {
             HapMap.read(Buffer().also { it.write(TestData.readBytes(TUTORIAL)) })

@@ -72,7 +72,7 @@ class BgzfWriterTest {
     fun flushDoesNotEndABlock() {
         val plain = inflate(TestData.readBytes(LONG_LINE))
         val sink = Buffer()
-        val writer = BgzfWriter(sink, BgzfLayout.Vcf)
+        val writer = BgzfWriter(sink, BgzfLayout.Vcf, BgzfCompressor.Stored)
         writer.write(plain, 0, plain.size - 10)
         val told = writer.tell()
         val framed = sink.size
@@ -110,7 +110,7 @@ class BgzfWriterTest {
         val header = headerLength(plain)
         assertEquals(165, header)
         val sink = Buffer()
-        val writer = BgzfWriter(sink, BgzfLayout.Vcf)
+        val writer = BgzfWriter(sink, BgzfLayout.Vcf, BgzfCompressor.Stored)
         writer.write(plain, 0, header)
         writer.endHeader()
         val afterHeader = bgzfVirtualOffset(165 + STORED_OVERHEAD.toLong(), 0)
@@ -141,7 +141,7 @@ class BgzfWriterTest {
         }
         assertNotEquals(NEWLINE, body[BGZF_BLOCK_SIZE - 1])
         val sink = Buffer()
-        val writer = BgzfWriter(sink, BgzfLayout.Bcf)
+        val writer = BgzfWriter(sink, BgzfLayout.Bcf, BgzfCompressor.Stored)
         writer.write(header)
         writer.endHeader()
         writer.write(body)
@@ -149,7 +149,7 @@ class BgzfWriterTest {
         assertEquals(listOf(100, BGZF_BLOCK_SIZE, 50, 0), isizes(sink.readByteArray()))
 
         val longHeader = Buffer()
-        BgzfWriter(longHeader, BgzfLayout.Bcf).use { longWriter ->
+        BgzfWriter(longHeader, BgzfLayout.Bcf, BgzfCompressor.Stored).use { longWriter ->
             longWriter.write(ByteArray(BGZF_BLOCK_SIZE + 40))
             longWriter.endHeader()
             longWriter.write(ByteArray(10))
@@ -160,7 +160,7 @@ class BgzfWriterTest {
     @Test
     fun tellTracksTheOpenBcfBlock() {
         val sink = Buffer()
-        val writer = BgzfWriter(sink, BgzfLayout.Bcf)
+        val writer = BgzfWriter(sink, BgzfLayout.Bcf, BgzfCompressor.Stored)
         assertEquals(0L, writer.tell())
         writer.write(ByteArray(10))
         assertEquals(bgzfVirtualOffset(0, 10), writer.tell())

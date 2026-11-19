@@ -4,6 +4,7 @@ import kotlinx.io.Sink
 import net.maizegenetics.tassel.io.deflate.BGZF_BLOCK_SIZE
 import net.maizegenetics.tassel.io.deflate.BGZF_EOF_BLOCK
 import net.maizegenetics.tassel.io.deflate.Crc32
+import net.maizegenetics.tassel.io.deflate.DeflateCompressor
 import net.maizegenetics.tassel.io.deflate.writeBgzfMember
 
 /**
@@ -16,8 +17,8 @@ import net.maizegenetics.tassel.io.deflate.writeBgzfMember
  * block. [BgzfLayout.Bcf] packs 65280 uncompressed bytes and may split a record. [endHeader] ends the
  * header block.
  *
- * With no compressor, or when a compressed payload would not fit in 65536 bytes, every data block is one
- * stored DEFLATE block. [close] appends the 28-byte EOF member and leaves [sink] open. [write] does not
+ * The default [compressor] is one fixed DEFLATE level. A null payload, or one that would not fit in 65536
+ * bytes, is stored instead. [close] appends the 28-byte EOF member and leaves [sink] open. [write] does not
  * suspend. [flush] pushes bytes already framed and does not end a block. [tell] is the virtual offset of
  * the next byte still held in the window: the compressed offset of that open block, and how many
  * uncompressed bytes are buffered. A VCF scan can move a held tail into the next block, so a mid-window
@@ -30,7 +31,7 @@ import net.maizegenetics.tassel.io.deflate.writeBgzfMember
 class BgzfWriter(
     private val sink: Sink,
     private val layout: BgzfLayout,
-    private val compressor: BgzfCompressor = BgzfCompressor.Stored,
+    private val compressor: BgzfCompressor = BgzfCompressor.deflate(),
 ) : AutoCloseable {
     private val window = ByteArray(BGZF_BLOCK_SIZE)
     private val crc = Crc32()
@@ -213,5 +214,13 @@ fun interface BgzfCompressor {
     companion object {
         /** Every data block is stored. */
         val Stored: BgzfCompressor = BgzfCompressor { _, _, _ -> null }
+
+        /**
+         * One fixed DEFLATE level.
+         *
+         * Each call returns a compressor with its own scratch buffers. [BgzfCompressor.compress] on that
+         * instance is not safe to call from more than one worker.
+         */
+        fun deflate(): BgzfCompressor = DeflateCompressor()
     }
 }
