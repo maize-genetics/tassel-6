@@ -1,10 +1,12 @@
 package net.maizegenetics.tassel.io
 
 import kotlinx.io.Buffer
+import kotlinx.io.Sink
 import kotlinx.io.Source
 import kotlinx.io.readByteArray
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.ops.ProgressReporter
+import net.maizegenetics.tassel.ops.report
 import net.maizegenetics.tassel.position.Position
 import net.maizegenetics.tassel.taxa.TaxaList
 
@@ -16,6 +18,8 @@ import net.maizegenetics.tassel.taxa.TaxaList
  * the magic is at byte 0. A [RandomAccessSource] is BGZF, inflated in parallel by [BgzfReader]. Records may cross
  * block boundaries. The next record starts at the next inflated byte, including when htslib put the header in its
  * own block.
+ *
+ * [write] emits the records [Vcf.write] prints as BCF 2.2 inside BGZF stored blocks. TASSEL 5 has no BCF writer.
  *
  * [BcfRead.warnings] carries a missing terminal BGZF EOF block, the same text [Vcf.read] records on [VcfRead].
  *
@@ -54,6 +58,39 @@ object Bcf {
             return BcfRead(table, reader.warnings.toList())
         } finally {
             reader.close()
+        }
+    }
+
+    /**
+     * Writes [table] as BCF 2.2 inside BGZF stored blocks.
+     *
+     * The header is the lines [Vcf.write] emits, plus the PASS filter line, `IDX` on each FORMAT and INFO line,
+     * and one `##contig` line per distinct chromosome in site order. Each record uses that site's REF, ALT, and
+     * GT indexes. QUAL is missing, FILTER is PASS, INFO is empty, and GT is the only FORMAT field. TASSEL 5 has
+     * no BCF writer.
+     *
+     * Sites are visited through [GenotypeTable.siteBlocks]. [sink] receives the `.bcf` and is left open.
+     *
+     * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
+     */
+    suspend fun write(table: GenotypeTable, sink: Sink, progress: ProgressReporter = ProgressReporter.None) {
+        val header = bcfExportHeader(table)
+        val encoder = BcfRecordEncoder(table.numberOfTaxa, header.gtId, header.contigs)
+        val genotypes = ByteArray(table.numberOfTaxa)
+        val numberOfSites = table.numberOfSites
+        BgzfWriter(sink, BgzfLayout.Bcf).use { writer ->
+            writer.write(header.preamble)
+            writer.endHeader()
+            for (block in table.siteBlocks()) {
+                for (site in block.sites) {
+                    val position = table.positions[site]
+                    block.copySiteGenotypes(site, genotypes)
+                    val record = vcfSiteRecord(position.knownVariants, block.siteStats(site), genotypes)
+                    encoder.encode(position, record)
+                    writer.write(encoder.bytes, 0, encoder.size)
+                }
+                progress.report(block.sites.last + 1, numberOfSites, "Writing BCF")
+            }
         }
     }
 
