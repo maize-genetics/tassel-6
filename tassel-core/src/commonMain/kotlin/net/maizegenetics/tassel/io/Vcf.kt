@@ -1,7 +1,11 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.io.Buffer
+import kotlinx.io.RawSink
 import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlinx.io.buffered
+import kotlinx.io.readTo
 import kotlinx.io.writeString
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
@@ -21,6 +25,7 @@ import net.maizegenetics.tassel.taxa.TaxaList
  *
  * [write] exports the text TASSEL 5 writes for a table with no reference allele: the `##Tassel` line, one `GT`
  * record per site, and `.` for QUAL and INFO. `##SAMPLE` and `##contig` lines are not written.
+ * [writeBgzf] is that text inside BGZF at the fixed DEFLATE level.
  *
  * [read] of a [kotlinx.io.Source] does not decompress: hand it an already-inflated source. [read] of a
  * [RandomAccessSource] inflates BGZF itself, in parallel when the host has more than one worker.
@@ -110,6 +115,27 @@ object Vcf {
             progress.report(block.sites.last + 1, numberOfSites, "Writing VCF")
         }
         sink.flush()
+    }
+
+    /**
+     * Writes [table] as VCF text inside BGZF at the fixed DEFLATE level.
+     *
+     * [write] takes a [Sink] and [BgzfWriter] takes bytes, so the text is copied through in chunks and is
+     * not held as one file. The VCF layout ends the header block when a line does not start with `#`. [sink]
+     * stays open; closing the writer appends the BGZF EOF member. The compressor is the fixed DEFLATE level,
+     * not stored blocks.
+     *
+     * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
+     */
+    suspend fun writeBgzf(table: GenotypeTable, sink: Sink, progress: ProgressReporter = ProgressReporter.None) {
+        val writer = BgzfWriter(sink, BgzfLayout.Vcf)
+        try {
+            BgzfByteSink(writer).buffered().use { text ->
+                write(table, text, progress)
+            }
+        } finally {
+            writer.close()
+        }
     }
 
     private suspend fun readRecords(
@@ -224,3 +250,27 @@ internal class VcfSites(
 
 /** A bgzipped VCF and the warnings found while inflating it. */
 class VcfRead(val table: GenotypeTable, val warnings: List<String>)
+
+/** Copies bytes into a [BgzfWriter] without holding the whole file. Closing this closes [writer]. */
+private class BgzfByteSink(private val writer: BgzfWriter) : RawSink {
+    private val chunk = ByteArray(CHUNK)
+
+    override fun write(source: Buffer, byteCount: Long) {
+        require(byteCount >= 0L) { "byteCount: $byteCount" }
+        var remaining = byteCount
+        while (remaining > 0) {
+            val count = minOf(remaining, chunk.size.toLong()).toInt()
+            source.readTo(chunk, endIndex = count)
+            writer.write(chunk, endIndex = count)
+            remaining -= count
+        }
+    }
+
+    override fun flush() = writer.flush()
+
+    override fun close() = writer.close()
+
+    private companion object {
+        const val CHUNK = 8192
+    }
+}

@@ -8,7 +8,7 @@ import kotlinx.io.writeString
  *
  * It deals in a `kotlinx.io.Sink` rather than text because that is what the core writers take between them:
  * `ResultTable`, `PhenotypeTable`, and `DistanceMatrix` write to an `Appendable` (wrap the sink in
- * [SinkAppendable]), and `HapMap.write` writes to the sink directly.
+ * [SinkAppendable]), and the genotype writers write to the sink directly.
  */
 interface ResultFiles {
     /**

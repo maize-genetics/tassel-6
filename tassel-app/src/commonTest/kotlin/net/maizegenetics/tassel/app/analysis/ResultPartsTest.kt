@@ -146,10 +146,4 @@ class ResultPartsTest {
 
         assertTrue(failure.message!!.contains("resultParts"), failure.message!!)
     }
-
-    @Test
-    fun aGenotypeExportKeepsTheHapMapExtensionAndDoesNotDoubleIt() = runTest {
-        assertEquals("mdp_genotype.hmp.txt", genotypeFileName("mdp_genotype.hmp.txt"))
-        assertEquals("filtered.hmp.txt", genotypeFileName("filtered"))
-    }
 }

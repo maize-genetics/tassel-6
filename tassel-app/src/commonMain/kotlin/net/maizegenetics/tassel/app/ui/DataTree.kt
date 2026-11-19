@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
@@ -16,9 +18,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.app.state.AnalysisResult
 import net.maizegenetics.tassel.app.state.AppEvent
 import net.maizegenetics.tassel.app.state.AppState
@@ -76,6 +83,7 @@ fun DataTree(state: AppState, onEvent: (AppEvent) -> Unit, modifier: Modifier = 
 
 @Composable
 private fun DatasetRow(dataset: Dataset, showing: Showing, onEvent: (AppEvent) -> Unit) {
+    var exportMenu by remember { mutableStateOf(false) }
     NavigationDrawerItem(
         selected = showing == Showing.Dataset(dataset.id),
         onClick = { onEvent(AppEvent.Select(dataset.id)) },
@@ -92,7 +100,18 @@ private fun DatasetRow(dataset: Dataset, showing: Showing, onEvent: (AppEvent) -
         },
         badge = {
             Column {
-                TextButton(onClick = { onEvent(AppEvent.ExportDataset(dataset.id)) }) { Text("Export") }
+                TextButton(onClick = { exportMenu = true }) { Text("Export") }
+                DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
+                    GenotypeExportFormat.entries.forEach { format ->
+                        DropdownMenuItem(
+                            text = { Text(format.label) },
+                            onClick = {
+                                exportMenu = false
+                                onEvent(AppEvent.ExportDataset(dataset.id, format))
+                            },
+                        )
+                    }
+                }
                 TextButton(onClick = { onEvent(AppEvent.Close(dataset.id)) }) { Text("Close") }
             }
         },

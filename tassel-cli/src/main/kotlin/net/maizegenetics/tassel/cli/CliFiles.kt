@@ -1,21 +1,16 @@
 package net.maizegenetics.tassel.cli
 
-import kotlinx.io.Buffer
-import kotlinx.io.RawSink
 import kotlinx.io.Sink
 import kotlinx.io.asSink
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readTo
 import kotlinx.io.writeString
 import net.maizegenetics.tassel.analysis.GenotypeSummary
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.Bcf
-import net.maizegenetics.tassel.io.BgzfLayout
-import net.maizegenetics.tassel.io.BgzfWriter
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.io.IndexedGenotypes
 import net.maizegenetics.tassel.io.IndexedVcf
@@ -40,7 +35,7 @@ const val VCF_EXTENSION: String = ".vcf"
 
 /**
  * bgzip-compressed VCF. On input the bytes are detected by content; this suffix selects the VCF reader.
- * On output it writes VCF text through [BgzfWriter] at the fixed DEFLATE level.
+ * On output it writes VCF text through [Vcf.writeBgzf] at the fixed DEFLATE level.
  */
 const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
 
@@ -309,27 +304,9 @@ private fun genotypePart(table: GenotypeTable, output: String?, progress: Progre
     when (genotypeOutput(output)) {
         GenotypeOutput.HapMap -> OutputPart(null, HAPMAP_EXTENSION) { HapMap.write(table, it, progress = progress) }
         GenotypeOutput.Vcf -> OutputPart(null, VCF_EXTENSION) { Vcf.write(table, it, progress) }
-        GenotypeOutput.VcfGz -> OutputPart(null, VCF_GZIP_EXTENSION) { writeBgzfVcf(table, it, progress) }
+        GenotypeOutput.VcfGz -> OutputPart(null, VCF_GZIP_EXTENSION) { Vcf.writeBgzf(table, it, progress) }
         GenotypeOutput.Bcf -> OutputPart(null, BCF_EXTENSION) { Bcf.write(table, it, progress) }
     }
-
-/**
- * Writes [table] as VCF text inside BGZF at the fixed DEFLATE level.
- *
- * [Vcf.write] takes a [Sink] and [BgzfWriter] takes bytes, so the text is copied through in chunks and is
- * not held as one file. The VCF layout ends the header block when a line does not start with `#`. [sink]
- * stays open; closing the writer appends the BGZF EOF member.
- */
-private suspend fun writeBgzfVcf(table: GenotypeTable, sink: Sink, progress: ProgressReporter) {
-    val writer = BgzfWriter(sink, BgzfLayout.Vcf)
-    try {
-        BgzfByteSink(writer).buffered().use { text ->
-            Vcf.write(table, text, progress)
-        }
-    } finally {
-        writer.close()
-    }
-}
 
 /**
  * Writes [result] to files under the [output] base name, or to standard output when it is `null`.
@@ -387,30 +364,6 @@ private fun isGenotypeExtension(extension: String): Boolean = extension == HAPMA
     extension == VCF_EXTENSION ||
     extension == VCF_GZIP_EXTENSION ||
     extension == BCF_EXTENSION
-
-/** Copies bytes into a [BgzfWriter] without holding the whole file. Closing this closes [writer]. */
-private class BgzfByteSink(private val writer: BgzfWriter) : RawSink {
-    private val chunk = ByteArray(CHUNK)
-
-    override fun write(source: Buffer, byteCount: Long) {
-        require(byteCount >= 0L) { "byteCount: $byteCount" }
-        var remaining = byteCount
-        while (remaining > 0) {
-            val count = minOf(remaining, chunk.size.toLong()).toInt()
-            source.readTo(chunk, endIndex = count)
-            writer.write(chunk, endIndex = count)
-            remaining -= count
-        }
-    }
-
-    override fun flush() = writer.flush()
-
-    override fun close() = writer.close()
-
-    private companion object {
-        const val CHUNK = 8192
-    }
-}
 
 /** Lets the core's `Appendable` writers stream into a `kotlinx.io.Sink` without buffering the whole file. */
 private class SinkAppendable(private val sink: Sink) : Appendable {

@@ -2,6 +2,7 @@ package net.maizegenetics.tassel.app.state
 
 import net.maizegenetics.tassel.app.analysis.AnalysisForm
 import net.maizegenetics.tassel.app.analysis.ResultPart
+import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.ops.OperationDescriptor
 import net.maizegenetics.tassel.ops.Progress
@@ -125,8 +126,12 @@ sealed interface AppEvent {
     /** Drop the dataset with this id, and its results, from the tree. */
     data class Close(val id: Long) : AppEvent
 
-    /** Write the dataset with this id out as HapMap. */
-    data class ExportDataset(val id: Long) : AppEvent
+    /**
+     * Write the dataset with this id in [format].
+     *
+     * HapMap is the default, so a caller that does not ask still exports the text TASSEL 5 writes.
+     */
+    data class ExportDataset(val id: Long, val format: GenotypeExportFormat = GenotypeExportFormat.HapMap) : AppEvent
 
     /** Open the generated form for this operation. */
     data class ShowForm(val operationId: String) : AppEvent
