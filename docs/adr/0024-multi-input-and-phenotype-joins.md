@@ -1,6 +1,6 @@
 # ADR-0024: Multi-input operations (`DataSet`) and phenotype join semantics
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 
 ## Context
