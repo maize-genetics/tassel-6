@@ -1,0 +1,6 @@
+<Trait>	trait1	trait1	trait2	trait2
+<Header name=loc>	A	B	A	B	
+taxon1	11	14	21	24
+taxon2	12	15	22	25
+taxon3	13	16	23	26
+
