@@ -6,7 +6,9 @@ import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.ops.ProgressReporter
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.AttributeType
+import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 import net.maizegenetics.tassel.table.doubleToString
 import net.maizegenetics.tassel.testing.SuspendLazy
@@ -175,11 +177,11 @@ class PrincipalComponentsTest {
     fun principalComponentsAreFloatCovariatesOverEveryTaxon() = runTest {
         assertEquals(6, pcs().numberOfAttributes)
         assertEquals(tutorial().numberOfTaxa, pcs().numberOfObservations)
-        assertEquals(PhenotypeTable.AttributeType.taxa, pcs().attributes[0].type)
-        assertEquals(tutorial().taxa.names, pcs().attributes[0].values)
+        assertEquals(AttributeType.taxa, pcs().attributes[0].type)
+        assertEquals(tutorial().taxa.names, pcs().taxaAttribute.names)
         assertEquals((1..5).map { "PC$it" }, pcs().attributes.drop(1).map { it.name })
-        assertTrue(pcs().attributes.drop(1).all { it.type == PhenotypeTable.AttributeType.covariate })
-        assertTrue(pcs().attributes[1].values.all { it is Float }, "TASSEL 5 stores PCs as floats")
+        assertTrue(pcs().attributes.drop(1).all { it.type == AttributeType.covariate })
+        assertTrue(pcs().attributes.drop(1).all { it is NumericAttribute }, "TASSEL 5 stores PCs as floats")
     }
 
     /**
@@ -189,7 +191,8 @@ class PrincipalComponentsTest {
     @Test
     fun principalComponentLengthsRecoverTheEigenvalues() = runTest {
         for (component in 1..5) {
-            val scores = pcs().attributes[component].values.map { (it as Float).toDouble() }
+            val attribute = pcs().attributes[component] as NumericAttribute
+            val scores = (0 until attribute.size).map { attribute.value(it) }
             val variance = scores.sumOf { it * it } / (tutorial().numberOfTaxa - 1)
             val expected = eigenvalues()[component - 1, VALUE] as Double
             assertTrue(abs(variance - expected) < 1e-5, "PC$component variance $variance, eigenvalue $expected")

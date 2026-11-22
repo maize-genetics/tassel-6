@@ -6,7 +6,9 @@ import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.app.export.appendText
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.AttributeType
+import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 import net.maizegenetics.tassel.table.floatToString
 
@@ -127,13 +129,13 @@ private fun partName(title: String): String =
 
 /** PC1 against PC2, when the components table has both. */
 private fun scatterOf(components: PhenotypeTable): Chart.Scatter? {
-    val numeric = components.attributes.filter { it.type == PhenotypeTable.AttributeType.covariate }
+    val numeric = components.attributes(AttributeType.covariate).filterIsInstance<NumericAttribute>()
     if (numeric.size < 2) return null
     return Chart.Scatter(
         xLabel = numeric[0].name,
         yLabel = numeric[1].name,
-        x = FloatArray(components.numberOfObservations) { (numeric[0].values[it] as? Float) ?: 0f },
-        y = FloatArray(components.numberOfObservations) { (numeric[1].values[it] as? Float) ?: 0f },
+        x = numeric[0].toFloatArray(),
+        y = numeric[1].toFloatArray(),
     )
 }
 
@@ -146,7 +148,7 @@ private class ResultTableView(private val table: ResultTable) : TableView {
 private class PhenotypeTableView(private val table: PhenotypeTable) : TableView {
     override val columnNames: List<String> = table.attributes.map { it.name }
     override val rowCount: Int get() = table.numberOfObservations
-    override fun cell(row: Int, column: Int): String = PhenotypeTable.formatCell(table.attributes[column].values[row])
+    override fun cell(row: Int, column: Int): String = table.attributes[column].format(row)
 }
 
 /** The square matrix as TASSEL 5 writes it: the taxon name, then its whole row. */

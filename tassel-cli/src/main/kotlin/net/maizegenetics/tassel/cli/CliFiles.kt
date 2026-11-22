@@ -21,7 +21,7 @@ import net.maizegenetics.tassel.io.isBgzf
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.ProgressReporter
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 
 /** TASSEL 5's extension for a HapMap export. */

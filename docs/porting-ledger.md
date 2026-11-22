@@ -55,7 +55,7 @@ targets), `bridged`, `retired`.
 | `analysis/data/PrincipalComponentsPlugin.java`, `stats/PCA/PrinComp.java` | `pca` operation (Gram-matrix eigen), `analysis.principalComponents` | port | `golden/pca/eigenvectors*` and `golden/pca/pcs*` whole; `golden/pca/eigenvalues*` at their `rows-unordered` MANIFEST tolerance, because TASSEL 5's SVD does not sort (`PrincipalComponentsTest`, #47) | parity | #19 |
 | `analysis/numericaltransform/NumericalGenotypePlugin.java` (`setAlternateMinorAllelesToMinor`), `dna/snp/GenotypeTableUtils.convertGenotypeToFloatProbability`, `analysis/numericaltransform/ImputationPlugin.java` and `ImputationByMean.java` (the `by_mean` path) | `analysis.ReferenceProbability` | port | the PCA goldens, which the taxon-mean imputation moves by 7.6% if it is wrong (`PrincipalComponentsTest`) | parity | #19 |
 | `dna/snp/score/SiteScoreUtil.java`, `dna/snp/score/ReferenceProbabilityBuilder.java` | `analysis.SiteScore` | port | the 255-step round trip (`SiteScoreTest`); the PCA goldens, which need it to reach `rel 1e-9` | parity | #19 |
-| `phenotype/Phenotype.java`, `phenotype/PhenotypeUtils.java` (`write`) | `table.PhenotypeTable` and its `writeDelimited` | redesign | `golden/pca/pcs.txt` layout and values (`PhenotypeTableTest`, `PrincipalComponentsTest`) | parity | #19 |
+| `phenotype/Phenotype.java`, `phenotype/PhenotypeUtils.java` (`write`) | `phenotype.PhenotypeTable` (moved from `table` in #156) and its `writeDelimited` | redesign | `golden/pca/pcs.txt` layout and values (`PhenotypeTableTest`, `PrincipalComponentsTest`); the `phenotype-format` goldens written back byte for byte (`PhenotypeFilesTest`) | parity | #19, #156 |
 | `util/TableReport.java`, `util/SimpleTableReport.java` | `table.ResultTable`, `table.ResultTableBuilder` | redesign | via the summary and PCA table goldens (#15, #19) | in progress | #38 |
 | `util/TableReportUtils.java` (`saveDelimitedTableReport`) | `table.ResultTable.writeDelimited` | port | `summary/alleles.txt` written from its values (`ResultTableTest`) | parity | #38 |
 | `util/DoubleFormat.java` | `table.DoubleFormat` | port | every numeric cell of `summary/*.full.txt` and `pca/*.full.txt` against its rounded twin (`DoubleFormatGoldenTest`) | parity | #38 |
@@ -84,6 +84,26 @@ added, so all ten golden parameter sets are reachable through the specs, the CLI
 translator. `taxaList` takes only TASSEL 5's inline comma-separated form; its `.txt`, `.json`, and
 `.json.gz` file forms are not ported, because a spec parameter does not read files and no golden
 uses them.
+
+## Phase 2: phenotypes and statistics (epic #155)
+
+ADR-0023 records the model and the format rules. TASSEL 5 is the reference for the phenotype file
+formats; join, filter, and missing-value semantics are a redesign, so those rows are tested against
+hand-written expected tables rather than TASSEL 5 goldens.
+
+| TASSEL 5 source | TASSEL 6 target | Strategy | Golden test | Status | Issue |
+|-----------------|-----------------|----------|-------------|--------|-------|
+| `phenotype/CorePhenotype.java`, `NumericAttribute.java`, `CategoricalAttribute.java`, `TaxaAttribute.java`, `FilterPhenotype.java` (row subsets) | `phenotype.PhenotypeTable` (`selectRows`, `selectAttributes`), `phenotype.TaxaAttribute`, `NumericAttribute`, `FactorAttribute`. `Float` storage, NaN the only missing number, factor missing code -1, sorted levels, unique names, one taxa column (ADR-0023) | redesign | model invariants (`PhenotypeTableTest`); the `phenotype-format` goldens (`PhenotypeFilesTest`) | parity | #156 |
+| `phenotype/PhenotypeBuilder.java` (`importFile` detection, `importPhenotypeFile`) | `phenotype.PhenotypeFiles.read`, `PhenotypeReadOptions`, `PhenotypeRead` | port | `golden/phenotype-format/basic_phenotype_test.txt` and `earht_with_rep.txt` at the `phenotype` tolerance, and each golden written back byte for byte (`PhenotypeFilesTest`) | parity | #156 |
+| `java.lang.Float.parseFloat` (how TASSEL 5 parses every phenotype cell) | internal `phenotype.JavaFloat.parse`; hexadecimal literals are not accepted | port | bit-exact against `Float.parseFloat` on 55,000 inputs, including decimals at and either side of float halfway points (`JavaFloatJvmTest`); a JVM-generated corpus on every target (`JavaFloatTest`) | parity | #156 |
+| `phenotype/PhenotypeBuilder.java` (`importTraits`, `processTraits`, `processFactors`, `processTraitsAndFactors`) | `phenotype.PhenotypeFiles.read` for `<Trait>`, `<Covariate>`, `<Factor>`, `<Header name=x>` | port | TASSEL 5 exports of the tutorial traits and population structure and the `PhenotypeTests` files | planned | #157 |
+| `phenotype/PhenotypeBuilder.java` (`keepTaxa`, `removeTaxa`, `keepAttributes`, `changeAttributeType`, `removeMissingObservations`), `analysis/filter/FilterTraitsPlugin.java` | `filter-phenotype` operation | redesign | hand-written expected tables | planned | #158 |
+| none; TASSEL 5 has no phenotype summary | `phenotype-summary` operation | redesign | hand-computed values | planned | #159 |
+| `analysis/numericaltransform/TransformDataPlugin.java` | `transform-phenotype` operation | port | TASSEL 5 `-TransformDataPlugin` exports at `rel 1e-6` | planned | #160 |
+| `phenotype/PhenotypeBuilder.java` (`joinPhenotypes`, `mergeTwoPhenotypes`), `analysis/data/IntersectionAlignmentPlugin.java`, `UnionAlignmentPlugin.java` | `join-phenotypes` operation over a multi-input `DataSet` (ADR-0024) | redesign | hand-written fixtures; TASSEL 5 `-intersect`/`-union` as row-unordered cross-checks | planned | #161, #162 |
+| `phenotype/GenotypePhenotype.java`, `GenotypePhenotypeBuilder.java` | `GenotypePhenotype`, `join-genotype-phenotype` operation | redesign | hand-written cases | planned | #163 |
+| `stats/linearmodels/LinearModelUtils.java` (`Ftest`), Colt 1.2.0 `cern.jet.stat.Gamma` | `stats.SpecialFunctions`, `stats.fTestPValue` | port | Colt values from the pinned standalone's jar | planned | #164 |
+| commons-math3 3.4.1 `FDistribution`, `TDistribution`, `ChiSquaredDistribution`; Colt `Probability` | `stats.FDistribution`, `StudentTDistribution`, `ChiSquaredDistribution` | port | Colt tails and commons-math quantiles from the pinned standalone's jars | planned | #165 |
 
 ## Later phases
 

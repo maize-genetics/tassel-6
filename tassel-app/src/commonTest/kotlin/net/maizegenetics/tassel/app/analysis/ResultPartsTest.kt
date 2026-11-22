@@ -6,7 +6,8 @@ import net.maizegenetics.tassel.analysis.principalComponents
 import net.maizegenetics.tassel.app.testing.testTable
 import net.maizegenetics.tassel.app.testing.written
 import net.maizegenetics.tassel.distance.DistanceMatrix
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.resultTable
 import net.maizegenetics.tassel.taxa.TaxaList
 import kotlin.test.Test
@@ -122,7 +123,7 @@ class ResultPartsTest {
         assertEquals(listOf("Taxa", "PC1", "PC2"), table.columnNames)
         assertEquals("taxon0", table.cell(0, 0))
         assertEquals(
-            PhenotypeTable.formatCell(result.principalComponents.attributes[1].values[0]),
+            result.principalComponents.attributes[1].format(0),
             table.cell(0, 1),
         )
     }
@@ -130,7 +131,7 @@ class ResultPartsTest {
     @Test
     fun aPhenotypeWithOneCovariateHasNothingToPlotAgainst() = runTest {
         val phenotype = PhenotypeTable(
-            listOf(PhenotypeTable.taxa(listOf("B73", "Mo17")), PhenotypeTable.Attribute("PC1", floatArrayOf(1f, 2f))),
+            listOf(PhenotypeTable.taxa(listOf("B73", "Mo17")), NumericAttribute("PC1", floatArrayOf(1f, 2f))),
         )
 
         val parts = resultParts(phenotype, "mdp.pca")
