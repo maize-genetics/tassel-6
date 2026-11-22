@@ -1,0 +1,12 @@
+<Phenotype>
+taxa	factor	factor	data	data
+Taxa	env	rep	yield	ph
+B73	E1	1	33.5	5.5
+B73	E1	2	34.5	5.75
+B73	E2	1	35.5	6.0
+B73	E2	2	36.5	NaN
+Mo17	E1	1	43.5	4.0
+Mo17	E1	2	44.5	NaN
+Mo17	E2	1	45.5	NaN
+Mo17	E2	2	46.5	NaN
+Oh43	E1	1	NaN	7.0

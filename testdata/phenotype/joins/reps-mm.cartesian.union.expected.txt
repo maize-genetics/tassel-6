@@ -1,0 +1,10 @@
+<Phenotype>
+taxa	factor	data	factor	data
+Taxa	rep	yield	env	height
+B73	1	10.5	E1	150.0
+B73	1	10.5	E2	160.0
+B73	2	11.5	E1	150.0
+B73	2	11.5	E2	160.0
+Mo17	1	9.0	E1	140.0
+Mo17	2	9.5	E1	140.0
+W22	1	8.0	?	NaN

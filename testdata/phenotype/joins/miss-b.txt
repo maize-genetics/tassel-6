@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	factor	data
+Taxa	env	ph
+B73	E1	10.0
+B73	?	20.0
+Mo17	?	30.0
