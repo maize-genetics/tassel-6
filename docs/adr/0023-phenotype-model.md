@@ -87,9 +87,24 @@ TASSEL 5. Everything else may be defined fresh.
 
 ### Legacy formats
 
-`<Trait>`, `<Covariate>`, `<Factor>`, and `<Header name=x>` are recognized but not yet read.
-Issue #157 adds them and records their missing-token defaults here. The default set will include
-`-999` and `-99`. An unparseable token will be an error rather than silently missing.
+`<Trait>`, `<Covariate>`, `<Factor>`, and `<Header name=x>` files are read by the same
+`PhenotypeFiles.read` (issue #157). The format is detected from the first tag after the
+byte-order mark, blank lines, and `#` lines: `<Phenotype` is the format above, `<Trait`,
+`<Covariate`, `<Factor`, or `<Header` is legacy, and anything else is an error naming the accepted
+tags. TASSEL 5's prefixes (`trai`, `cov`, `fac`, `head`) and case-insensitivity are kept.
+
+- **`<Trait>`** names the columns after the taxon. A `<Covariate>` line makes them covariates,
+  otherwise they are data; a `<Factor>` line makes them factors. A `<Covariate>`, `<Factor>`, or
+  `<Header>` without a `<Trait>` line is an error. The taxa column is named `Taxa`.
+- **`<Header name=x>`** lines reshape the file to long format. Each header line becomes a factor
+  column `x`. Each data line gives one observation per distinct combination of header levels, in
+  first-appearance order, and traits are in first-appearance order too. A (trait, combination)
+  pair the file does not give is missing. TASSEL 5 sorts rows and columns, so the goldens are
+  compared with `rows-unordered`.
+- **Missing tokens.** The defaults are `-999`, `-99` (written exactly, so `-999.0` is a number),
+  `NA` and `NaN` in any case, `.`, and `?`, in numeric and factor columns alike. Any other
+  unparseable token is an error naming the line and column. `PhenotypeReadOptions.missingTokens`
+  replaces the defaults with an exact set.
 
 ### Parity scope (refines ADR-0009 for phenotypes)
 
@@ -115,6 +130,12 @@ Issue #157 adds them and records their missing-token defaults here. The default 
 | Leading whitespace, BOM, blank lines, or `#` lines break a `<Phenotype>` file | Trimmed or skipped |
 | Duplicate names and unknown types accepted or misread | Errors |
 | Hexadecimal floats (`0x1p3`) accepted | Not accepted; reported as not a number |
+| `<Trait>`: an unparseable token is silently missing | Error naming the line and column |
+| `<Header>`: `-999` and `-99` are numbers, and a NaN cell is unflagged | Missing, as in `<Trait>` files |
+| `<Trait>`/`<Header>` factor cells are always levels | `NA`, `NaN`, `.`, `?`, `-999`, and `-99` are missing |
+| `<Header>` rows and columns sorted | First-appearance order |
+| `<Header>`: short headers fail with an index error, long ones are truncated, a repeated (trait, level) overwrites | Errors |
+| Tags may follow data; `<Factor>` with `<Covariate>` or `<Header>` ignores one tag | Tags must precede data; those combinations are errors |
 
 ## Consequences
 
@@ -128,7 +149,7 @@ Issue #157 adds them and records their missing-token defaults here. The default 
   a file can differ from TASSEL 5. This is intended.
 - `formatCell(Any?)` and the untyped `PhenotypeTable.Attribute` are gone. PCA, the CLI, and the app
   use the typed attributes.
-- Follow-ups: legacy readers (#157), filters (#158), summary (#159), transforms (#160), and joins
+- Follow-ups: filters (#158), summary (#159), transforms (#160), and joins
   under ADR-0024 (#161, #162, #163).
 
 ## Alternatives considered
