@@ -152,3 +152,10 @@ command = tassel5 -t tutorial/mdp_traits.txt -TransformDataPlugin -standardize t
 golden/phenotype-transform/mdp_traits.standardize.txt = phenotype rel 1e-6 abs 1e-6
 command = tassel5 -r phenotype/earht_with_rep.txt -TransformDataPlugin -standardize true -factors rep -endPlugin -export golden/phenotype-transform/earht_with_rep.standardize-rep -exportType Phenotype
 golden/phenotype-transform/earht_with_rep.standardize-rep.txt = phenotype rel 1e-6 abs 1e-6
+
+[phenotype-join]
+description = TASSEL 5 -intersect and -union of the tutorial traits and population structure
+command = tassel5 -fork1 -t tutorial/mdp_traits.txt -fork2 -q tutorial/mdp_population_structure.txt -combine3 -input1 -input2 -intersect -export golden/phenotype-join/mdp_traits.q.intersect -exportType Phenotype -runfork1 -runfork2
+golden/phenotype-join/mdp_traits.q.intersect.txt = phenotype rows-unordered
+command = tassel5 -fork1 -t tutorial/mdp_traits.txt -fork2 -q tutorial/mdp_population_structure.txt -combine3 -input1 -input2 -union -export golden/phenotype-join/mdp_traits.q.union -exportType Phenotype -runfork1 -runfork2
+golden/phenotype-join/mdp_traits.q.union.txt = phenotype rows-unordered

@@ -1,0 +1,8 @@
+<Phenotype>
+taxa	factor	factor	data
+Taxa	env	rep	ph
+B73	E1	1	5.5
+B73	E1	2	5.75
+B73	E2	1	6.0
+Mo17	E1	1	4.0
+Oh43	E1	1	7.0

@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	data	data
+Taxa	yield	ear
+W22	33.0	300.0
+Mo17	22.0	200.0
+CML52	55.0	500.0

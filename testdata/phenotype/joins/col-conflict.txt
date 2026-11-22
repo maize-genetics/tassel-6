@@ -1,0 +1,5 @@
+<Phenotype>
+taxa	data
+Taxa	yield
+B73	11.0
+Mo17	9.0

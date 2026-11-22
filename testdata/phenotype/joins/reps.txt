@@ -1,0 +1,8 @@
+<Phenotype>
+taxa	factor	data
+Taxa	rep	yield
+B73	1	10.5
+B73	2	11.5
+Mo17	1	9.0
+Mo17	2	9.5
+W22	1	8.0

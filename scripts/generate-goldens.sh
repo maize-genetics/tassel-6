@@ -368,6 +368,20 @@ tassel5 -r phenotype/earht_with_rep.txt -TransformDataPlugin -standardize true -
   -export "$X/earht_with_rep.standardize-rep" -exportType Phenotype
 output "$X/earht_with_rep.standardize-rep.txt" "phenotype rel 1e-6 abs 1e-6"
 
+# -intersect and -union join the traits and the population structure. They need both inputs as one
+# dataset, so each is loaded in its own fork and combined; with plain -t and -q the plugin sees one
+# item at a time and waits on a dialog that headless TASSEL 5 never shows. The two share no factors and
+# no names, so TASSEL 6's defined order (left, then right) and TASSEL 5's sorted order differ only in
+# row order, which `rows-unordered` ignores (ADR-0024).
+J=golden/phenotype-join
+section phenotype-join "TASSEL 5 -intersect and -union of the tutorial traits and population structure"
+for mode in intersect union; do
+  tassel5 -fork1 -t tutorial/mdp_traits.txt -fork2 -q tutorial/mdp_population_structure.txt \
+    -combine3 -input1 -input2 "-$mode" -export "$J/mdp_traits.q.$mode" -exportType Phenotype \
+    -runfork1 -runfork2
+  output "$J/mdp_traits.q.$mode.txt" "phenotype rows-unordered"
+done
+
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"
 [[ -z "$leftover" ]] || die "unlisted files in testdata/golden: $leftover"

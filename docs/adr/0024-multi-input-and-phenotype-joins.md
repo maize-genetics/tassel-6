@@ -104,8 +104,9 @@ parameter decides:
 
 A shared name whose attribute types differ (factor against covariate, say) is an error unless
 `collision = suffix`; `coalesce` cannot merge across types. Parameter spelling follows the DSL's
-enum rule (constant names matched exactly); #162 fixes the spelling and the operation ids, which
-this ADR proposes as `intersect-phenotypes` and `union-phenotypes`.
+enum rule (constant names matched exactly); #162 fixes the spelling and the operation ids. It
+chose one operation, `join-phenotypes`, with an enum `type` (`intersect` or `union`), over the two ids this ADR first
+proposed (`intersect-phenotypes` and `union-phenotypes`).
 
 ### N-way joins
 

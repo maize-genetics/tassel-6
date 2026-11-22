@@ -1,0 +1,5 @@
+<Phenotype>
+taxa	covariate
+Taxa	env
+B73	0.5
+Mo17	0.75

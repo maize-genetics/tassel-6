@@ -1,0 +1,5 @@
+<Phenotype>
+taxa	factor	data	covariate
+Taxa	env.1	yield	env.2
+B73	E1	10.0	0.5
+Mo17	E1	9.0	0.75
