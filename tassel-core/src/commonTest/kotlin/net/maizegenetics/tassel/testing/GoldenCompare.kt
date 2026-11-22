@@ -275,11 +275,12 @@ private fun assertPhenotypeMatches(
         for (column in expectedRow.indices) {
             val where = "line $line (row \"${expectedRow.firstOrNull().orEmpty()}\"), column ${column + 1} " +
                 "(\"${expectedRows[2].getOrNull(column).orEmpty()}\")"
-            val problem = if (expectedRow[column] == actualRow[column]) {
-                null
-            } else {
-                "expected \"${expectedRow[column]}\", actual \"${actualRow[column]}\""
-            }
+            val problem = phenotypeCellProblem(
+                expectedRow[column],
+                actualRow[column],
+                numeric = types.getOrNull(column).let { it == "data" || it == "covariate" },
+                tolerance = tolerance,
+            )
             mismatches.check(where, problem)
         }
     }
@@ -287,6 +288,28 @@ private fun assertPhenotypeMatches(
 }
 
 private const val PHENOTYPE_HEADER_LINES = 3
+
+/** Identical text, or for a numeric attribute with a tolerance, numbers within its relative or absolute bound. */
+private fun phenotypeCellProblem(
+    expected: String,
+    actual: String,
+    numeric: Boolean,
+    tolerance: Tolerance.Phenotype,
+): String? {
+    if (expected == actual) return null
+    val expectedValue = expected.toDoubleOrNull()
+    val actualValue = actual.toDoubleOrNull()
+    if (numeric && expectedValue != null && actualValue != null) {
+        val problems = listOfNotNull(
+            tolerance.relative?.let { numericProblem(expectedValue, actualValue, Tolerance.Relative(it)) },
+            tolerance.absolute?.let { numericProblem(expectedValue, actualValue, Tolerance.Absolute(it)) },
+        )
+        // A cell passes when any bound is met, so it fails only when every bound reports a problem.
+        val bounds = listOfNotNull(tolerance.relative, tolerance.absolute)
+        if (bounds.isNotEmpty()) return if (problems.size < bounds.size) null else problems.first()
+    }
+    return "expected \"$expected\", actual \"$actual\""
+}
 
 /** Collects differing cells, so a failure can show the first few and the total. */
 private class Mismatches(private val source: String, private val tolerance: Tolerance) {
@@ -479,7 +502,11 @@ private fun describe(tolerance: Tolerance): String {
     val text = when (tolerance) {
         is Tolerance.Exact -> "exact"
         is Tolerance.Format -> "format"
-        is Tolerance.Phenotype -> "phenotype"
+        is Tolerance.Phenotype -> buildString {
+            append("phenotype")
+            tolerance.relative?.let { append(" rel $it") }
+            tolerance.absolute?.let { append(" abs $it") }
+        }
         is Tolerance.Absolute -> "abs ${tolerance.value}"
         is Tolerance.Relative -> "rel ${tolerance.value}"
     }

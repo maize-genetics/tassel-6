@@ -21,7 +21,9 @@
 #                  .full.txt twin (PCA signs are arbitrary, so TASSEL-rounded text can differ)
 #   phenotype      a <Phenotype> file: the tag and types lines identical, the names line
 #                  identical except the taxa column's name (TASSEL 5 always writes Taxa), and
-#                  every data cell identical as text (ADR-0023)
+#                  every data cell identical as text (ADR-0023); with 'rel X' and/or 'abs Y'
+#                  appended, a data or covariate cell may instead be a number within X relative
+#                  to the golden or within Y of it
 
 [tassel5]
 version = 5.2.98
@@ -137,3 +139,16 @@ command = tassel5 -t phenotype/version4format_covariate.txt -export golden/pheno
 golden/phenotype-legacy/version4format_covariate.txt = phenotype rows-unordered
 command = tassel5 -t phenotype/mdp_traits_nomissing.txt -export golden/phenotype-legacy/mdp_traits_nomissing -exportType Phenotype
 golden/phenotype-legacy/mdp_traits_nomissing.txt = phenotype rows-unordered
+
+[phenotype-transform]
+description = TransformDataPlugin log, power, and standardize, alone and within factor levels
+command = tassel5 -t tutorial/mdp_traits.txt -TransformDataPlugin -log natural -endPlugin -export golden/phenotype-transform/mdp_traits.log-natural -exportType Phenotype
+golden/phenotype-transform/mdp_traits.log-natural.txt = phenotype rel 1e-6 abs 1e-6
+command = tassel5 -t tutorial/mdp_traits.txt -TransformDataPlugin -log base_10 -endPlugin -export golden/phenotype-transform/mdp_traits.log-base_10 -exportType Phenotype
+golden/phenotype-transform/mdp_traits.log-base_10.txt = phenotype rel 1e-6 abs 1e-6
+command = tassel5 -t tutorial/mdp_traits.txt -TransformDataPlugin -power 0.5 -endPlugin -export golden/phenotype-transform/mdp_traits.power-0.5 -exportType Phenotype
+golden/phenotype-transform/mdp_traits.power-0.5.txt = phenotype rel 1e-6 abs 1e-6
+command = tassel5 -t tutorial/mdp_traits.txt -TransformDataPlugin -standardize true -endPlugin -export golden/phenotype-transform/mdp_traits.standardize -exportType Phenotype
+golden/phenotype-transform/mdp_traits.standardize.txt = phenotype rel 1e-6 abs 1e-6
+command = tassel5 -r phenotype/earht_with_rep.txt -TransformDataPlugin -standardize true -factors rep -endPlugin -export golden/phenotype-transform/earht_with_rep.standardize-rep -exportType Phenotype
+golden/phenotype-transform/earht_with_rep.standardize-rep.txt = phenotype rel 1e-6 abs 1e-6

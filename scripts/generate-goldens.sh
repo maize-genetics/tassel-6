@@ -227,7 +227,9 @@ manifest \
   "#                  .full.txt twin (PCA signs are arbitrary, so TASSEL-rounded text can differ)" \
   "#   phenotype      a <Phenotype> file: the tag and types lines identical, the names line" \
   "#                  identical except the taxa column's name (TASSEL 5 always writes Taxa), and" \
-  "#                  every data cell identical as text (ADR-0023)" \
+  "#                  every data cell identical as text (ADR-0023); with 'rel X' and/or 'abs Y'" \
+  "#                  appended, a data or covariate cell may instead be a number within X relative" \
+  "#                  to the golden or within Y of it" \
   "" \
   "[tassel5]" \
   "version = $TASSEL5_VERSION" \
@@ -346,6 +348,25 @@ for f in tutorial/mdp_traits tutorial/mdp_population_structure phenotype/version
   tassel5 -t "$f.txt" -export "$L/$(basename "$f")" -exportType Phenotype
   output "$L/$(basename "$f").txt" "phenotype rows-unordered"
 done
+
+# TransformDataPlugin standardizes with a float mean, which moves a standardized value by up to
+# ~8e-7. TASSEL 6 computes in double and narrows, so numbers are compared within 1e-6 relative or
+# 1e-6 absolute rather than as text; the absolute bound covers values near zero.
+X=golden/phenotype-transform
+section phenotype-transform "TransformDataPlugin log, power, and standardize, alone and within factor levels"
+transform() {
+  local name="$1" input="$2"
+  shift 2
+  tassel5 -t "$input" -TransformDataPlugin "$@" -endPlugin -export "$X/$name" -exportType Phenotype
+  output "$X/$name.txt" "phenotype rel 1e-6 abs 1e-6"
+}
+transform mdp_traits.log-natural tutorial/mdp_traits.txt -log natural
+transform mdp_traits.log-base_10 tutorial/mdp_traits.txt -log base_10
+transform mdp_traits.power-0.5 tutorial/mdp_traits.txt -power 0.5
+transform mdp_traits.standardize tutorial/mdp_traits.txt -standardize true
+tassel5 -r phenotype/earht_with_rep.txt -TransformDataPlugin -standardize true -factors rep -endPlugin \
+  -export "$X/earht_with_rep.standardize-rep" -exportType Phenotype
+output "$X/earht_with_rep.standardize-rep.txt" "phenotype rel 1e-6 abs 1e-6"
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"
