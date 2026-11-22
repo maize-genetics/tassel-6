@@ -45,7 +45,8 @@ fun assertMatchesGolden(
  * each side, which is how PCA eigenvectors are compared. `rows-unordered` sorts the data rows of
  * each side into a canonical order first, so a row is compared against the row that sorts the same
  * way rather than against the row on the same line; with it, `exact` compares cells rather than
- * whole text, so trailing whitespace and line order no longer count.
+ * whole text, so trailing whitespace and line order no longer count. [Tolerance.Phenotype] has its
+ * own rules; see it.
  */
 fun assertDelimitedMatches(
     expected: String,
@@ -58,6 +59,10 @@ fun assertDelimitedMatches(
     val actualText = normalizeLineEndings(actual)
     if (tolerance is Tolerance.Exact && !tolerance.rowsUnordered) {
         assertTextMatches(expectedText, actualText, source)
+        return
+    }
+    if (tolerance is Tolerance.Phenotype) {
+        assertPhenotypeMatches(expectedText, actualText, tolerance, delimiter, source)
         return
     }
 
@@ -211,6 +216,77 @@ fun assertMatrixMatches(
 fun normalizeLineEndings(text: String): String = text.replace("\r\n", "\n").replace('\r', '\n')
 
 // --- internals --------------------------------------------------------------------------------
+
+/**
+ * [Tolerance.Phenotype]: the first two lines (the `<Phenotype>` tag and the attribute types)
+ * identical, the names line identical outside the taxa column, then the data rows identical cell
+ * by cell, in a canonical order when `rows-unordered`.
+ */
+private fun assertPhenotypeMatches(
+    expected: String,
+    actual: String,
+    tolerance: Tolerance.Phenotype,
+    delimiter: String,
+    source: String,
+) {
+    val expectedRows = splitRows(expected, delimiter)
+    val actualRows = splitRows(actual, delimiter)
+    if (expectedRows.size < PHENOTYPE_HEADER_LINES || actualRows.size < PHENOTYPE_HEADER_LINES) {
+        fail(
+            "$source has ${expectedRows.size} lines and actual has ${actualRows.size}; a phenotype has three header lines",
+        )
+    }
+    assertHeaderMatches(expectedRows[0], actualRows[0], "$source tag line:")
+    assertHeaderMatches(expectedRows[1], actualRows[1], "$source types line:")
+    val types = expectedRows[1]
+    fun names(row: List<String>) = row.mapIndexed { column, name ->
+        if (types.getOrNull(column) ==
+            "taxa"
+        ) {
+            "<taxa>"
+        } else {
+            name
+        }
+    }
+    assertHeaderMatches(names(expectedRows[2]), names(actualRows[2]), "$source names line:")
+
+    val expectedData = expectedRows.drop(PHENOTYPE_HEADER_LINES)
+    val actualData = actualRows.drop(PHENOTYPE_HEADER_LINES)
+    if (expectedData.size != actualData.size) {
+        fail("$source has ${expectedData.size} observations, actual has ${actualData.size}")
+    }
+    fun order(rows: List<List<String>>): List<Int> = if (tolerance.rowsUnordered) {
+        rows.indices.sortedBy {
+            rows[it].joinToString(delimiter)
+        }
+    } else {
+        rows.indices.toList()
+    }
+    val expectedOrder = order(expectedData)
+    val actualOrder = order(actualData)
+    val mismatches = Mismatches(source, tolerance)
+    for (index in expectedOrder.indices) {
+        val expectedRow = expectedData[expectedOrder[index]]
+        val actualRow = actualData[actualOrder[index]]
+        val line = expectedOrder[index] + PHENOTYPE_HEADER_LINES + 1
+        if (expectedRow.size != actualRow.size) {
+            fail("$source line $line has ${expectedRow.size} cells, actual has ${actualRow.size}")
+        }
+        for (column in expectedRow.indices) {
+            val where = "line $line (row \"${expectedRow.firstOrNull().orEmpty()}\"), column ${column + 1} " +
+                "(\"${expectedRows[2].getOrNull(column).orEmpty()}\")"
+            val problem = if (expectedRow[column] == actualRow[column]) {
+                null
+            } else {
+                "expected \"${expectedRow[column]}\", actual \"${actualRow[column]}\""
+            }
+            mismatches.check(where, problem)
+        }
+    }
+    mismatches.assertNone()
+}
+
+private const val PHENOTYPE_HEADER_LINES = 3
 
 /** Collects differing cells, so a failure can show the first few and the total. */
 private class Mismatches(private val source: String, private val tolerance: Tolerance) {
@@ -403,6 +479,7 @@ private fun describe(tolerance: Tolerance): String {
     val text = when (tolerance) {
         is Tolerance.Exact -> "exact"
         is Tolerance.Format -> "format"
+        is Tolerance.Phenotype -> "phenotype"
         is Tolerance.Absolute -> "abs ${tolerance.value}"
         is Tolerance.Relative -> "rel ${tolerance.value}"
     }

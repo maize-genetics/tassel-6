@@ -80,6 +80,13 @@ sealed interface Tolerance {
     /** Headers, row labels, and layout identical; numbers are checked in the `.full.txt` twin. */
     data class Format(override val rowsUnordered: Boolean = false) : Tolerance
 
+    /**
+     * A `<Phenotype>` file: the tag and types lines identical, the names line identical except the
+     * taxa column's name, which TASSEL 5 always writes as `Taxa`, and every data cell identical as
+     * text. Identical text means identical floats, because both sides write `Float.toString`.
+     */
+    data class Phenotype(override val rowsUnordered: Boolean = false) : Tolerance
+
     /** Every number within [value] absolutely; [upToSign] allows negating whole columns. */
     data class Absolute(
         val value: Double,
@@ -108,6 +115,7 @@ sealed interface Tolerance {
             val tolerance = when (terms.firstOrNull()) {
                 "exact" -> Exact(rowsUnordered)
                 "format" -> Format(rowsUnordered)
+                "phenotype" -> Phenotype(rowsUnordered)
                 "abs" -> Absolute(number(), upToSign, rowsUnordered)
                 "rel" -> Relative(number(), upToSign, rowsUnordered)
                 else -> error("Unknown tolerance: '$text'")

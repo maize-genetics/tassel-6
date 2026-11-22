@@ -32,7 +32,7 @@ class TestDataTest {
         assertEquals(Tolerance.Exact(), manifest.tolerance("golden/summary/sites.txt"))
         assertEquals(Tolerance.Absolute(1e-9, upToSign = true), manifest.tolerance("golden/pca/eigenvectors.full.txt"))
         assertEquals(2, manifest.section("pca").commands.size)
-        assertEquals(30, manifest.outputs.size)
+        assertEquals(32, manifest.outputs.size)
     }
 
     @Test
@@ -48,6 +48,8 @@ class TestDataTest {
         assertEquals(Tolerance.Relative(1e-9), Tolerance.parse("rel 1e-9"))
         assertEquals(Tolerance.Absolute(1e-5, upToSign = true), Tolerance.parse("abs 1e-5 up-to-sign"))
         assertEquals(Tolerance.Exact(rowsUnordered = true), Tolerance.parse("exact rows-unordered"))
+        assertEquals(Tolerance.Phenotype(), Tolerance.parse("phenotype"))
+        assertEquals(Tolerance.Phenotype(rowsUnordered = true), Tolerance.parse("phenotype rows-unordered"))
         assertEquals(Tolerance.Relative(1e-9, rowsUnordered = true), Tolerance.parse("rel 1e-9 rows-unordered"))
         assertEquals(
             Tolerance.Absolute(1e-5, upToSign = true, rowsUnordered = true),
@@ -55,6 +57,7 @@ class TestDataTest {
         )
         assertFailsWith<IllegalStateException> { Tolerance.parse("abs") }
         assertFailsWith<IllegalArgumentException> { Tolerance.parse("exact up-to-sign") }
+        assertFailsWith<IllegalArgumentException> { Tolerance.parse("phenotype up-to-sign") }
         assertFailsWith<IllegalArgumentException> { Tolerance.parse("exact rows-unordered rows-unordered") }
         assertFailsWith<IllegalArgumentException> { GoldenManifest.parse("version = 1") }
     }

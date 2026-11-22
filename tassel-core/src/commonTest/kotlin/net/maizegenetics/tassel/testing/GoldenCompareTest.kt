@@ -178,6 +178,30 @@ class GoldenCompareTest {
         }
     }
 
+    @Test
+    fun phenotypeIgnoresOnlyTheTaxaColumnsName() {
+        assertDelimitedMatches(PHENOTYPE, PHENOTYPE.replace("Taxa\tEarHT", "Taxon\tEarHT"), Tolerance.Phenotype())
+        val renamed = failure {
+            assertDelimitedMatches(PHENOTYPE, PHENOTYPE.replace("EarHT", "earht"), Tolerance.Phenotype())
+        }
+        assertContains(renamed, "names line")
+        val retyped = failure {
+            assertDelimitedMatches(PHENOTYPE, PHENOTYPE.replace("taxa\tdata", "taxa\tcovariate"), Tolerance.Phenotype())
+        }
+        assertContains(retyped, "types line")
+    }
+
+    @Test
+    fun phenotypeComparesCellsAsTextAndHonoursRowsUnordered() {
+        val problem =
+            failure { assertDelimitedMatches(PHENOTYPE, PHENOTYPE.replace("64.75", "64.750"), Tolerance.Phenotype()) }
+        assertContains(problem, "1 of 4 cells differ (tolerance phenotype)")
+        assertContains(problem, "expected \"64.75\", actual \"64.750\"")
+        val swapped = PHENOTYPE.replace("B73\t64.75\nMo17\tNaN\n", "Mo17\tNaN\nB73\t64.75\n")
+        failure { assertDelimitedMatches(PHENOTYPE, swapped, Tolerance.Phenotype()) }
+        assertDelimitedMatches(PHENOTYPE, swapped, Tolerance.Phenotype(rowsUnordered = true))
+    }
+
     private fun failure(block: () -> Unit): String {
         val message = assertFailsWith<AssertionError>(block = block).message.orEmpty()
         assertTrue(message.isNotEmpty(), "the failure carried no message")
@@ -201,5 +225,6 @@ class GoldenCompareTest {
         const val LABELLED = "Taxa\tInbreeding Coefficient\n0\tTBD\n"
         const val EIGENVECTORS = "Trait\tPC1\tPC2\nx\t0.5\t0.1\ny\t-0.8\t0.2\nz\t0.3\t0.3\n"
         const val MATRIX = "##Matrix_Type=Centered_IBS\n2\na\t1.5\t-0.25\nb\t-0.25\t1.25\n"
+        const val PHENOTYPE = "<Phenotype>\ntaxa\tdata\nTaxa\tEarHT\nB73\t64.75\nMo17\tNaN\n"
     }
 }
