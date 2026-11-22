@@ -187,7 +187,8 @@ class PhenotypeFilesTest {
             "<Phenotype>\n" to "Phenotype input ends before its types line",
             "<Phenotype>\ntaxa data\n" to "Phenotype input ends before its names line",
             "Taxa\tEarHT\nB73\t1\n" to
-                "Line 1: not a TASSEL phenotype file; it must start with <Phenotype>, found 'Taxa\tEarHT'",
+                "Line 1: not a TASSEL phenotype file; it must start with <Phenotype>, <Trait>, <Covariate>, " +
+                "<Factor>, or <Header>, found 'Taxa\tEarHT'",
             "<Phenotype>\ntaxa data\nTaxa\n" to "Line 3 names 1 attributes, but line 2 types 2; the counts must match",
             "<Phenotype>\ntaxa trait\nTaxa EarHT\n" to
                 "Line 2: unknown attribute type 'trait'; expected taxa, factor, covariate, or data",
@@ -202,19 +203,6 @@ class PhenotypeFilesTest {
         cases.forEach { (text, expected) ->
             val failure = assertFailsWith<IllegalArgumentException>(text) { read(text) }
             assertEquals(expected, failure.message, text)
-        }
-    }
-
-    /** The tutorial traits are a `<Trait>` file, which issue #157 teaches the reader. */
-    @Test
-    fun saysLegacyFormatsAreNotReadYet() = runTest {
-        listOf("tutorial/mdp_traits.txt", "tutorial/mdp_population_structure.txt").forEach { input ->
-            val failure = assertFailsWith<IllegalArgumentException> { readFile(input) }
-            assertEquals(
-                "Line 1: TASSEL 5's legacy <Trait>, <Covariate>, <Factor>, and <Header> phenotype formats are " +
-                    "not read yet; only <Phenotype> files are",
-                failure.message,
-            )
         }
     }
 

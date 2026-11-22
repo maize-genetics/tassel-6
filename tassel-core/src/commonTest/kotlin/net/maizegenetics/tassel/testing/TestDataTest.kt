@@ -32,7 +32,7 @@ class TestDataTest {
         assertEquals(Tolerance.Exact(), manifest.tolerance("golden/summary/sites.txt"))
         assertEquals(Tolerance.Absolute(1e-9, upToSign = true), manifest.tolerance("golden/pca/eigenvectors.full.txt"))
         assertEquals(2, manifest.section("pca").commands.size)
-        assertEquals(32, manifest.outputs.size)
+        assertEquals(37, manifest.outputs.size)
     }
 
     @Test

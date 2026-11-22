@@ -24,8 +24,8 @@ import net.maizegenetics.tassel.ops.report
  * Cells are separated by runs of whitespace, as TASSEL 5 splits them. Numbers are parsed exactly
  * as Java's `Float.parseFloat` parses them.
  *
- * TASSEL 5's legacy `<Trait>`, `<Covariate>`, `<Factor>`, and `<Header>` files are recognized but
- * not yet read.
+ * The format is detected from the first tag. TASSEL 5's legacy `<Trait>`, `<Covariate>`,
+ * `<Factor>`, and `<Header name=x>` files are read too; see [LegacyPhenotypeReader].
  *
  * Where this departs from TASSEL 5 (ADR-0023):
  * - It is more forgiving. Lines are trimmed, a byte-order mark is dropped, and blank lines and
@@ -41,7 +41,7 @@ object PhenotypeFiles {
     /**
      * Reads one phenotype from [source].
      *
-     * @throws IllegalArgumentException if [source] is empty, is not a `<Phenotype>` file, or has a
+     * @throws IllegalArgumentException if [source] is empty, starts with no accepted tag, or has a
      *   malformed header, a line of the wrong width, or a cell that is not a number in a numeric
      *   column. The message names the line.
      */
@@ -53,18 +53,14 @@ object PhenotypeFiles {
         val lines = Lines(source)
         val tag = lines.next() ?: throw IllegalArgumentException("Phenotype input is empty")
         val format = tag.text.substringBefore(' ').substringBefore('\t').lowercase()
-        when {
-            format.startsWith("<phenotype") -> Unit
-            LEGACY_TAGS.any { format.startsWith(it) } -> throw IllegalArgumentException(
-                "Line ${tag.number}: TASSEL 5's legacy <Trait>, <Covariate>, <Factor>, and <Header> phenotype " +
-                    "formats are not read yet; only <Phenotype> files are",
-            )
+        return when {
+            format.startsWith("<phenotype") -> readPhenotype(lines, options, progress)
+            LegacyPhenotypeReader.recognizes(tag.text) -> LegacyPhenotypeReader.read(tag, lines, options, progress)
             else -> throw IllegalArgumentException(
-                "Line ${tag.number}: not a TASSEL phenotype file; it must start with <Phenotype>, " +
-                    "found '${excerpt(tag.text)}'",
+                "Line ${tag.number}: not a TASSEL phenotype file; it must start with <Phenotype>, <Trait>, " +
+                    "<Covariate>, <Factor>, or <Header>, found '${excerpt(tag.text)}'",
             )
         }
-        return readPhenotype(lines, options, progress)
     }
 
     /**
@@ -75,6 +71,14 @@ object PhenotypeFiles {
         token.equals("NaN", ignoreCase = true) ||
         token == "." ||
         token == FactorAttribute.MISSING
+
+    /**
+     * Whether [token] is one of the missing-value spellings a legacy `<Trait>`, `<Covariate>`,
+     * `<Factor>`, or `<Header>` file is read with by default: the `<Phenotype>` ones plus `-999`
+     * and `-99`, written exactly (`-999.0` is a number).
+     */
+    fun isLegacyDefaultMissingToken(token: String): Boolean =
+        isDefaultMissingToken(token) || token == "-999" || token == "-99"
 
     private suspend fun readPhenotype(
         lines: Lines,
@@ -168,7 +172,7 @@ object PhenotypeFiles {
     }
 
     /** [line] split on runs of Java `\s` whitespace; [line] is already trimmed. */
-    private fun splitOnWhitespace(line: String): List<String> {
+    internal fun splitOnWhitespace(line: String): List<String> {
         val parts = ArrayList<String>()
         var start = -1
         for (index in line.indices) {
@@ -183,11 +187,11 @@ object PhenotypeFiles {
         return parts
     }
 
-    private fun excerpt(line: String): String =
+    internal fun excerpt(line: String): String =
         line.take(EXCERPT_LENGTH) + if (line.length > EXCERPT_LENGTH) "..." else ""
 
     /** The lines of [source] that carry content, trimmed, with their 1-based line numbers. */
-    private class Lines(private val source: Source) {
+    internal class Lines(private val source: Source) {
         private var number = 0
 
         fun next(): Line? {
@@ -201,19 +205,19 @@ object PhenotypeFiles {
         }
     }
 
-    private class Line(val number: Int, val text: String)
+    internal class Line(val number: Int, val text: String)
 
-    private sealed interface Column
+    internal sealed interface Column
 
-    private class TaxaColumn : Column {
+    internal class TaxaColumn : Column {
         val taxa = ArrayList<String>()
     }
 
-    private class FactorColumn : Column {
+    internal class FactorColumn : Column {
         val labels = ArrayList<String?>()
     }
 
-    private class NumericColumn : Column {
+    internal class NumericColumn : Column {
         private var values = FloatArray(INITIAL_CAPACITY)
         private var size = 0
 
@@ -225,12 +229,11 @@ object PhenotypeFiles {
         fun toArray(): FloatArray = values.copyOf(size)
     }
 
-    private val LEGACY_TAGS = listOf("<trait", "<cov", "<fac", "<head")
     private const val BYTE_ORDER_MARK = "\uFEFF"
     private const val EXCERPT_LENGTH = 40
     private const val INITIAL_CAPACITY = 64
-    private const val PROGRESS_OBSERVATIONS = 256
-    private const val PROGRESS_MESSAGE = "Reading phenotype"
+    internal const val PROGRESS_OBSERVATIONS = 256
+    internal const val PROGRESS_MESSAGE = "Reading phenotype"
 }
 
 /**
@@ -238,7 +241,8 @@ object PhenotypeFiles {
  *
  * @property name the table's display name, which TASSEL 5 takes from the file name.
  * @property missingTokens the exact cell spellings read as missing, in numeric and factor columns.
- *   `null` means the defaults: `NA` and `NaN` in any case, `.`, and `?`.
+ *   `null` means the defaults: `NA` and `NaN` in any case, `.`, and `?`, and for the legacy
+ *   formats also `-999` and `-99`.
  */
 class PhenotypeReadOptions(val name: String = PhenotypeTable.DEFAULT_NAME, val missingTokens: Set<String>? = null)
 
