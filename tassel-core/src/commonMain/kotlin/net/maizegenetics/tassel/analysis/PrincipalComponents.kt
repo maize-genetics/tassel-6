@@ -4,7 +4,9 @@ import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.math.SymmetricEigenDecomposition
 import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.ops.report
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 import net.maizegenetics.tassel.table.resultTable
 import kotlin.math.max
@@ -177,11 +179,11 @@ private fun principalComponentTable(
 ): PhenotypeTable {
     val numberOfTaxa = genotypes.numberOfTaxa
     val scale = sqrt((numberOfTaxa - 1).toDouble())
-    val attributes = ArrayList<PhenotypeTable.Attribute>(singular.size + 1)
+    val attributes = ArrayList<PhenotypeAttribute>(singular.size + 1)
     attributes += PhenotypeTable.taxa(genotypes.taxa.names)
     for (component in singular.indices) {
         val factor = scale * singular[component]
-        attributes += PhenotypeTable.Attribute(
+        attributes += NumericAttribute(
             "PC${component + 1}",
             FloatArray(numberOfTaxa) { (factor * eigen[it, component]).toFloat() },
         )

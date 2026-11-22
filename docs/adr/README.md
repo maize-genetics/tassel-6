@@ -31,3 +31,4 @@ sequentially; use a short kebab-case title.
 | [0020](0020-kinship-numerics.md) | Kinship numerics, tolerance parity, and parallelism | Accepted |
 | [0021](0021-pure-kotlin-compressed-indexed-vcf.md) | Pure-Kotlin compressed and indexed VCF reading | Superseded by ADR-0022 |
 | [0022](0022-bcf-reading-and-writing.md) | BCF reading and writing, and BGZF writing | Proposed |
+| [0023](0023-phenotype-model.md) | Phenotype data model and TASSEL 5 file compatibility | Proposed |
