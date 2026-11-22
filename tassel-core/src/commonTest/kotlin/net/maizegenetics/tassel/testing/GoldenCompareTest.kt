@@ -202,6 +202,27 @@ class GoldenCompareTest {
         assertDelimitedMatches(PHENOTYPE, swapped, Tolerance.Phenotype(rowsUnordered = true))
     }
 
+    @Test
+    fun phenotypeNumericToleranceAppliesToNumericAttributesOnly() {
+        val golden = "<Phenotype>\ntaxa\tfactor\tdata\nTaxa\tenv\ty\n811\t1\t100.0\n812\t2\tNaN\n"
+        val tolerance = Tolerance.Phenotype(relative = 1e-6)
+        assertDelimitedMatches(golden, golden.replace("100.0", "100.00005"), tolerance)
+        val tooFar = failure { assertDelimitedMatches(golden, golden.replace("100.0", "100.001"), tolerance) }
+        assertContains(tooFar, "tolerance phenotype rel")
+        failure { assertDelimitedMatches(golden, golden.replace("811", "811.0"), tolerance) }
+        failure { assertDelimitedMatches(golden, golden.replace("\t1\t", "\t1.0\t"), tolerance) }
+        failure { assertDelimitedMatches(golden, golden.replace("NaN", "3"), tolerance) }
+        failure { assertDelimitedMatches(golden, golden.replace("100.0", "100.00005"), Tolerance.Phenotype()) }
+        // Either bound is enough: near zero a relative bound is useless, so an absolute one covers it.
+        val nearZero = "<Phenotype>\ntaxa\tdata\nTaxa\ty\nt1\t0.001\n"
+        val both = Tolerance.Phenotype(relative = 1e-6, absolute = 1e-6)
+        assertDelimitedMatches(nearZero, nearZero.replace("0.001", "0.0010005"), Tolerance.Phenotype(absolute = 1e-6))
+        assertDelimitedMatches(nearZero, nearZero.replace("0.001", "0.0010005"), Tolerance.Phenotype(relative = 1e-3))
+        assertDelimitedMatches(nearZero, nearZero.replace("0.001", "0.0010005"), both)
+        failure { assertDelimitedMatches(nearZero, nearZero.replace("0.001", "0.00102"), both) }
+        assertDelimitedMatches(nearZero, nearZero.replace("0.001", "0.0010000005"), both)
+    }
+
     private fun failure(block: () -> Unit): String {
         val message = assertFailsWith<AssertionError>(block = block).message.orEmpty()
         assertTrue(message.isNotEmpty(), "the failure carried no message")

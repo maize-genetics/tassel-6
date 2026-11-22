@@ -84,8 +84,16 @@ sealed interface Tolerance {
      * A `<Phenotype>` file: the tag and types lines identical, the names line identical except the
      * taxa column's name, which TASSEL 5 always writes as `Taxa`, and every data cell identical as
      * text. Identical text means identical floats, because both sides write `Float.toString`.
+     *
+     * With [relative] or [absolute], a cell of a `data` or `covariate` attribute may instead be a
+     * number within that fraction of the golden's, or within that distance of it; other cells stay
+     * identical text.
      */
-    data class Phenotype(override val rowsUnordered: Boolean = false) : Tolerance
+    data class Phenotype(
+        override val rowsUnordered: Boolean = false,
+        val relative: Double? = null,
+        val absolute: Double? = null,
+    ) : Tolerance
 
     /** Every number within [value] absolutely; [upToSign] allows negating whole columns. */
     data class Absolute(
@@ -115,18 +123,34 @@ sealed interface Tolerance {
             val tolerance = when (terms.firstOrNull()) {
                 "exact" -> Exact(rowsUnordered)
                 "format" -> Format(rowsUnordered)
-                "phenotype" -> Phenotype(rowsUnordered)
+                "phenotype" -> phenotypeTolerance(text, terms, rowsUnordered)
                 "abs" -> Absolute(number(), upToSign, rowsUnordered)
                 "rel" -> Relative(number(), upToSign, rowsUnordered)
                 else -> error("Unknown tolerance: '$text'")
             }
-            val expectedTerms = if (tolerance is Absolute || tolerance is Relative) 2 else 1
+            val expectedTerms = when {
+                tolerance is Absolute || tolerance is Relative -> 2
+                tolerance is Phenotype -> terms.size
+                else -> 1
+            }
             require(
                 terms.size == expectedTerms &&
                     modifiers.size == modifiers.distinct().size &&
                     (!upToSign || expectedTerms == 2),
             ) { "Malformed tolerance: '$text'" }
             return tolerance
+        }
+
+        /** `phenotype`, optionally followed by `rel X` and `abs Y` in either order. */
+        private fun phenotypeTolerance(text: String, terms: List<String>, rowsUnordered: Boolean): Phenotype {
+            val rest = terms.drop(1)
+            require(rest.size % 2 == 0) { "Malformed tolerance: '$text'" }
+            val bounds = rest.chunked(2).associate { (kind, number) ->
+                require(kind == "rel" || kind == "abs") { "Malformed tolerance: '$text'" }
+                kind to (number.toDoubleOrNull() ?: error("Tolerance needs a number: '$text'"))
+            }
+            require(bounds.size == rest.size / 2) { "Malformed tolerance: '$text'" }
+            return Phenotype(rowsUnordered, bounds["rel"], bounds["abs"])
         }
     }
 }

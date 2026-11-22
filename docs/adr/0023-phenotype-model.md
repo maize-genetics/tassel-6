@@ -136,6 +136,12 @@ tags. TASSEL 5's prefixes (`trai`, `cov`, `fac`, `head`) and case-insensitivity 
 | `<Header>` rows and columns sorted | First-appearance order |
 | `<Header>`: short headers fail with an index error, long ones are truncated, a repeated (trait, level) overwrites | Errors |
 | Tags may follow data; `<Factor>` with `<Covariate>` or `<Header>` ignores one tag | Tags must precede data; those combinations are errors |
+| `TransformDataPlugin` keeps an unflagged NaN and `-Infinity` (log of 0 or of a negative, a power with no real result) | Any NaN or infinite result is missing, and the result's warnings count them per trait |
+| `TransformDataPlugin` standardizes with a `Float` mean and `Float` arithmetic, so a standardized value can be off by up to ~8e-7 | `Double` throughout, then narrowed to `Float`; goldens are compared within 1e-6 relative or absolute |
+| A trait name that is not a data attribute is silently ignored; `-factors` without `-standardize` is ignored | Errors naming the attribute and its type |
+| A row with a missing factor value is left out of every group and keeps its unstandardized value | The row's result is missing, and the warning says why |
+| `-standardize` of one value or of a constant trait gives NaN, kept unflagged | Missing, with a warning |
+| `Math.pow(NaN, 0)` turns a missing value into 1 | A missing value stays missing |
 
 ## Consequences
 
@@ -149,7 +155,7 @@ tags. TASSEL 5's prefixes (`trai`, `cov`, `fac`, `head`) and case-insensitivity 
   a file can differ from TASSEL 5. This is intended.
 - `formatCell(Any?)` and the untyped `PhenotypeTable.Attribute` are gone. PCA, the CLI, and the app
   use the typed attributes.
-- Follow-ups: filters (#158), summary (#159), transforms (#160), and joins
+- Follow-ups: filters (#158), summary (#159), transforms (#160, done), and joins
   under ADR-0024 (#161, #162, #163).
 
 ## Alternatives considered
