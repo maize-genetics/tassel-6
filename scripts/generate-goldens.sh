@@ -86,7 +86,11 @@ for f in "${INPUTS[@]}"; do
 done
 
 # TASSEL 5's own phenotype test inputs, from the same tarball, as dataFiles-relative paths.
-PHENOTYPE_INPUTS=(PhenotypeTests/basic_phenotype_test.txt CandidateTests/earht_with_rep.txt)
+PHENOTYPE_INPUTS=(
+  PhenotypeTests/basic_phenotype_test.txt CandidateTests/earht_with_rep.txt
+  PhenotypeTests/version4format_test.txt PhenotypeTests/version4format_covariate.txt
+  CandidateTests/mdp_traits_nomissing.txt
+)
 mkdir -p "$TESTDATA/phenotype"
 for f in "${PHENOTYPE_INPUTS[@]}"; do
   cp "$CACHE/dataFiles/$f" "$TESTDATA/phenotype/$(basename "$f")"
@@ -331,6 +335,16 @@ section phenotype-format "<Phenotype> files loaded (-r) and exported as Phenotyp
 for f in basic_phenotype_test earht_with_rep; do
   tassel5 -r "phenotype/$f.txt" -export "$F/$f" -exportType Phenotype
   output "$F/$f.txt" phenotype
+done
+
+# Legacy <Trait>, <Covariate>, <Factor>, and <Header> files, loaded with -t. TASSEL 5 sorts a
+# <Header> file's rows and columns; TASSEL 6 keeps first-appearance order, so rows are unordered.
+L=golden/phenotype-legacy
+section phenotype-legacy "Legacy <Trait>, <Covariate>, and <Header> files loaded (-t) and exported as Phenotype"
+for f in tutorial/mdp_traits tutorial/mdp_population_structure phenotype/version4format_test \
+  phenotype/version4format_covariate phenotype/mdp_traits_nomissing; do
+  tassel5 -t "$f.txt" -export "$L/$(basename "$f")" -exportType Phenotype
+  output "$L/$(basename "$f").txt" "phenotype rows-unordered"
 done
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
