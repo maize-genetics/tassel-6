@@ -7,7 +7,10 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
 import net.maizegenetics.tassel.analysis.GenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeTransformResult
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
+import net.maizegenetics.tassel.dataset.DataSet
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.io.Bcf
@@ -20,7 +23,9 @@ import net.maizegenetics.tassel.io.isBcf22
 import net.maizegenetics.tassel.io.isBgzf
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
+import net.maizegenetics.tassel.join.GenotypePhenotype
 import net.maizegenetics.tassel.ops.ProgressReporter
+import net.maizegenetics.tassel.phenotype.PhenotypeFiles
 import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 
@@ -110,6 +115,81 @@ suspend fun readGenotypes(
             if (opened.source !== raw) opened.source.close()
         }
     }
+}
+
+/** What an `--input` file holds, decided from its content and never its suffix. */
+internal enum class InputKind { Genotype, Phenotype }
+
+/** The tags a TASSEL phenotype file may start with: `<Phenotype>` and the four legacy ones (case ignored). */
+private val PHENOTYPE_TAGS = listOf("<phenotype", "<trait", "<covariate", "<factor", "<header")
+
+/** Bytes read to find the first tag. */
+private const val SNIFF_BYTES = 4096L
+
+/**
+ * Whether [path] is a phenotype or a genotype, from its first content line: a phenotype starts with a tag
+ * (`<Phenotype>`, `<Trait>`, `<Covariate>`, `<Factor>`, or `<Header>`), as [PhenotypeFiles.read] requires.
+ * Blank lines and `#` lines before it are skipped. Anything else, including a file that does not exist or
+ * is compressed, is [InputKind.Genotype], so the genotype readers report their own errors for it.
+ */
+internal fun sniffInput(path: String): InputKind {
+    val file = Path(path)
+    val metadata = SystemFileSystem.metadataOrNull(file)
+    if (metadata == null || !metadata.isRegularFile) return InputKind.Genotype
+    val head = SystemFileSystem.source(file).buffered().use { source ->
+        val bytes = ByteArray(minOf(SNIFF_BYTES, metadata.size).toInt())
+        val count = source.readAtMostTo(bytes)
+        bytes.copyOf(maxOf(count, 0))
+    }
+    val firstLine = head.decodeToString()
+        .removePrefix("\uFEFF")
+        .lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+        ?: return InputKind.Genotype
+    val lower = firstLine.lowercase()
+    return if (PHENOTYPE_TAGS.any { lower.startsWith(it) }) InputKind.Phenotype else InputKind.Genotype
+}
+
+/**
+ * Reads a phenotype file through [PhenotypeFiles.read]. The reader's warnings go to standard error.
+ *
+ * @throws IllegalArgumentException if it is not a file, or the bytes are not a phenotype.
+ */
+suspend fun readPhenotype(path: String, progress: ProgressReporter = ProgressReporter.None): PhenotypeTable {
+    val file = Path(path)
+    val metadata = SystemFileSystem.metadataOrNull(file)
+    require(metadata != null) { "no such file: $path" }
+    require(metadata.isRegularFile) { "not a file: $path" }
+    CliLog.info("reading $path")
+    return SystemFileSystem.source(file).buffered().use { source ->
+        val read = PhenotypeFiles.read(source, progress = progress)
+        read.warnings.forEach(CliLog::warn)
+        read.table
+    }
+}
+
+/**
+ * Reads each of [paths], sniffing every one, into a [DataSet] in the order given. A phenotype is read by
+ * [readPhenotype]. Any other file is a genotype and is read by [readGenotypes], where [region] and [index]
+ * apply. They apply to the genotype inputs only, so a [region] with no genotype among [paths] is an error.
+ */
+suspend fun readDataSet(
+    paths: List<String>,
+    progress: ProgressReporter = ProgressReporter.None,
+    region: String? = null,
+    index: String? = null,
+): DataSet {
+    val kinds = paths.map(::sniffInput)
+    require(region == null || InputKind.Genotype in kinds) { "--region needs a genotype among the --input files" }
+    return DataSet(
+        paths.zip(kinds).map { (path, kind) ->
+            when (kind) {
+                InputKind.Phenotype -> readPhenotype(path, progress)
+                InputKind.Genotype -> readGenotypes(path, progress, region, index)
+            }
+        },
+    )
 }
 
 /** `.vcf.gz` does not end with `.vcf`, so the gzipped suffix has to be tested on its own. */
@@ -209,7 +289,7 @@ private fun resolveIndex(dataPath: String, explicit: String?, bcf: Boolean): Str
     )
 }
 
-private fun isRegularFile(path: String): Boolean {
+internal fun isRegularFile(path: String): Boolean {
     val metadata = SystemFileSystem.metadataOrNull(Path(path))
     return metadata != null && metadata.isRegularFile
 }
@@ -255,6 +335,18 @@ internal fun outputParts(
     is DistanceMatrix -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
     is ResultTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
     is PhenotypeTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
+    is PhenotypeTransformResult -> {
+        result.warnings.forEach(CliLog::warn)
+        outputParts(result.table)
+    }
+    // The aligned phenotype: observations without a genotype are the ones a union keeps (ADR-0024).
+    // TASSEL 5 has no file that holds both halves, so the genotypes are not written.
+    is GenotypePhenotype -> outputParts(result.phenotype)
+    is PhenotypeSummary -> listOf(
+        tablePart("attributes", result.attributes),
+        tablePart("levels", result.factorLevels),
+        tablePart("taxa", result.taxa),
+    )
     is GenotypeSummary -> listOfNotNull(
         result.overview?.let { table -> tablePart("overview", table) },
         result.alleles?.let { table -> tablePart("alleles", table) },
