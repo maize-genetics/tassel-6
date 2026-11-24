@@ -6,11 +6,52 @@ import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.ops.OperationDescriptor
 import net.maizegenetics.tassel.ops.Progress
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
+
+/**
+ * What a [Dataset] holds. Each kind names the operation input type it satisfies, which is how the tree decides what
+ * to offer without the app naming an operation (ADR-0002).
+ */
+sealed interface DatasetData {
+    /** The core value an operation takes as input. */
+    val value: Any
+
+    /** The `OperationDescriptor.inputType` an operation must have to run on this alone. */
+    val inputType: String
+
+    /** The subtitle the tree shows. */
+    val dimensions: String
+
+    /** A genotype table. */
+    data class Genotypes(val table: GenotypeTable) : DatasetData {
+        override val value: Any get() = table
+        override val inputType: String get() = "GenotypeTable"
+        override val dimensions: String
+            get() = "${group(table.numberOfTaxa)} taxa x ${group(table.numberOfSites)} sites"
+    }
+
+    /** A phenotype table: observations are rows, attributes (taxa, factors, covariates, data) are columns. */
+    data class Phenotypes(val table: PhenotypeTable) : DatasetData {
+        override val value: Any get() = table
+        override val inputType: String get() = "PhenotypeTable"
+        override val dimensions: String
+            get() = "${group(table.numberOfObservations)} observations x ${group(table.attributes.size)} attributes"
+    }
+}
 
 /** One dataset in the data tree. [id] identifies it for the lifetime of the session. */
-data class Dataset(val id: Long, val name: String, val table: GenotypeTable) {
-    /** `281 taxa x 3,093 sites`, the subtitle the tree shows. */
-    val dimensions: String get() = "${group(table.numberOfTaxa)} taxa x ${group(table.numberOfSites)} sites"
+data class Dataset(val id: Long, val name: String, val data: DatasetData) {
+    /** `281 taxa x 3,093 sites` or `281 observations x 4 attributes`, the subtitle the tree shows. */
+    val dimensions: String get() = data.dimensions
+
+    /** The operation input type this dataset satisfies on its own. */
+    val inputType: String get() = data.inputType
+
+    /** The genotype table, or null for a phenotype. */
+    val genotypes: GenotypeTable? get() = (data as? DatasetData.Genotypes)?.table
+
+    /** The phenotype table, or null for a genotype. */
+    val phenotype: PhenotypeTable? get() = (data as? DatasetData.Phenotypes)?.table
 }
 
 /**
@@ -65,6 +106,8 @@ sealed interface Showing {
  * [AppViewModel] that holds one of these (`.cursor/rules/compose-ui.mdc`).
  *
  * @property operations what the engine can run, which is where forms come from. Empty until the engine answers.
+ * @property checked the datasets ticked for a multi-selection, in the order they were ticked. Empty means the
+ *   selection is just [selected].
  * @property form the open analysis form, or null when none is open.
  * @property region the open region step, or null when none is open.
  */
@@ -73,6 +116,7 @@ data class AppState(
     val results: List<AnalysisResult> = emptyList(),
     val operations: List<OperationDescriptor> = emptyList(),
     val showing: Showing = Showing.Nothing,
+    val checked: List<Long> = emptyList(),
     val form: AnalysisForm? = null,
     val region: RegionPrompt? = null,
     val activity: Activity = Activity.Idle,
@@ -84,6 +128,25 @@ data class AppState(
             is Showing.Result -> selectedResult?.let { result -> datasets.firstOrNull { it.id == result.datasetId } }
             Showing.Nothing -> null
         }
+
+    /**
+     * What the Analyze buttons act on: the ticked datasets in tick order, else [selected] alone. A join's inputs are
+     * in this order (ADR-0024), which is what the user sees in the tree.
+     */
+    val selection: List<Dataset>
+        get() = if (checked.isEmpty()) {
+            listOfNotNull(selected)
+        } else {
+            checked.mapNotNull { id ->
+                datasets.firstOrNull {
+                    it.id ==
+                        id
+                }
+            }
+        }
+
+    /** The operations that can run on [selection], in the engine's presentation order. */
+    val availableOperations: List<OperationDescriptor> get() = operationsFor(operations, selection)
 
     /** The result the content pane shows, or null. */
     val selectedResult: AnalysisResult?
@@ -120,6 +183,9 @@ sealed interface AppEvent {
     /** Close the region step without reading. */
     data object CancelRegion : AppEvent
 
+    /** Tick or untick the dataset with this id for a multi-selection. */
+    data class ToggleChecked(val id: Long) : AppEvent
+
     /** Show the dataset with this id in the grid. */
     data class Select(val id: Long) : AppEvent
 
@@ -127,7 +193,8 @@ sealed interface AppEvent {
     data class Close(val id: Long) : AppEvent
 
     /**
-     * Write the dataset with this id in [format].
+     * Write the dataset with this id in [format]. A phenotype dataset ignores [format] and is written as
+     * `<Phenotype>` text.
      *
      * HapMap is the default, so a caller that does not ask still exports the text TASSEL 5 writes.
      */

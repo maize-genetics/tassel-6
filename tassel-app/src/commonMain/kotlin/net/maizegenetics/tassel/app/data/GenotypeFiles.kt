@@ -61,6 +61,12 @@ interface GenotypeFiles {
     suspend fun tutorial(): GenotypeFile
 
     /**
+     * The phenotype files that ship with the tutorial genotype ([TUTORIAL_PHENOTYPE_FILE_NAMES]), opened beside it.
+     * Empty by default, for a target or a test with none.
+     */
+    suspend fun tutorialPhenotypes(): List<GenotypeFile> = emptyList()
+
+    /**
      * Asks the user for files, or returns null when they cancel.
      *
      * One file is the usual open. A `.vcf.gz` or `.bcf` may arrive with [GenotypeFile.index] set, or as one of several

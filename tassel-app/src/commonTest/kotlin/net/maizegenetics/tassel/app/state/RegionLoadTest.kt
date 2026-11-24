@@ -37,7 +37,7 @@ class RegionLoadTest {
 
         assertEquals(Activity.Idle, viewModel.state.value.activity)
         assertEquals("sample.vcf.gz", viewModel.state.value.selected?.name)
-        assertEquals(1, viewModel.state.value.selected?.table?.numberOfSites)
+        assertEquals(1, viewModel.state.value.selected?.genotypes?.numberOfSites)
         assertNull(viewModel.state.value.region)
     }
 

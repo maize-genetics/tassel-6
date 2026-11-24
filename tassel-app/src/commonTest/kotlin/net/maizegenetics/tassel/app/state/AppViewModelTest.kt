@@ -43,7 +43,7 @@ class AppViewModelTest {
         assertEquals(Activity.Idle, state.activity)
         assertEquals("mdp_genotype.hmp.txt", state.selected?.name)
         assertEquals("3 taxa x 2 sites", state.selected?.dimensions)
-        assertEquals(3, state.selected?.table?.numberOfTaxa)
+        assertEquals(3, state.selected?.genotypes?.numberOfTaxa)
     }
 
     @Test

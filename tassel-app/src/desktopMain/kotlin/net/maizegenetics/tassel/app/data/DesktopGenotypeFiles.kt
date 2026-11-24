@@ -25,12 +25,15 @@ import java.awt.Frame
 class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = ClasspathGenotypeFile(TUTORIAL_FILE_NAME)
 
+    override suspend fun tutorialPhenotypes(): List<GenotypeFile> =
+        TUTORIAL_PHENOTYPE_FILE_NAMES.map { ClasspathGenotypeFile(it) }
+
     override suspend fun choose(): List<GenotypeFile>? = withContext(Dispatchers.Swing) {
         // FileDialog is the native chooser on macOS and Windows, which JFileChooser is not. It blocks until the
         // user answers, so it runs on the AWT event thread rather than the Compose one.
         // Unfiltered. A `*.hmp.txt` filter hid VCF, and FilenameFilter does nothing on macOS. The reader
         // picks HapMap or VCF from the file name.
-        val picked = pick("Open genotype file") ?: return@withContext null
+        val picked = pick("Open file") ?: return@withContext null
         val indexed = picked.name.endsWith(VCF_GZIP_EXTENSION) || picked.name.endsWith(BCF_EXTENSION)
         if (!indexed) return@withContext listOf(picked)
         // A sibling index opens the region step. Without one, the file is read whole.

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -63,7 +64,7 @@ fun DataTree(state: AppState, onEvent: (AppEvent) -> Unit, modifier: Modifier = 
         HorizontalDivider()
         if (state.datasets.isEmpty()) {
             Text(
-                "No datasets yet. Load the tutorial dataset, or open a HapMap, VCF, or BCF file.",
+                "No datasets yet. Load the tutorial dataset, or open a HapMap, VCF, BCF, or phenotype file.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -71,7 +72,7 @@ fun DataTree(state: AppState, onEvent: (AppEvent) -> Unit, modifier: Modifier = 
         }
         LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 4.dp)) {
             for (dataset in state.datasets) {
-                item(key = dataset.id) { DatasetRow(dataset, state.showing, onEvent) }
+                item(key = dataset.id) { DatasetRow(dataset, state.showing, dataset.id in state.checked, onEvent) }
                 items(state.resultsOf(dataset.id), key = { it.id }) { result ->
                     ResultRow(result, state.showing, onEvent)
                 }
@@ -82,11 +83,15 @@ fun DataTree(state: AppState, onEvent: (AppEvent) -> Unit, modifier: Modifier = 
 }
 
 @Composable
-private fun DatasetRow(dataset: Dataset, showing: Showing, onEvent: (AppEvent) -> Unit) {
+private fun DatasetRow(dataset: Dataset, showing: Showing, checked: Boolean, onEvent: (AppEvent) -> Unit) {
     var exportMenu by remember { mutableStateOf(false) }
     NavigationDrawerItem(
         selected = showing == Showing.Dataset(dataset.id),
         onClick = { onEvent(AppEvent.Select(dataset.id)) },
+        icon = {
+            // Ticking two or more datasets is how a join is offered (ADR-0024); the order ticked is the order joined.
+            Checkbox(checked = checked, onCheckedChange = { onEvent(AppEvent.ToggleChecked(dataset.id)) })
+        },
         label = {
             Column {
                 Text(
@@ -100,16 +105,21 @@ private fun DatasetRow(dataset: Dataset, showing: Showing, onEvent: (AppEvent) -
         },
         badge = {
             Column {
-                TextButton(onClick = { exportMenu = true }) { Text("Export") }
-                DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
-                    GenotypeExportFormat.entries.forEach { format ->
-                        DropdownMenuItem(
-                            text = { Text(format.label) },
-                            onClick = {
-                                exportMenu = false
-                                onEvent(AppEvent.ExportDataset(dataset.id, format))
-                            },
-                        )
+                if (dataset.phenotype != null) {
+                    // One format, so no menu: a phenotype is always written as `<Phenotype>` text.
+                    TextButton(onClick = { onEvent(AppEvent.ExportDataset(dataset.id)) }) { Text("Export") }
+                } else {
+                    TextButton(onClick = { exportMenu = true }) { Text("Export") }
+                    DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
+                        GenotypeExportFormat.entries.forEach { format ->
+                            DropdownMenuItem(
+                                text = { Text(format.label) },
+                                onClick = {
+                                    exportMenu = false
+                                    onEvent(AppEvent.ExportDataset(dataset.id, format))
+                                },
+                            )
+                        }
                     }
                 }
                 TextButton(onClick = { onEvent(AppEvent.Close(dataset.id)) }) { Text("Close") }
@@ -129,15 +139,26 @@ private fun ResultRow(result: AnalysisResult, showing: Showing, onEvent: (AppEve
     )
 }
 
-/** One button per registered operation, enabled when there is a dataset for it to run on. */
+/**
+ * One button per operation that can run on the selection: the operations whose input type is the selected dataset's,
+ * or the `DataSet` operations when two or more are ticked. Nothing else is shown, so a phenotype never offers PCA.
+ */
 @Composable
 private fun AnalysisButtons(state: AppState, onEvent: (AppEvent) -> Unit) {
     HorizontalDivider()
     Text("Analyze", style = MaterialTheme.typography.titleMedium)
-    for (operation in state.operations) {
+    val available = state.availableOperations
+    if (available.isEmpty()) {
+        Text(
+            if (state.selection.isEmpty()) "Select a dataset." else "Nothing to run on this selection.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    for (operation in available) {
         OutlinedButton(
             onClick = { onEvent(AppEvent.ShowForm(operation.id)) },
-            enabled = state.selected != null && !state.busy,
+            enabled = !state.busy,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(operation.id, maxLines = 1, overflow = TextOverflow.Ellipsis)
