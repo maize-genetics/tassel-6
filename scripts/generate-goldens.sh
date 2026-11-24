@@ -82,9 +82,11 @@ rm -rf "$FULL_CLASSES"
 # Colt 1.2.0 ships in the standalone's lib/; Distributions.java calls it directly.
 COLT="$T5/lib/colt-1.2.0.jar"
 [[ -f "$COLT" ]] || die "colt-1.2.0.jar not found in $T5/lib"
+COMMONS_MATH="$T5/lib/commons-math3-3.4.1.jar"
+[[ -f "$COMMONS_MATH" ]] || die "commons-math3-3.4.1.jar not found in $T5/lib"
 DIST_CLASSES="$CACHE/distributions-classes"
 rm -rf "$DIST_CLASSES"
-"$JAVAC" --release 21 -cp "$COLT" -d "$DIST_CLASSES" "$ROOT/scripts/golden/Distributions.java"
+"$JAVAC" --release 21 -cp "$COLT:$COMMONS_MATH" -d "$DIST_CLASSES" "$ROOT/scripts/golden/Distributions.java"
 
 INPUTS=(mdp_genotype.hmp.txt mdp_genotype_w_depth.vcf mdp_traits.txt mdp_population_structure.txt)
 mkdir -p "$TESTDATA/tutorial"
@@ -397,11 +399,18 @@ done
 # more than 2e-14 relative under a 2-ulp nudge of any argument are left out: they are ill-conditioned, and platform
 # exp, log, and pow differ enough in the last bit that no port can hold rel 1e-13 on them.
 S=golden/stats
-section stats "Colt 1.2.0 cern.jet.stat.Gamma: incompleteBeta, incompleteGamma, incompleteGammaComplement, gamma, logGamma"
-manifest "command = java -cp colt-1.2.0.jar:Distributions.class Distributions $S/special-functions.txt"
-(cd "$TESTDATA" && "$JAVA" -cp "$COLT:$DIST_CLASSES" Distributions "$S/special-functions.txt") ||
+section stats "Colt 1.2.0 Gamma (incompleteBeta, incompleteGamma, gamma, logGamma) and Probability (F, t, chi-square tails); commons-math3 3.4.1 quantiles"
+# The same program writes the F, Student's t, and chi-square files. distributions.txt is Colt's cdf and survival
+# values (F through the incomplete beta calls TASSEL 5 makes) over a grid of degrees of freedom and x with tails
+# down to 1e-300, rows outside [1e-300, 1] left out. distribution-quantiles.txt is commons-math3 3.4.1's
+# inverseCumulativeProbability, the Brent solve TASSEL 5 uses, for quantiles up to 1e6.
+manifest "command = java -cp colt-1.2.0.jar:commons-math3-3.4.1.jar:Distributions.class Distributions $S/special-functions.txt $S/distributions.txt $S/distribution-quantiles.txt"
+(cd "$TESTDATA" && "$JAVA" -cp "$COLT:$COMMONS_MATH:$DIST_CLASSES" Distributions \
+  "$S/special-functions.txt" "$S/distributions.txt" "$S/distribution-quantiles.txt") ||
   die "Distributions failed"
 output "$S/special-functions.txt" "rel 1e-13"
+output "$S/distributions.txt" "rel 1e-12"
+output "$S/distribution-quantiles.txt" "abs 1e-9"
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"

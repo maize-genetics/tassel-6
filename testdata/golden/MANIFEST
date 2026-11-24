@@ -161,6 +161,8 @@ command = tassel5 -fork1 -t tutorial/mdp_traits.txt -fork2 -q tutorial/mdp_popul
 golden/phenotype-join/mdp_traits.q.union.txt = phenotype rows-unordered
 
 [stats]
-description = Colt 1.2.0 cern.jet.stat.Gamma: incompleteBeta, incompleteGamma, incompleteGammaComplement, gamma, logGamma
-command = java -cp colt-1.2.0.jar:Distributions.class Distributions golden/stats/special-functions.txt
+description = Colt 1.2.0 Gamma (incompleteBeta, incompleteGamma, gamma, logGamma) and Probability (F, t, chi-square tails); commons-math3 3.4.1 quantiles
+command = java -cp colt-1.2.0.jar:commons-math3-3.4.1.jar:Distributions.class Distributions golden/stats/special-functions.txt golden/stats/distributions.txt golden/stats/distribution-quantiles.txt
 golden/stats/special-functions.txt = rel 1e-13
+golden/stats/distributions.txt = rel 1e-12
+golden/stats/distribution-quantiles.txt = abs 1e-9
