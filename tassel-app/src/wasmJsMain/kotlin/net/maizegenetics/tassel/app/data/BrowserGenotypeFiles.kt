@@ -30,6 +30,9 @@ import kotlin.coroutines.resumeWithException
 class BrowserGenotypeFiles : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = TextGenotypeFile(TUTORIAL_FILE_NAME) { get(TUTORIAL_FILE_NAME) }
 
+    override suspend fun tutorialPhenotypes(): List<GenotypeFile> =
+        TUTORIAL_PHENOTYPE_FILE_NAMES.map { fileName -> TextGenotypeFile(fileName) { get(fileName) } }
+
     override suspend fun choose(): List<GenotypeFile>? {
         val files = pickFiles() ?: return null
         return files.map { BlobGenotypeFile(it) }

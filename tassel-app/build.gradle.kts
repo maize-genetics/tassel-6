@@ -9,10 +9,12 @@ plugins {
     alias(libs.plugins.kover)
 }
 
-// Both targets ship the tutorial dataset: on desktop it lands on the classpath, in the browser it is served next to
+// Both targets ship the tutorial dataset, the genotype and its two phenotype files: on desktop it lands on the classpath, in the browser it is served next to
 // index.html, which is the only way the web build can offer it at all (there is no file system there).
 val bundleTutorialData = tasks.register<Sync>("bundleTutorialData") {
     from(rootProject.layout.projectDirectory.file("testdata/tutorial/mdp_genotype.hmp.txt"))
+    from(rootProject.layout.projectDirectory.file("testdata/tutorial/mdp_traits.txt"))
+    from(rootProject.layout.projectDirectory.file("testdata/tutorial/mdp_population_structure.txt"))
     into(layout.buildDirectory.dir("generated/tutorialData"))
 }
 

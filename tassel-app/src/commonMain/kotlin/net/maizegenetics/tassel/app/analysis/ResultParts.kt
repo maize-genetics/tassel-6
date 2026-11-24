@@ -2,10 +2,13 @@ package net.maizegenetics.tassel.app.analysis
 
 import kotlinx.io.Sink
 import net.maizegenetics.tassel.analysis.GenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeTransformResult
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.app.export.appendText
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.join.GenotypePhenotype
 import net.maizegenetics.tassel.phenotype.AttributeType
 import net.maizegenetics.tassel.phenotype.NumericAttribute
 import net.maizegenetics.tassel.phenotype.PhenotypeTable
@@ -81,6 +84,14 @@ class ResultPart(
 fun resultParts(result: Any, baseName: String): List<ResultPart> = when (result) {
     is ResultTable -> listOf(tablePart(result, baseName, null))
     is PhenotypeTable -> listOf(phenotypePart(result, baseName, null))
+    is PhenotypeTransformResult -> listOf(phenotypePart(result.table, baseName, null))
+    // The aligned phenotype: observations without a genotype are the ones a union keeps (ADR-0024).
+    is GenotypePhenotype -> listOf(phenotypePart(result.phenotype, baseName, null))
+    is PhenotypeSummary -> listOf(
+        tablePart(result.attributes, baseName, "attributes"),
+        tablePart(result.factorLevels, baseName, "levels"),
+        tablePart(result.taxa, baseName, "taxa"),
+    )
     is DistanceMatrix -> listOf(matrixPart(result, baseName))
     is GenotypeSummary -> result.tables.map { tablePart(it, baseName, partName(it.title)) }
     is PrincipalComponentsResult -> listOf(
@@ -145,7 +156,8 @@ private class ResultTableView(private val table: ResultTable) : TableView {
     override fun cell(row: Int, column: Int): String = ResultTable.formatCell(table[row, column])
 }
 
-private class PhenotypeTableView(private val table: PhenotypeTable) : TableView {
+/** A phenotype table read cell by cell, spelled as the exported file spells it. */
+internal class PhenotypeTableView(private val table: PhenotypeTable) : TableView {
     override val columnNames: List<String> = table.attributes.map { it.name }
     override val rowCount: Int get() = table.numberOfObservations
     override fun cell(row: Int, column: Int): String = table.attributes[column].format(row)

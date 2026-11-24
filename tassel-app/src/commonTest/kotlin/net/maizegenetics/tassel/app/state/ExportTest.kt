@@ -90,7 +90,7 @@ class ExportTest {
             listOf("tutorial.hmp.txt", "tutorial.vcf", "tutorial.vcf.gz", "tutorial.bcf"),
             saved.names,
         )
-        val table = dataset.table
+        val table = checkNotNull(dataset.genotypes)
         val vcf = writerBytes { Vcf.write(table, it) }
         assertContentEquals(writerBytes { HapMap.write(table, it) }, saved.bytes[0])
         assertContentEquals(vcf, saved.bytes[1])
