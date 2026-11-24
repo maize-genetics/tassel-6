@@ -5,7 +5,6 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.function.DoubleSupplier;
 
 /**
  * Writes the Colt 1.2.0 {@code cern.jet.stat.Gamma} values that {@code scripts/generate-goldens.sh} records as
@@ -15,7 +14,8 @@ import java.util.function.DoubleSupplier;
  * <p>The file is tab-delimited with the header {@code function a b x value}. {@code incompleteBeta} rows use all three
  * arguments; {@code incompleteGamma} and {@code incompleteGammaComplement} use {@code a} and {@code x}; {@code gamma}
  * and {@code logGamma} use only {@code a}. An unused column is {@code -}. Arguments and values are written with
- * {@link Double#toString(double)}, and a call that throws is written as {@code error}.
+ * {@link Double#toString(double)}, and a call that throws is written as {@code error}. Rows whose value is
+ * ill-conditioned are left out; see {@link #row}.
  *
  * <p>Usage: {@code java -cp colt-1.2.0.jar:. Distributions OUTPUT}
  */
@@ -75,39 +75,90 @@ public class Distributions {
             }
             for (double a : GAMMA_SHAPES) {
                 for (double x : GAMMA_X) {
-                    row(w, "incompleteGamma", a, null, x, () -> Gamma.incompleteGamma(a, x));
-                    row(w, "incompleteGammaComplement", a, null, x, () -> Gamma.incompleteGammaComplement(a, x));
+                    row(w, "incompleteGamma", a, null, x, (p, q, r) -> Gamma.incompleteGamma(p, r));
+                    row(w, "incompleteGammaComplement", a, null, x, (p, q, r) -> Gamma.incompleteGammaComplement(p, r));
                 }
             }
             for (double a : new double[] {0, -1}) {
-                row(w, "incompleteGamma", a, null, 1.0, () -> Gamma.incompleteGamma(a, 1.0));
-                row(w, "incompleteGammaComplement", a, null, 1.0, () -> Gamma.incompleteGammaComplement(a, 1.0));
+                row(w, "incompleteGamma", a, null, 1.0, (p, q, r) -> Gamma.incompleteGamma(p, r));
+                row(w, "incompleteGammaComplement", a, null, 1.0, (p, q, r) -> Gamma.incompleteGammaComplement(p, r));
             }
             for (double x : new double[] {0, -1}) {
-                row(w, "incompleteGamma", 2.0, null, x, () -> Gamma.incompleteGamma(2.0, x));
-                row(w, "incompleteGammaComplement", 2.0, null, x, () -> Gamma.incompleteGammaComplement(2.0, x));
+                row(w, "incompleteGamma", 2.0, null, x, (p, q, r) -> Gamma.incompleteGamma(p, r));
+                row(w, "incompleteGammaComplement", 2.0, null, x, (p, q, r) -> Gamma.incompleteGammaComplement(p, r));
             }
             for (double a : GAMMA_ARGS) {
-                row(w, "gamma", a, null, null, () -> Gamma.gamma(a));
+                row(w, "gamma", a, null, null, (p, q, r) -> Gamma.gamma(p));
             }
             for (double a : LOG_GAMMA_ARGS) {
-                row(w, "logGamma", a, null, null, () -> Gamma.logGamma(a));
+                row(w, "logGamma", a, null, null, (p, q, r) -> Gamma.logGamma(p));
             }
         }
     }
 
     private static void beta(PrintWriter w, double a, double b, double x) {
-        row(w, "incompleteBeta", a, b, x, () -> Gamma.incompleteBeta(a, b, x));
+        row(w, "incompleteBeta", a, b, x, Gamma::incompleteBeta);
     }
 
-    private static void row(PrintWriter w, String function, Double a, Double b, Double x, DoubleSupplier call) {
+    /** A Colt call on up to three arguments; the ones a function does not use are ignored. */
+    private interface Call {
+        double apply(double a, double b, double x);
+    }
+
+    /**
+     * Writes one row, unless Colt's value there is ill-conditioned. Colt's results move by more than a double's
+     * rounding with the platform's {@code exp}, {@code log}, and {@code pow} (they differ in the last bit between
+     * the JVM on macOS and Linux, glibc, and V8), so no port can hold {@code rel 1e-13} on those rows. A row is
+     * dropped when nudging any argument by two ulps either way moves the value by more than {@link #STABLE}
+     * relative, or turns a value into an error. Rows that throw, and x = 0 and x = 1 for the beta function, are
+     * kept as they are: they are exact.
+     */
+    private static void row(PrintWriter w, String function, Double a, Double b, Double x, Call call) {
         String value;
         try {
-            value = Double.toString(call.getAsDouble());
+            double v = call.apply(orZero(a), orZero(b), orZero(x));
+            if (!(x != null && function.equals("incompleteBeta") && (x == 0.0 || x == 1.0)) && !stable(v, a, b, x, call)) {
+                return;
+            }
+            value = Double.toString(v);
         } catch (RuntimeException e) {
             value = "error";
         }
         w.print(function + "\t" + cell(a) + "\t" + cell(b) + "\t" + cell(x) + "\t" + value + "\n");
+    }
+
+    private static final double STABLE = 2e-14;
+
+    private static boolean stable(double v, Double a, Double b, Double x, Call call) {
+        for (int arg = 0; arg < 3; arg++) {
+            Double[] in = {a, b, x};
+            if (in[arg] == null) {
+                continue;
+            }
+            for (int dir = -1; dir <= 1; dir += 2) {
+                double n = in[arg];
+                for (int k = 0; k < 2; k++) {
+                    n = dir > 0 ? Math.nextUp(n) : Math.nextDown(n);
+                }
+                Double[] nudged = in.clone();
+                nudged[arg] = n;
+                double u;
+                try {
+                    u = call.apply(orZero(nudged[0]), orZero(nudged[1]), orZero(nudged[2]));
+                } catch (RuntimeException e) {
+                    return false;
+                }
+                double scale = Math.max(Math.abs(v), Math.abs(u));
+                if (u != v && !(Math.abs(u - v) <= STABLE * scale)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static double orZero(Double v) {
+        return v == null ? 0.0 : v;
     }
 
     private static String cell(Double v) {
