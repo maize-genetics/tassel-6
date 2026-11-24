@@ -1,6 +1,12 @@
 package net.maizegenetics.tassel.io
 
+import kotlinx.io.Buffer
+import kotlinx.io.RawSink
+import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlinx.io.buffered
+import kotlinx.io.readTo
+import kotlinx.io.writeString
 import net.maizegenetics.tassel.genotype.GenotypeTable
 import net.maizegenetics.tassel.genotype.InMemoryGenotypeTable
 import net.maizegenetics.tassel.ops.ProgressReporter
@@ -16,6 +22,10 @@ import net.maizegenetics.tassel.taxa.TaxaList
  * which TASSEL 5 also requires to be `GT`. Both phased (`0|1`) and unphased (`0/1`) diploid calls are read, and the
  * two are indistinguishable afterwards, because the genotype byte has no phase bit. Every other `FORMAT` field,
  * including `AD`, `DP`, `GQ`, and `PL`, is skipped, so read depth does not survive (tassel-6#14 scope).
+ *
+ * [write] exports the text TASSEL 5 writes for a table with no reference allele: the `##Tassel` line, one `GT`
+ * record per site, and `.` for QUAL and INFO. `##SAMPLE` and `##contig` lines are not written.
+ * [writeBgzf] is that text inside BGZF at the fixed DEFLATE level.
  *
  * [read] of a [kotlinx.io.Source] does not decompress: hand it an already-inflated source. [read] of a
  * [RandomAccessSource] inflates BGZF itself, in parallel when the host has more than one worker.
@@ -71,6 +81,63 @@ object Vcf {
         }
     }
 
+    /**
+     * Writes [table] as the VCF TASSEL 5 exports when the reference allele is unknown.
+     *
+     * The header is `##fileformat=VCFv4.0`, the `##Tassel` line, the FORMAT and INFO dictionary lines, and then the
+     * `#CHROM` line. Each record has QUAL `.`, FILTER `PASS`, INFO `.`, and a `GT` field joined with `/`. Depth,
+     * INFO annotations, and `##SAMPLE` lines are not written: the table does not carry them (tassel-6#14). REF is
+     * the major allele, then the indel and `N`-prefix rules. A site with no called allele is `.` / `.` and `./.`
+     * for every taxon.
+     *
+     * Sites are visited through [GenotypeTable.siteBlocks]. The sink is flushed and left open. Line endings are `\n`.
+     *
+     * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
+     */
+    suspend fun write(table: GenotypeTable, sink: Sink, progress: ProgressReporter = ProgressReporter.None) {
+        for (header in VCF_EXPORT_HEADER) sink.writeString(header + "\n")
+        val line = StringBuilder()
+        line.append(FIXED_COLUMNS.joinToString("\t"))
+        for (taxon in table.taxa) line.append('\t').append(taxon.name.trim())
+        sink.writeString(line.append('\n').toString())
+
+        val numberOfSites = table.numberOfSites
+        val genotypes = ByteArray(table.numberOfTaxa)
+        for (block in table.siteBlocks()) {
+            for (site in block.sites) {
+                val position = table.positions[site]
+                block.copySiteGenotypes(site, genotypes)
+                val record = vcfSiteRecord(position.knownVariants, block.siteStats(site), genotypes)
+                line.clear()
+                appendVcfRecord(line, position, record)
+                sink.writeString(line.toString())
+            }
+            progress.report(block.sites.last + 1, numberOfSites, "Writing VCF")
+        }
+        sink.flush()
+    }
+
+    /**
+     * Writes [table] as VCF text inside BGZF at the fixed DEFLATE level.
+     *
+     * [write] takes a [Sink] and [BgzfWriter] takes bytes, so the text is copied through in chunks and is
+     * not held as one file. The VCF layout ends the header block when a line does not start with `#`. [sink]
+     * stays open; closing the writer appends the BGZF EOF member. The compressor is the fixed DEFLATE level,
+     * not stored blocks.
+     *
+     * @see net.maizegenetics.dna.snp.ExportUtils.writeToVCF
+     */
+    suspend fun writeBgzf(table: GenotypeTable, sink: Sink, progress: ProgressReporter = ProgressReporter.None) {
+        val writer = BgzfWriter(sink, BgzfLayout.Vcf)
+        try {
+            BgzfByteSink(writer).buffered().use { text ->
+                write(table, text, progress)
+            }
+        } finally {
+            writer.close()
+        }
+    }
+
     private suspend fun readRecords(
         header: VcfHeader,
         progress: ProgressReporter,
@@ -120,11 +187,16 @@ object Vcf {
 }
 
 /**
- * Sites accumulated by [Vcf.read] and [IndexedVcf.read], packed and sorted the same way.
+ * Sites accumulated by [Vcf.read], [IndexedVcf.read], and [Bcf.read], packed and sorted the same way.
  *
- * [calls] is filled in place by [VcfRecordParser]. [add] copies it before the next record overwrites it.
+ * [calls] is filled in place by the record parser. [add] copies it before the next record overwrites it.
+ * [activity] is the progress text, so a BCF read does not say it is reading VCF.
  */
-internal class VcfSites(private val taxa: TaxaList, private val progress: ProgressReporter) {
+internal class VcfSites(
+    private val taxa: TaxaList,
+    private val progress: ProgressReporter,
+    private val activity: String = "Reading VCF",
+) {
     val calls = ByteArray(taxa.size)
     private val positions = ArrayList<Position>()
     private var packed = ByteArray(0)
@@ -146,7 +218,7 @@ internal class VcfSites(private val taxa: TaxaList, private val progress: Progre
         calls.copyInto(packed, packedUsed)
         packedUsed = needed
         positions.add(position)
-        if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, "Reading VCF")
+        if (positions.size % PROGRESS_SITES == 0) progress.report(positions.size, 0, activity)
     }
 
     suspend fun finish(): GenotypeTable {
@@ -166,7 +238,7 @@ internal class VcfSites(private val taxa: TaxaList, private val progress: Progre
             }
             ordered = order.map { positions[it] }
         }
-        progress.report(positions.size, positions.size, "Reading VCF")
+        progress.report(positions.size, positions.size, activity)
         return InMemoryGenotypeTable.wrap(taxa, PositionList(ordered), combined)
     }
 
@@ -178,3 +250,27 @@ internal class VcfSites(private val taxa: TaxaList, private val progress: Progre
 
 /** A bgzipped VCF and the warnings found while inflating it. */
 class VcfRead(val table: GenotypeTable, val warnings: List<String>)
+
+/** Copies bytes into a [BgzfWriter] without holding the whole file. Closing this closes [writer]. */
+private class BgzfByteSink(private val writer: BgzfWriter) : RawSink {
+    private val chunk = ByteArray(CHUNK)
+
+    override fun write(source: Buffer, byteCount: Long) {
+        require(byteCount >= 0L) { "byteCount: $byteCount" }
+        var remaining = byteCount
+        while (remaining > 0) {
+            val count = minOf(remaining, chunk.size.toLong()).toInt()
+            source.readTo(chunk, endIndex = count)
+            writer.write(chunk, endIndex = count)
+            remaining -= count
+        }
+    }
+
+    override fun flush() = writer.flush()
+
+    override fun close() = writer.close()
+
+    private companion object {
+        const val CHUNK = 8192
+    }
+}

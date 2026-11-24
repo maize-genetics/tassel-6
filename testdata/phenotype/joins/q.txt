@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	covariate	covariate
+Line	Q1	Q2
+B73	0.9	0.1
+Mo17	0.2	0.8
+CML52	0.5	0.5

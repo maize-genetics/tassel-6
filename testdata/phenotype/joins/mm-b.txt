@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	factor	data
+Taxa	env	height
+B73	E1	150.0
+B73	E2	160.0
+Mo17	E1	140.0

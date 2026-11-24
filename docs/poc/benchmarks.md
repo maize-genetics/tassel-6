@@ -197,6 +197,66 @@ discards them.
 | TASSEL 6 | region `chr3B` | region .vcf.gz | 16.87 s | 3487 MiB |
 | htslib | region `chr3B` | region .vcf.gz | 10.45 s | 107 MiB |
 
+The same loadable VCF, converted with `bcftools view --no-version -Ob`, compared in-process.
+`scripts/bench/run-benchmarks.sh --only vcf` prints these two rows after the table above. The clock
+is `tassel dev bcf-bench`: one warm-up discarded, JVM startup excluded, `-Xmx8g`. The `.bcf` row is
+`Bcf.read` of the BGZF file. The `.vcf.gz` row is `Vcf.read` of the bgzipped VCF, not the CLI row
+above, which also writes HapMap.
+
+The BCF is 429,114,980 bytes (0.40 GiB). `Bcf.read` took 6.89 s and `Vcf.read` took 8.65 s.
+Genotypes are decoded from the integer block. A multi-digit allele index, a negative token, and
+every error still rebuild the ASCII `call` reads, so those records match the previous reader.
+
+| | |
+|---|---|
+| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
+| JDK | 25.0.4.1, `-Xmx8g` |
+| TASSEL 6 | 6.0.0-alpha.1 on `feature/145-bcf-direct-gt` |
+| htslib | 1.25 (`bcftools view --no-version -Ob`) |
+| Runs | Median of 3, after one warm-up run that is discarded |
+
+| Tool | Read | Input | Median | Peak |
+|------|------|-------|-------:|-----:|
+| TASSEL 6 | whole-file read | loadable .bcf | 6.89 s | 5396 MiB |
+| TASSEL 6 | whole-file read | loadable .vcf.gz | 8.65 s | 5422 MiB |
+
+`sites=1000000 reader=bcf min=6.791637 median=6.888574` and
+`sites=1000000 reader=vcf min=8.591694 median=8.649285`.
+
+## BGZF writing
+
+The same loadable VCF, compressed by `BgzfWriter` and by htslib `bgzip`. Reproduce with:
+
+```bash
+scripts/bench/run-benchmarks.sh --only vcf --runs 3
+```
+
+The script prints this table after the `Bcf.read` rows. The clock is `tassel dev bgzf-write-bench`: the file is streamed in 1 MiB chunks, the compressed bytes are counted and dropped, one warm-up is discarded, and JVM startup is excluded. `--workers 1` is the single-worker row. Omitting `--workers` uses the processor count, 12 on this host. `--layout vcf` splits on newlines. `--layout bcf` packs 65280-byte blocks. The BCF input is `bcftools view --no-version -Ou` of the loadable `.vcf.gz`, 2,042,975,779 bytes (1.90 GiB). htslib rows are `bgzip -@ N -o /dev/null` of the plain VCF, process startup included.
+
+One worker takes 319.03 s for the plain VCF and 240.04 s for the uncompressed BCF. Twelve workers take 36.56 s and 25.24 s (8.7x and 9.5x). Both counts write the same bytes: 514,170,018 for the VCF and 424,235,227 for the BCF. `bgzip` compresses the plain VCF in 116.22 s at one thread and 29.93 s at four. A pure-Kotlin worker is 2.7x behind one `bgzip` thread, and twelve workers (36.56 s) are slower than `bgzip` at four threads (29.93 s). A platform zlib or libdeflate fast path stays a later spike (ADR-0022).
+
+| | |
+|---|---|
+| Host | Apple M2 Max, 12 cores, 64 GiB, macOS 27.0.1, Darwin 27.0.0 arm64 |
+| JDK | 25.0.4.1, `-Xmx8g` |
+| TASSEL 6 | 6.0.0-alpha.1 on `feature/132-parallel-bgzf-write` |
+| htslib | 1.25 (`bgzip`, `bcftools view --no-version -Ou`) |
+| Runs | Median of 3, after one warm-up run that is discarded |
+
+| Tool | Write | Input | Median | Peak |
+|------|-------|-------|-------:|-----:|
+| TASSEL 6 | compress, 1 worker | plain .vcf | 319.03 s | 701 MiB |
+| TASSEL 6 | compress, 12 workers | plain .vcf | 36.56 s | 766 MiB |
+| TASSEL 6 | compress, 1 worker | uncompressed .bcf | 240.04 s | 699 MiB |
+| TASSEL 6 | compress, 12 workers | uncompressed .bcf | 25.24 s | 729 MiB |
+| htslib | compress, 1 thread | plain .vcf | 116.22 s | 7 MiB |
+| htslib | compress, 4 threads | plain .vcf | 29.93 s | 13 MiB |
+
+`bytes=514170018 workers=1 layout=vcf min=319.015451 median=319.029291` and
+`bytes=514170018 workers=12 layout=vcf min=36.483727 median=36.559411`.
+`bytes=424235227 workers=1 layout=bcf min=239.464637 median=240.040428` and
+`bytes=424235227 workers=12 layout=bcf min=25.091332 median=25.241959`.
+
 ## Known limits
 
 ### Centered IBS at scale

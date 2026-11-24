@@ -2,9 +2,10 @@
 # Generate the TASSEL 5 golden outputs in testdata/golden/ (ADR-0009).
 #
 # Downloads the pinned TASSEL 5 standalone release and the TASSEL tutorial data into
-# build/goldens/ (git-ignored), copies the tutorial inputs into testdata/tutorial/, then
-# rebuilds testdata/golden/ and its MANIFEST from scratch. Output is deterministic:
-# running the script twice gives byte-identical files.
+# build/goldens/ (git-ignored), copies the tutorial inputs into testdata/tutorial/, writes
+# the synthetic vcf_export_edges HapMap there, then rebuilds testdata/golden/ and its
+# MANIFEST from scratch. Output is deterministic: running the script twice gives
+# byte-identical files.
 #
 # Requires curl, tar, and a JDK 21 or newer (java and javac from JAVA_HOME or PATH).
 #
@@ -78,11 +79,53 @@ FULL_CLASSES="$CACHE/full-precision-classes"
 rm -rf "$FULL_CLASSES"
 "$JAVAC" --release 21 -d "$FULL_CLASSES" "$ROOT/scripts/golden/DoubleFormat.java"
 
-INPUTS=(mdp_genotype.hmp.txt mdp_genotype_w_depth.vcf)
+# Colt 1.2.0 ships in the standalone's lib/; Distributions.java calls it directly.
+COLT="$T5/lib/colt-1.2.0.jar"
+[[ -f "$COLT" ]] || die "colt-1.2.0.jar not found in $T5/lib"
+COMMONS_MATH="$T5/lib/commons-math3-3.4.1.jar"
+[[ -f "$COMMONS_MATH" ]] || die "commons-math3-3.4.1.jar not found in $T5/lib"
+DIST_CLASSES="$CACHE/distributions-classes"
+rm -rf "$DIST_CLASSES"
+"$JAVAC" --release 21 -cp "$COLT:$COMMONS_MATH" -d "$DIST_CLASSES" "$ROOT/scripts/golden/Distributions.java"
+
+INPUTS=(mdp_genotype.hmp.txt mdp_genotype_w_depth.vcf mdp_traits.txt mdp_population_structure.txt)
 mkdir -p "$TESTDATA/tutorial"
 for f in "${INPUTS[@]}"; do
   cp "$CACHE/dataFiles/Tutorial/$f" "$TESTDATA/tutorial/$f"
 done
+
+# TASSEL 5's own phenotype test inputs, from the same tarball, as dataFiles-relative paths.
+PHENOTYPE_INPUTS=(
+  PhenotypeTests/basic_phenotype_test.txt CandidateTests/earht_with_rep.txt
+  PhenotypeTests/version4format_test.txt PhenotypeTests/version4format_covariate.txt
+  CandidateTests/mdp_traits_nomissing.txt
+)
+mkdir -p "$TESTDATA/phenotype"
+for f in "${PHENOTYPE_INPUTS[@]}"; do
+  cp "$CACHE/dataFiles/$f" "$TESTDATA/phenotype/$(basename "$f")"
+done
+
+# Synthetic HapMap for the VCF-export edge cases. This file is an input, not a golden;
+# the VCF TASSEL 5 writes from it is the golden. Two characters per call, and TASSEL 5
+# reads the second character as the first allele, so CA is genotype A/C. Sites stay in
+# position order, and counts are unequal so the major allele is REF with no tie.
+#   plus_minus    +/-    ++ ++ --    + and - listed and called
+#   n_in_alleles  A/N/C  AA AA CC    N token stripped from the alleles column
+#   triallelic    A/C/G  AA CA GG    three called alleles
+#   no_calls      N      NN NN NN    no called allele, so REF is . (NA has length 2, so it would be kept)
+#   unlisted      A/C    AA AA GG    G is called but not listed
+#   n_prefix      +/A    ++ ++ --    unlisted - is written N; uncalled A is written NA
+#   known_indel   AT/A   TT TT --    length>1 known variant (indelInKnownVariant)
+printf '%s\n' \
+  $'rs#\talleles\tchrom\tpos\tstrand\tassembly#\tcenter\tprotLSID\tassayLSID\tpanel\tQCcode\tt1\tt2\tt3' \
+  $'plus_minus\t+/-\t1\t10\t+\tNA\tNA\tNA\tNA\tNA\tNA\t++\t++\t--' \
+  $'n_in_alleles\tA/N/C\t1\t20\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAA\tAA\tCC' \
+  $'triallelic\tA/C/G\t1\t30\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAA\tCA\tGG' \
+  $'no_calls\tN\t1\t40\t+\tNA\tNA\tNA\tNA\tNA\tNA\tNN\tNN\tNN' \
+  $'unlisted\tA/C\t1\t50\t+\tNA\tNA\tNA\tNA\tNA\tNA\tAA\tAA\tGG' \
+  $'n_prefix\t+/A\t1\t60\t+\tNA\tNA\tNA\tNA\tNA\tNA\t++\t++\t--' \
+  $'known_indel\tAT/A\t1\t70\t+\tNA\tNA\tNA\tNA\tNA\tNA\tTT\tTT\t--' \
+  >"$TESTDATA/tutorial/vcf_export_edges.hmp.txt"
 
 # --- Helpers that run TASSEL 5 and record what they ran -----------------------
 
@@ -127,6 +170,40 @@ discard() {
   rm -f "$TESTDATA/$1"
 }
 
+# expect_vcf_site FILE ID REF ALT GTS
+# GTS is the three genotype columns joined by tabs. Fails when a writeToVCF branch is missing.
+expect_vcf_site() {
+  local file="$1" id="$2" ref="$3" alt="$4" gts="$5"
+  local line got_ref got_alt g1 g2 g3 got_gts
+  line="$(awk -F '\t' -v id="$id" '$3 == id { print; exit }' "$file")"
+  [[ -n "$line" ]] || die "VCF export has no site $id in $file"
+  IFS=$'\t' read -r _ _ _ got_ref got_alt _ _ _ _ g1 g2 g3 <<<"$line"
+  got_gts="${g1}"$'\t'"${g2}"$'\t'"${g3}"
+  [[ "$got_ref" == "$ref" && "$got_alt" == "$alt" && "$got_gts" == "$gts" ]] ||
+    die "site $id is REF=$got_ref ALT=$got_alt GT=$got_gts; expected REF=$ref ALT=$alt GT=$gts"
+}
+
+# The edges VCF is the oracle for the indel, N, and no-allele branches. Check the REF/ALT
+# (and the GT columns that distinguish them) rather than trusting that TASSEL wrote a file.
+check_vcf_export_edges() {
+  local file="$1" n
+  [[ -s "$file" ]] || die "VCF export edges file is empty"
+  grep -q '^##fileformat=VCFv4.0' "$file" || die "edges VCF is missing ##fileformat=VCFv4.0"
+  grep -q 'Reference allele is not known' "$file" ||
+    die "edges VCF is missing the unknown-reference ##Tassel line"
+  if grep -q '^##contig=' "$file"; then die "edges VCF has a ##contig line"; fi
+  if grep -q '^##SAMPLE=' "$file"; then die "edges VCF has a ##SAMPLE line"; fi
+  n="$(awk '$0 !~ /^#/ { c++ } END { print c + 0 }' "$file")"
+  [[ "$n" == 7 ]] || die "edges VCF has $n data lines, expected 7"
+  expect_vcf_site "$file" plus_minus '+' '-' $'0/0\t0/0\t1/1'
+  expect_vcf_site "$file" n_in_alleles A C $'0/0\t0/0\t1/1'
+  expect_vcf_site "$file" triallelic A 'G,C' $'0/0\t0/2\t1/1'
+  expect_vcf_site "$file" no_calls '.' '.' $'./.\t./.\t./.'
+  expect_vcf_site "$file" unlisted A 'G,C' $'0/0\t0/0\t1/1'
+  expect_vcf_site "$file" n_prefix '+' 'N,NA' $'0/0\t0/0\t1/1'
+  expect_vcf_site "$file" known_indel AT A $'0/0\t0/0\t1/1'
+}
+
 # --- Goldens -------------------------------------------------------------------
 
 rm -rf "$GOLDEN"
@@ -157,6 +234,11 @@ manifest \
   "#                  (TASSEL 5's PCA eigenvalues come out of an SVD that does not sort them)" \
   "#   format         headers, row labels, and layout identical; numbers are checked in the" \
   "#                  .full.txt twin (PCA signs are arbitrary, so TASSEL-rounded text can differ)" \
+  "#   phenotype      a <Phenotype> file: the tag and types lines identical, the names line" \
+  "#                  identical except the taxa column's name (TASSEL 5 always writes Taxa), and" \
+  "#                  every data cell identical as text (ADR-0023); with 'rel X' and/or 'abs Y'" \
+  "#                  appended, a data or covariate cell may instead be a number within X relative" \
+  "#                  to the golden or within Y of it" \
   "" \
   "[tassel5]" \
   "version = $TASSEL5_VERSION" \
@@ -171,6 +253,10 @@ manifest \
 for f in "${INPUTS[@]}"; do
   manifest "tutorial/$f = dataFiles/Tutorial/$f"
 done
+for f in "${PHENOTYPE_INPUTS[@]}"; do
+  manifest "phenotype/$(basename "$f") = dataFiles/$f"
+done
+manifest "tutorial/vcf_export_edges.hmp.txt = generated by scripts/generate-goldens.sh"
 
 echo "Generating goldens with TASSEL $TASSEL5_VERSION (Java $JAVA_MAJOR)"
 
@@ -181,6 +267,17 @@ output golden/hapmap/mdp_genotype.hmp.txt exact
 section vcf "HapMap export of the tutorial VCF (VCF reader)"
 tassel5 -vcf "$V" -export golden/vcf/mdp_genotype_w_depth -exportType Hapmap
 output golden/vcf/mdp_genotype_w_depth.hmp.txt exact
+
+section vcf-export "VCF export of the tutorial HapMap, an include-list, and indel, N, and no-allele edges"
+tassel5 -h "$H" -export golden/vcf-export/mdp_genotype -exportType VCF
+output golden/vcf-export/mdp_genotype.vcf exact
+tassel5 -h "$H" -FilterTaxaBuilderPlugin -taxaList W22,B73,CML247,33-16 -includeTaxa true -endPlugin \
+  -export "golden/vcf-export/include-list,golden/vcf-export/include-list.filter" -exportType VCF
+discard golden/vcf-export/include-list.filter.json.gz
+output golden/vcf-export/include-list.vcf exact
+tassel5 -h tutorial/vcf_export_edges.hmp.txt -export golden/vcf-export/vcf_export_edges -exportType VCF
+output golden/vcf-export/vcf_export_edges.vcf exact
+check_vcf_export_edges "$TESTDATA/golden/vcf-export/vcf_export_edges.vcf"
 
 S=golden/summary
 section summary "GenotypeSummaryPlugin defaults: overview, allele, site, and taxa tables"
@@ -243,6 +340,77 @@ output "$P/eigenvectors.txt" format
 output "$P/pcs.full.txt" "abs 1e-5 up-to-sign"
 output "$P/eigenvalues.full.txt" "rel 1e-9 rows-unordered"
 output "$P/eigenvectors.full.txt" "abs 1e-9 up-to-sign"
+
+F=golden/phenotype-format
+section phenotype-format "<Phenotype> files loaded (-r) and exported as Phenotype: the format reader and writer"
+for f in basic_phenotype_test earht_with_rep; do
+  tassel5 -r "phenotype/$f.txt" -export "$F/$f" -exportType Phenotype
+  output "$F/$f.txt" phenotype
+done
+
+# Legacy <Trait>, <Covariate>, <Factor>, and <Header> files, loaded with -t. TASSEL 5 sorts a
+# <Header> file's rows and columns; TASSEL 6 keeps first-appearance order, so rows are unordered.
+L=golden/phenotype-legacy
+section phenotype-legacy "Legacy <Trait>, <Covariate>, and <Header> files loaded (-t) and exported as Phenotype"
+for f in tutorial/mdp_traits tutorial/mdp_population_structure phenotype/version4format_test \
+  phenotype/version4format_covariate phenotype/mdp_traits_nomissing; do
+  tassel5 -t "$f.txt" -export "$L/$(basename "$f")" -exportType Phenotype
+  output "$L/$(basename "$f").txt" "phenotype rows-unordered"
+done
+
+# TransformDataPlugin standardizes with a float mean, which moves a standardized value by up to
+# ~8e-7. TASSEL 6 computes in double and narrows, so numbers are compared within 1e-6 relative or
+# 1e-6 absolute rather than as text; the absolute bound covers values near zero.
+X=golden/phenotype-transform
+section phenotype-transform "TransformDataPlugin log, power, and standardize, alone and within factor levels"
+transform() {
+  local name="$1" input="$2"
+  shift 2
+  tassel5 -t "$input" -TransformDataPlugin "$@" -endPlugin -export "$X/$name" -exportType Phenotype
+  output "$X/$name.txt" "phenotype rel 1e-6 abs 1e-6"
+}
+transform mdp_traits.log-natural tutorial/mdp_traits.txt -log natural
+transform mdp_traits.log-base_10 tutorial/mdp_traits.txt -log base_10
+transform mdp_traits.power-0.5 tutorial/mdp_traits.txt -power 0.5
+transform mdp_traits.standardize tutorial/mdp_traits.txt -standardize true
+tassel5 -r phenotype/earht_with_rep.txt -TransformDataPlugin -standardize true -factors rep -endPlugin \
+  -export "$X/earht_with_rep.standardize-rep" -exportType Phenotype
+output "$X/earht_with_rep.standardize-rep.txt" "phenotype rel 1e-6 abs 1e-6"
+
+# -intersect and -union join the traits and the population structure. They need both inputs as one
+# dataset, so each is loaded in its own fork and combined; with plain -t and -q the plugin sees one
+# item at a time and waits on a dialog that headless TASSEL 5 never shows. The two share no factors and
+# no names, so TASSEL 6's defined order (left, then right) and TASSEL 5's sorted order differ only in
+# row order, which `rows-unordered` ignores (ADR-0024).
+J=golden/phenotype-join
+section phenotype-join "TASSEL 5 -intersect and -union of the tutorial traits and population structure"
+for mode in intersect union; do
+  tassel5 -fork1 -t tutorial/mdp_traits.txt -fork2 -q tutorial/mdp_population_structure.txt \
+    -combine3 -input1 -input2 "-$mode" -export "$J/mdp_traits.q.$mode" -exportType Phenotype \
+    -runfork1 -runfork2
+  output "$J/mdp_traits.q.$mode.txt" "phenotype rows-unordered"
+done
+
+# Colt 1.2.0 cern.jet.stat.Gamma, which LinearModelUtils.Ftest and every TASSEL 5 GLM and MLM p-value call.
+# The grid is in scripts/golden/Distributions.java: incompleteBeta over shapes 1e-8..1e7 and x from 1e-300 to 1
+# (power series, the a/b swap and its 1 - MACHEP cap, log-space scaling, underflow to 0), the F-test arguments for
+# integer and non-integer degrees of freedom, incompleteGamma and its complement over shapes 1e-8..1e5 and x up to
+# 1e8, gamma and logGamma from -1e5 to 1e300, and the domain errors, written as `error`. Rows whose value moves by
+# more than 2e-14 relative under a 2-ulp nudge of any argument are left out: they are ill-conditioned, and platform
+# exp, log, and pow differ enough in the last bit that no port can hold rel 1e-13 on them.
+S=golden/stats
+section stats "Colt 1.2.0 Gamma (incompleteBeta, incompleteGamma, gamma, logGamma) and Probability (F, t, chi-square tails); commons-math3 3.4.1 quantiles"
+# The same program writes the F, Student's t, and chi-square files. distributions.txt is Colt's cdf and survival
+# values (F through the incomplete beta calls TASSEL 5 makes) over a grid of degrees of freedom and x with tails
+# down to 1e-300, rows outside [1e-300, 1] left out. distribution-quantiles.txt is commons-math3 3.4.1's
+# inverseCumulativeProbability, the Brent solve TASSEL 5 uses, for quantiles up to 1e6.
+manifest "command = java -cp colt-1.2.0.jar:commons-math3-3.4.1.jar:Distributions.class Distributions $S/special-functions.txt $S/distributions.txt $S/distribution-quantiles.txt"
+(cd "$TESTDATA" && "$JAVA" -cp "$COLT:$COMMONS_MATH:$DIST_CLASSES" Distributions \
+  "$S/special-functions.txt" "$S/distributions.txt" "$S/distribution-quantiles.txt") ||
+  die "Distributions failed"
+output "$S/special-functions.txt" "rel 1e-13"
+output "$S/distributions.txt" "rel 1e-12"
+output "$S/distribution-quantiles.txt" "abs 1e-9"
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"

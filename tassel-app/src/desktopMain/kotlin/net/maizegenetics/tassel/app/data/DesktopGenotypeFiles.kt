@@ -25,14 +25,18 @@ import java.awt.Frame
 class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = ClasspathGenotypeFile(TUTORIAL_FILE_NAME)
 
+    override suspend fun tutorialPhenotypes(): List<GenotypeFile> =
+        TUTORIAL_PHENOTYPE_FILE_NAMES.map { ClasspathGenotypeFile(it) }
+
     override suspend fun choose(): List<GenotypeFile>? = withContext(Dispatchers.Swing) {
         // FileDialog is the native chooser on macOS and Windows, which JFileChooser is not. It blocks until the
         // user answers, so it runs on the AWT event thread rather than the Compose one.
         // Unfiltered. A `*.hmp.txt` filter hid VCF, and FilenameFilter does nothing on macOS. The reader
         // picks HapMap or VCF from the file name.
-        val picked = pick("Open genotype file") ?: return@withContext null
-        if (!picked.name.endsWith(VCF_GZIP_EXTENSION)) return@withContext listOf(picked)
-        // A sibling index opens the region step. Without one, the gzipped VCF is read whole, same as a plain VCF.
+        val picked = pick("Open file") ?: return@withContext null
+        val indexed = picked.name.endsWith(VCF_GZIP_EXTENSION) || picked.name.endsWith(BCF_EXTENSION)
+        if (!indexed) return@withContext listOf(picked)
+        // A sibling index opens the region step. Without one, the file is read whole.
         val sibling = siblingIndex(picked.path.toString()) ?: return@withContext listOf(picked)
         listOf(picked.withIndex(PathGenotypeFile(Path(sibling))))
     }
@@ -48,16 +52,18 @@ class DesktopGenotypeFiles(private val owner: Frame? = null) : GenotypeFiles {
 }
 
 /**
- * The index beside [vcfPath]: `<vcfPath>.csi`, then `<vcfPath>.tbi`.
+ * The index beside [dataPath].
  *
- * A `.csi` that exists is used even when a `.tbi` is beside it, and even when the `.csi` cannot be read. Null when
- * neither file is there. This is the desktop half of ADR-0021; the CLI keeps its own copy because index discovery
- * stays out of `tassel-core`.
+ * A `.vcf.gz` uses `<dataPath>.csi`, then `<dataPath>.tbi`. A `.bcf` uses `<dataPath>.csi` only: a `.tbi` is not a
+ * BCF index (ADR-0022). A `.csi` that exists is used even when a `.tbi` is beside it, and even when the `.csi`
+ * cannot be read. Null when no accepted index is there, so the file is read whole. The CLI keeps its own copy
+ * because index discovery stays out of `tassel-core`.
  */
-internal fun siblingIndex(vcfPath: String): String? {
-    val csi = vcfPath + CSI_EXTENSION
+internal fun siblingIndex(dataPath: String): String? {
+    val csi = dataPath + CSI_EXTENSION
     if (isRegularFile(csi)) return csi
-    val tbi = vcfPath + TBI_EXTENSION
+    if (dataPath.endsWith(BCF_EXTENSION)) return null
+    val tbi = dataPath + TBI_EXTENSION
     if (isRegularFile(tbi)) return tbi
     return null
 }

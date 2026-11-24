@@ -1,0 +1,4 @@
+<Phenotype>
+taxa	factor	data	data
+Taxa	env	yield	ph
+B73	E1	1.0	10.0

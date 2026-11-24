@@ -6,6 +6,63 @@ versions follow [Semantic Versioning](https://semver.org).
 
 For what a release can actually do, read the [README](README.md); this file lists what changed.
 
+## 6.0.0-alpha.2 - 2026-11-24
+
+### Features
+
+- **core:** Read a nameless CSI with caller-supplied contig names
+- **core:** Parse a BCF 2.2 header into its dictionaries
+- **core:** Decode one BCF record into the VCF site and calls
+- **core:** Read a whole BCF into the same genotype table as VCF
+- **core:** Read one CSI region of a BCF
+- **cli:** Read a BCF whole file or one CSI region
+- **app:** Open a BCF and load one CSI region
+- **core:** Write VCF text from a genotype table
+- **core:** Write BGZF as stored blocks
+- **core:** Write BCF 2.2 records as stored BGZF
+- **core:** Compress BGZF blocks with pure-Kotlin DEFLATE
+- **core:** Compress BGZF blocks on more than one worker
+- **cli:** Select VCF and BCF writers from the output suffix
+- **core:** Share the bgzipped VCF writer
+- **app:** Export genotypes as VCF or BCF
+- **core:** Typed phenotype model and <Phenotype> reader
+- **core:** Read <Trait>, <Covariate>, <Factor>, and <Header> phenotype files
+- **core:** Immutable phenotype filters
+- **core:** Phenotype summary and missingness
+- **core:** Phenotype trait transforms
+- **core:** Intersect and union joins of phenotype tables
+- **core:** Align genotypes with phenotypes
+- **core:** Special functions and the TASSEL 5 F-test p-value
+- **core:** F, Student's t, and chi-square distributions
+- **cli:** Phenotype input and phenotype operations
+- **app:** Open, join, and export phenotypes on desktop and web
+
+### Performance
+
+- **core:** Decode BCF GT without rebuilding the VCF text
+
+### Refactoring
+
+- **core:** Share the VCF allele and genotype rules
+
+### Tests
+
+- **testdata:** Add BCF fixtures from the htslib 1.25 oracle
+- **testdata:** Add TASSEL 5 VCF export goldens
+- **testdata:** Add htslib BCF encodings of the VCF-export goldens
+- **testdata:** TASSEL 5 <Phenotype> format goldens
+- **testdata:** TASSEL 5 legacy phenotype format goldens
+- **core:** Drop ill-conditioned rows from the Colt special-function golden
+
+### Documentation
+
+- **adr:** Decide BCF reading and writing
+- Add the genotype export screenshots
+- Inventory and phased plan for phenotype support
+- **adr:** Propose ADR-0023, the phenotype model
+- **adr:** Record legacy phenotype reading rules in ADR-0023
+- **adr:** Propose ADR-0024, multi-input DataSet and phenotype joins
+
 ## 6.0.0-alpha.1 - 2026-11-09
 
 ### Features

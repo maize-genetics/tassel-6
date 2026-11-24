@@ -30,7 +30,7 @@ import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.tasselVersion
 
 /** Width of the data tree pane. */
-private val TREE_WIDTH = 260.dp
+private val TREE_WIDTH = 300.dp
 
 /** Width of the analysis form pane, when one is open. */
 private val FORM_WIDTH = 320.dp
@@ -79,10 +79,11 @@ private fun Content(state: AppState, onEvent: (AppEvent) -> Unit) {
     val dataset = state.selected
     when {
         showing is Showing.Result && result != null -> ResultPane(result, showing.part, onEvent)
-        dataset != null -> {
+        dataset?.genotypes != null -> {
             GridHeader(dataset.name, dataset.dimensions)
-            GenotypeGrid(dataset.table, modifier = Modifier.fillMaxSize())
+            GenotypeGrid(dataset.genotypes!!, modifier = Modifier.fillMaxSize())
         }
+        dataset?.phenotype != null -> PhenotypePane(dataset)
         else -> EmptyPane()
     }
 }

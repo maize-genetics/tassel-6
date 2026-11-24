@@ -7,18 +7,26 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
 import net.maizegenetics.tassel.analysis.GenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeTransformResult
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
+import net.maizegenetics.tassel.dataset.DataSet
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.io.Bcf
 import net.maizegenetics.tassel.io.HapMap
+import net.maizegenetics.tassel.io.IndexedGenotypes
 import net.maizegenetics.tassel.io.IndexedVcf
 import net.maizegenetics.tassel.io.Vcf
 import net.maizegenetics.tassel.io.decompressing
+import net.maizegenetics.tassel.io.isBcf22
 import net.maizegenetics.tassel.io.isBgzf
 import net.maizegenetics.tassel.io.openRandomAccessSource
 import net.maizegenetics.tassel.io.parseVcfRegion
+import net.maizegenetics.tassel.join.GenotypePhenotype
 import net.maizegenetics.tassel.ops.ProgressReporter
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.phenotype.PhenotypeFiles
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 
 /** TASSEL 5's extension for a HapMap export. */
@@ -27,27 +35,38 @@ const val HAPMAP_EXTENSION: String = ".hmp.txt"
 /** TASSEL 5's extension for a table, matrix, or phenotype export. */
 const val TEXT_EXTENSION: String = ".txt"
 
-/** Plain-text VCF, which `--input` reads. */
+/** Plain-text VCF. `--input` reads it, and `--output` writes it. */
 const val VCF_EXTENSION: String = ".vcf"
 
-/** bgzip-compressed VCF. The bytes are detected by content; this suffix only selects the VCF reader. */
+/**
+ * bgzip-compressed VCF. On input the bytes are detected by content; this suffix selects the VCF reader.
+ * On output it writes VCF text through [Vcf.writeBgzf] at the fixed DEFLATE level.
+ */
 const val VCF_GZIP_EXTENSION: String = ".vcf.gz"
+
+/**
+ * BCF 2.2. A file with this suffix is always read as BCF, bgzipped or raw. A BGZF BCF under another
+ * name is recognized by [isBcf22] instead. On output this suffix writes BCF inside BGZF.
+ */
+const val BCF_EXTENSION: String = ".bcf"
 
 /**
  * Reads a genotype file. `tassel-core` takes a `kotlinx.io.Source` and knows nothing about paths
  * (ADR-0017), so opening the file is the CLI's job.
  *
- * The format comes from the extension, as in TASSEL 5: [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are
- * read as VCF, and everything else, including a gzipped HapMap, as HapMap. `.vcf.gz` does not end
- * with `.vcf`, so the gzipped suffix is matched on its own. A `.vcf.gz` whose first member is BGZF
- * is read from a random-access source, so inflate can use more than one worker. Plain gzip stays on
- * the sequential source. Gzip itself is detected from the first bytes. A missing BGZF EOF block is a
- * warning on standard error.
+ * [VCF_EXTENSION] and [VCF_GZIP_EXTENSION] are read as VCF. [BCF_EXTENSION] is always read as BCF,
+ * and a BGZF file with any other name is read as BCF when [isBcf22] is true, so a BCF misnamed
+ * `.vcf.gz` does not reach [Vcf.read]. Everything else, including a gzipped HapMap, is HapMap.
+ * HapMap bytes named `.bcf` are an error from [Bcf.read]. `.vcf.gz` does not end with `.vcf`, so
+ * the gzipped suffix is matched on its own. BGZF is read from a random-access source, so inflate
+ * can use more than one worker. Plain gzip and raw BCF stay on the sequential source. Gzip itself
+ * is detected from the first bytes. A missing BGZF EOF block is a warning on standard error.
  *
- * [region] reads one region of a bgzipped VCF through [IndexedVcf]. [index] overrides the sibling
- * lookup, which is `<path>.csi` and then `<path>.tbi` (ADR-0021). A `.csi` that is present is the
- * index even when a `.tbi` is beside it. Without [region], [index] is ignored; the command rejects
- * that combination before calling this.
+ * [region] reads one region of a bgzipped VCF through [IndexedVcf], or of a bgzipped BCF through
+ * [IndexedGenotypes]. [index] overrides the sibling lookup. For a VCF that lookup is `<path>.csi`
+ * and then `<path>.tbi`. For a BCF it is `<path>.csi` only (ADR-0022). A `.csi` that is present is
+ * the index even when a `.tbi` is beside it. Without [region], [index] is ignored; the command
+ * rejects that combination before calling this.
  *
  * @throws kotlinx.io.IOException if the file cannot be read.
  * @throws IllegalArgumentException if it is not a file, the bytes are not a format the reader accepts,
@@ -65,13 +84,25 @@ suspend fun readGenotypes(
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
     CliLog.info("reading $path")
-    if (path.endsWith(VCF_GZIP_EXTENSION)) {
-        openRandomAccessSource(path).use { random ->
-            if (random.isBgzf()) {
+    openRandomAccessSource(path).use { random ->
+        if (random.isBgzf()) {
+            if (path.endsWith(BCF_EXTENSION) || random.isBcf22()) {
+                val read = Bcf.read(random, progress)
+                read.warnings.forEach(CliLog::warn)
+                return read.table
+            }
+            if (path.endsWith(VCF_GZIP_EXTENSION)) {
                 val read = Vcf.read(random, progress)
                 read.warnings.forEach(CliLog::warn)
                 return read.table
             }
+        }
+    }
+    if (path.endsWith(BCF_EXTENSION)) {
+        return SystemFileSystem.source(file).buffered().use { raw ->
+            val read = Bcf.read(raw, progress)
+            read.warnings.forEach(CliLog::warn)
+            read.table
         }
     }
     return SystemFileSystem.source(file).buffered().use { raw ->
@@ -86,16 +117,93 @@ suspend fun readGenotypes(
     }
 }
 
+/** What an `--input` file holds, decided from its content and never its suffix. */
+internal enum class InputKind { Genotype, Phenotype }
+
+/** The tags a TASSEL phenotype file may start with: `<Phenotype>` and the four legacy ones (case ignored). */
+private val PHENOTYPE_TAGS = listOf("<phenotype", "<trait", "<covariate", "<factor", "<header")
+
+/** Bytes read to find the first tag. */
+private const val SNIFF_BYTES = 4096L
+
+/**
+ * Whether [path] is a phenotype or a genotype, from its first content line: a phenotype starts with a tag
+ * (`<Phenotype>`, `<Trait>`, `<Covariate>`, `<Factor>`, or `<Header>`), as [PhenotypeFiles.read] requires.
+ * Blank lines and `#` lines before it are skipped. Anything else, including a file that does not exist or
+ * is compressed, is [InputKind.Genotype], so the genotype readers report their own errors for it.
+ */
+internal fun sniffInput(path: String): InputKind {
+    val file = Path(path)
+    val metadata = SystemFileSystem.metadataOrNull(file)
+    if (metadata == null || !metadata.isRegularFile) return InputKind.Genotype
+    val head = SystemFileSystem.source(file).buffered().use { source ->
+        val bytes = ByteArray(minOf(SNIFF_BYTES, metadata.size).toInt())
+        val count = source.readAtMostTo(bytes)
+        bytes.copyOf(maxOf(count, 0))
+    }
+    val firstLine = head.decodeToString()
+        .removePrefix("\uFEFF")
+        .lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+        ?: return InputKind.Genotype
+    val lower = firstLine.lowercase()
+    return if (PHENOTYPE_TAGS.any { lower.startsWith(it) }) InputKind.Phenotype else InputKind.Genotype
+}
+
+/**
+ * Reads a phenotype file through [PhenotypeFiles.read]. The reader's warnings go to standard error.
+ *
+ * @throws IllegalArgumentException if it is not a file, or the bytes are not a phenotype.
+ */
+suspend fun readPhenotype(path: String, progress: ProgressReporter = ProgressReporter.None): PhenotypeTable {
+    val file = Path(path)
+    val metadata = SystemFileSystem.metadataOrNull(file)
+    require(metadata != null) { "no such file: $path" }
+    require(metadata.isRegularFile) { "not a file: $path" }
+    CliLog.info("reading $path")
+    return SystemFileSystem.source(file).buffered().use { source ->
+        val read = PhenotypeFiles.read(source, progress = progress)
+        read.warnings.forEach(CliLog::warn)
+        read.table
+    }
+}
+
+/**
+ * Reads each of [paths], sniffing every one, into a [DataSet] in the order given. A phenotype is read by
+ * [readPhenotype]. Any other file is a genotype and is read by [readGenotypes], where [region] and [index]
+ * apply. They apply to the genotype inputs only, so a [region] with no genotype among [paths] is an error.
+ */
+suspend fun readDataSet(
+    paths: List<String>,
+    progress: ProgressReporter = ProgressReporter.None,
+    region: String? = null,
+    index: String? = null,
+): DataSet {
+    val kinds = paths.map(::sniffInput)
+    require(region == null || InputKind.Genotype in kinds) { "--region needs a genotype among the --input files" }
+    return DataSet(
+        paths.zip(kinds).map { (path, kind) ->
+            when (kind) {
+                InputKind.Phenotype -> readPhenotype(path, progress)
+                InputKind.Genotype -> readGenotypes(path, progress, region, index)
+            }
+        },
+    )
+}
+
 /** `.vcf.gz` does not end with `.vcf`, so the gzipped suffix has to be tested on its own. */
 private fun isVcfPath(path: String): Boolean = path.endsWith(VCF_GZIP_EXTENSION) || path.endsWith(VCF_EXTENSION)
 
 /**
- * Reads [region] from the bgzipped VCF at [path].
+ * Reads [region] from the bgzipped VCF or BCF at [path].
  *
- * The index is [index] when the user named one, otherwise the `.csi` beside [path], then the `.tbi`.
- * A header that lists `##contig` ids must name every index contig. The tutorial header lists none, so
- * that check does not apply to it. Wheat's `chr6D` is in the header and absent from the CSI, so an
- * index is allowed to be a subset.
+ * The index is [index] when the user named one. Otherwise a BCF, by [BCF_EXTENSION] or by
+ * [isBcf22], uses `<path>.csi` only. A VCF uses `<path>.csi` and then `<path>.tbi`. A header that
+ * lists `##contig` ids must name every VCF index contig. The tutorial header lists none, so that
+ * check does not apply to it. Wheat's `chr6D` is in the VCF header and absent from the VCF CSI, so
+ * an index is allowed to be a subset. BCF contig names come from the header, so that check is not
+ * applied to a BCF.
  */
 private suspend fun readIndexedRegion(
     path: String,
@@ -104,52 +212,84 @@ private suspend fun readIndexedRegion(
     progress: ProgressReporter,
 ): GenotypeTable {
     val parsed = parseVcfRegion(region)
-    if (!path.endsWith(VCF_GZIP_EXTENSION)) {
+    val namedBcf = path.endsWith(BCF_EXTENSION)
+    val namedVcfGz = path.endsWith(VCF_GZIP_EXTENSION)
+    // A missing HapMap or plain VCF keeps the suffix error. A missing .bcf or .vcf.gz is "no such file".
+    if (!namedBcf && !namedVcfGz && !isRegularFile(path)) {
         throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
     }
     val file = Path(path)
     val metadata = SystemFileSystem.metadataOrNull(file)
     require(metadata != null) { "no such file: $path" }
     require(metadata.isRegularFile) { "not a file: $path" }
-    CliLog.info("reading $path region $region")
     return openRandomAccessSource(path).use { data ->
         if (!data.isBgzf()) {
-            throw IllegalArgumentException("--region needs a bgzipped VCF; $path is not bgzip compressed")
-        }
-        val indexPath = resolveIndex(path, index)
-        openRandomAccessSource(indexPath).use { indexSource ->
-            val opened = try {
-                IndexedVcf.open(data, indexSource)
-            } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+            if (!namedBcf && !namedVcfGz) {
+                throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
             }
-            opened.use { vcf ->
-                rejectMismatchedIndex(vcf, path, indexPath)
-                val read = vcf.read(parsed, progress)
-                read.warnings.forEach(CliLog::warn)
-                read.table
+            val kind = if (namedBcf) "BCF" else "VCF"
+            throw IllegalArgumentException("--region needs a bgzipped $kind; $path is not bgzip compressed")
+        }
+        val bcf = namedBcf || data.isBcf22()
+        if (!bcf && !namedVcfGz) {
+            throw IllegalArgumentException("--region needs a bgzipped VCF (.vcf.gz); $path is not one")
+        }
+        CliLog.info("reading $path region $region")
+        val indexPath = resolveIndex(path, index, bcf)
+        openRandomAccessSource(indexPath).use { indexSource ->
+            if (bcf) {
+                val opened = try {
+                    IndexedGenotypes.open(data, indexSource)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+                }
+                opened.use { genotypes ->
+                    val read = genotypes.read(parsed, progress)
+                    read.warnings.forEach(CliLog::warn)
+                    read.table
+                }
+            } else {
+                val opened = try {
+                    IndexedVcf.open(data, indexSource)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("cannot read index $indexPath: ${e.message ?: "invalid index"}", e)
+                }
+                opened.use { vcf ->
+                    rejectMismatchedIndex(vcf, path, indexPath)
+                    val read = vcf.read(parsed, progress)
+                    read.warnings.forEach(CliLog::warn)
+                    read.table
+                }
             }
         }
     }
 }
 
 /**
- * The index for [vcfPath]: [explicit] when the user passed `--index`, otherwise `<vcfPath>.csi`,
- * then `<vcfPath>.tbi`. A `.csi` that exists is used even if it cannot be read.
+ * The index for [dataPath]: [explicit] when the user passed `--index`, otherwise `<dataPath>.csi`.
+ * A VCF then falls back to `<dataPath>.tbi`. A BCF does not. A `.csi` that exists is used even if
+ * it cannot be read.
  */
-private fun resolveIndex(vcfPath: String, explicit: String?): String {
+private fun resolveIndex(dataPath: String, explicit: String?, bcf: Boolean): String {
     if (explicit != null) return explicit
-    val csi = "$vcfPath.csi"
+    val csi = "$dataPath.csi"
     if (isRegularFile(csi)) return csi
-    val tbi = "$vcfPath.tbi"
-    if (isRegularFile(tbi)) return tbi
+    if (!bcf) {
+        val tbi = "$dataPath.tbi"
+        if (isRegularFile(tbi)) return tbi
+    }
+    if (bcf) {
+        throw IllegalArgumentException(
+            "no index found for $dataPath. Run `bcftools index -c $dataPath`.",
+        )
+    }
     throw IllegalArgumentException(
-        "no index found for $vcfPath. Run `bcftools index -c $vcfPath`. " +
+        "no index found for $dataPath. Run `bcftools index -c $dataPath`. " +
             "`tabix -p vcf` only works for contigs under 2^29.",
     )
 }
 
-private fun isRegularFile(path: String): Boolean {
+internal fun isRegularFile(path: String): Boolean {
     val metadata = SystemFileSystem.metadataOrNull(Path(path))
     return metadata != null && metadata.isRegularFile
 }
@@ -172,7 +312,8 @@ private fun rejectMismatchedIndex(vcf: IndexedVcf, dataPath: String, indexPath: 
  * files named from one `-export` list; here they are named from one `--output` base.
  *
  * @property part file name suffix for one of several results, or `null` when there is only one.
- * @property extension TASSEL 5's extension for this kind of file.
+ * @property extension the extension for this kind of file. A genotype part uses the `--output` suffix
+ *   when that suffix selects the writer.
  */
 internal class OutputPart(val part: String?, val extension: String, val write: suspend (Sink) -> Unit)
 
@@ -180,41 +321,96 @@ internal class OutputPart(val part: String?, val extension: String, val write: s
  * The files [result] becomes. An operation's output type decides them, so adding an operation whose
  * output is one of these types needs no change here.
  *
+ * A [GenotypeTable] also looks at [output]. The suffix selects HapMap, VCF, bgzipped VCF, or BCF
+ * (ADR-0022). Any other name, and a null [output], stay HapMap. Other result types ignore [output].
+ *
  * @throws com.github.ajalt.clikt.core.CliktError if nothing knows how to write this type.
  */
-internal fun outputParts(result: Any, progress: ProgressReporter = ProgressReporter.None): List<OutputPart> =
-    when (result) {
-        is GenotypeTable -> listOf(OutputPart(null, HAPMAP_EXTENSION) { HapMap.write(result, it, progress = progress) })
-        is DistanceMatrix -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
-        is ResultTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
-        is PhenotypeTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
-        is GenotypeSummary -> listOfNotNull(
-            result.overview?.let { table -> tablePart("overview", table) },
-            result.alleles?.let { table -> tablePart("alleles", table) },
-            result.sites?.let { table -> tablePart("sites", table) },
-            result.taxa?.let { table -> tablePart("taxa", table) },
-        )
-        is PrincipalComponentsResult -> listOfNotNull(
-            // TASSEL 5 exports the components themselves as "pcs"; see testdata/golden/MANIFEST [pca].
-            OutputPart("pcs", TEXT_EXTENSION) { result.principalComponents.writeDelimited(SinkAppendable(it)) },
-            result.eigenvalues?.let { table -> tablePart("eigenvalues", table) },
-            result.eigenvectors?.let { table -> tablePart("eigenvectors", table) },
-        )
-        else -> unsupported("no writer for a ${result::class.simpleName} result; add one to outputParts()")
+internal fun outputParts(
+    result: Any,
+    output: String? = null,
+    progress: ProgressReporter = ProgressReporter.None,
+): List<OutputPart> = when (result) {
+    is GenotypeTable -> listOf(genotypePart(result, output, progress))
+    is DistanceMatrix -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
+    is ResultTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
+    is PhenotypeTable -> listOf(OutputPart(null, TEXT_EXTENSION) { result.writeDelimited(SinkAppendable(it)) })
+    is PhenotypeTransformResult -> {
+        result.warnings.forEach(CliLog::warn)
+        outputParts(result.table)
     }
+    // The aligned phenotype: observations without a genotype are the ones a union keeps (ADR-0024).
+    // TASSEL 5 has no file that holds both halves, so the genotypes are not written.
+    is GenotypePhenotype -> outputParts(result.phenotype)
+    is PhenotypeSummary -> listOf(
+        tablePart("attributes", result.attributes),
+        tablePart("levels", result.factorLevels),
+        tablePart("taxa", result.taxa),
+    )
+    is GenotypeSummary -> listOfNotNull(
+        result.overview?.let { table -> tablePart("overview", table) },
+        result.alleles?.let { table -> tablePart("alleles", table) },
+        result.sites?.let { table -> tablePart("sites", table) },
+        result.taxa?.let { table -> tablePart("taxa", table) },
+    )
+    is PrincipalComponentsResult -> listOfNotNull(
+        // TASSEL 5 exports the components themselves as "pcs"; see testdata/golden/MANIFEST [pca].
+        OutputPart("pcs", TEXT_EXTENSION) { result.principalComponents.writeDelimited(SinkAppendable(it)) },
+        result.eigenvalues?.let { table -> tablePart("eigenvalues", table) },
+        result.eigenvectors?.let { table -> tablePart("eigenvectors", table) },
+    )
+    else -> unsupported("no writer for a ${result::class.simpleName} result; add one to outputParts()")
+}
 
 private fun tablePart(part: String, table: ResultTable) =
     OutputPart(part, TEXT_EXTENSION) { table.writeDelimited(SinkAppendable(it)) }
+
+/** Which genotype writer an `--output` path selects. Null and an unrecognized suffix stay HapMap. */
+private enum class GenotypeOutput {
+    HapMap,
+    Vcf,
+    VcfGz,
+    Bcf,
+}
+
+/**
+ * The genotype format of [output].
+ *
+ * Matching is case-insensitive, and `.vcf.gz` is tested before `.vcf`. TASSEL 5's
+ * `Utils.addSuffixIfNeeded` lowercases the name before it compares suffixes.
+ *
+ * @see net.maizegenetics.util.Utils.addSuffixIfNeeded
+ */
+private fun genotypeOutput(output: String?): GenotypeOutput {
+    if (output == null) return GenotypeOutput.HapMap
+    val name = output.lowercase()
+    return when {
+        name.endsWith(VCF_GZIP_EXTENSION) -> GenotypeOutput.VcfGz
+        name.endsWith(BCF_EXTENSION) -> GenotypeOutput.Bcf
+        name.endsWith(VCF_EXTENSION) -> GenotypeOutput.Vcf
+        else -> GenotypeOutput.HapMap
+    }
+}
+
+private fun genotypePart(table: GenotypeTable, output: String?, progress: ProgressReporter): OutputPart =
+    when (genotypeOutput(output)) {
+        GenotypeOutput.HapMap -> OutputPart(null, HAPMAP_EXTENSION) { HapMap.write(table, it, progress = progress) }
+        GenotypeOutput.Vcf -> OutputPart(null, VCF_EXTENSION) { Vcf.write(table, it, progress) }
+        GenotypeOutput.VcfGz -> OutputPart(null, VCF_GZIP_EXTENSION) { Vcf.writeBgzf(table, it, progress) }
+        GenotypeOutput.Bcf -> OutputPart(null, BCF_EXTENSION) { Bcf.write(table, it, progress) }
+    }
 
 /**
  * Writes [result] to files under the [output] base name, or to standard output when it is `null`.
  *
  * The base name works like TASSEL 5's `-export`: the extension for the kind of file is appended
  * unless the base already ends with it, and a result with several parts puts the part name in
- * between (`--output run` gives `run.overview.txt`, `run.sites.txt`, and so on).
+ * between (`--output run` gives `run.overview.txt`, `run.sites.txt`, and so on). A genotype
+ * [output] ending in `.hmp.txt`, `.vcf`, `.vcf.gz`, or `.bcf`, in any case, is written in that
+ * format. Standard output stays HapMap.
  */
 internal suspend fun writeResult(result: Any, output: String?, progress: ProgressReporter = ProgressReporter.None) {
-    val parts = outputParts(result, progress)
+    val parts = outputParts(result, output, progress)
     if (output == null) {
         val sink = System.out.asSink().buffered()
         parts.forEach { it.write(sink) }
@@ -231,11 +427,35 @@ internal suspend fun writeResult(result: Any, output: String?, progress: Progres
     }
 }
 
-/** The file name for one [part] of a result written under the base name [output]. */
+/**
+ * The file name for one [part] of a result written under the base name [output].
+ *
+ * Genotype suffixes match ignoring case, and the letters the caller wrote are kept.
+ * `.txt` matches only as written, so `run.txt` still becomes `run.sites.txt`.
+ */
 internal fun outputPath(output: String, part: String?, extension: String): String {
-    val base = output.removeSuffix(extension)
-    return if (part == null) base + extension else "$base.$part$extension"
+    val keep = matchingSuffix(output, extension)
+    val base = if (keep != null) output.dropLast(keep.length) else output
+    val suffix = keep ?: extension
+    return if (part == null) base + suffix else "$base.$part$suffix"
 }
+
+/**
+ * The suffix [output] already ends with, in the caller's spelling, when it is [extension].
+ *
+ * Returns null when [output] does not end with [extension]. Genotype suffixes compare ignoring case.
+ */
+private fun matchingSuffix(output: String, extension: String): String? {
+    if (output.endsWith(extension)) return extension
+    if (!isGenotypeExtension(extension)) return null
+    if (!output.endsWith(extension, ignoreCase = true)) return null
+    return output.takeLast(extension.length)
+}
+
+private fun isGenotypeExtension(extension: String): Boolean = extension == HAPMAP_EXTENSION ||
+    extension == VCF_EXTENSION ||
+    extension == VCF_GZIP_EXTENSION ||
+    extension == BCF_EXTENSION
 
 /** Lets the core's `Appendable` writers stream into a `kotlinx.io.Sink` without buffering the whole file. */
 private class SinkAppendable(private val sink: Sink) : Appendable {

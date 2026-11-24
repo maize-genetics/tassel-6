@@ -2,19 +2,21 @@ package net.maizegenetics.tassel.app.analysis
 
 import kotlinx.io.Sink
 import net.maizegenetics.tassel.analysis.GenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeSummary
+import net.maizegenetics.tassel.analysis.PhenotypeTransformResult
 import net.maizegenetics.tassel.analysis.PrincipalComponentsResult
 import net.maizegenetics.tassel.app.export.appendText
 import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
-import net.maizegenetics.tassel.table.PhenotypeTable
+import net.maizegenetics.tassel.join.GenotypePhenotype
+import net.maizegenetics.tassel.phenotype.AttributeType
+import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.table.ResultTable
 import net.maizegenetics.tassel.table.floatToString
 
 /** TASSEL 5's extension for a table, matrix, or phenotype export, as `tassel-cli` uses it. */
 private const val TEXT_EXTENSION = ".txt"
-
-/** TASSEL 5's extension for a HapMap export. */
-private const val HAPMAP_EXTENSION = ".hmp.txt"
 
 /**
  * Read-only access to any table the app shows, whatever core type it came from, with cells already spelled the way
@@ -82,6 +84,14 @@ class ResultPart(
 fun resultParts(result: Any, baseName: String): List<ResultPart> = when (result) {
     is ResultTable -> listOf(tablePart(result, baseName, null))
     is PhenotypeTable -> listOf(phenotypePart(result, baseName, null))
+    is PhenotypeTransformResult -> listOf(phenotypePart(result.table, baseName, null))
+    // The aligned phenotype: observations without a genotype are the ones a union keeps (ADR-0024).
+    is GenotypePhenotype -> listOf(phenotypePart(result.phenotype, baseName, null))
+    is PhenotypeSummary -> listOf(
+        tablePart(result.attributes, baseName, "attributes"),
+        tablePart(result.factorLevels, baseName, "levels"),
+        tablePart(result.taxa, baseName, "taxa"),
+    )
     is DistanceMatrix -> listOf(matrixPart(result, baseName))
     is GenotypeSummary -> result.tables.map { tablePart(it, baseName, partName(it.title)) }
     is PrincipalComponentsResult -> listOf(
@@ -92,12 +102,6 @@ fun resultParts(result: Any, baseName: String): List<ResultPart> = when (result)
         "no view for a ${result::class.simpleName} result; add one to resultParts()",
     )
 }
-
-/**
- * The file name a genotype dataset is exported under. TASSEL 5 writes genotypes as HapMap rather than as a
- * delimited table, and `HapMap.write` takes the sink straight, which is why this is not a [ResultPart].
- */
-fun genotypeFileName(baseName: String): String = baseName.removeSuffix(HAPMAP_EXTENSION) + HAPMAP_EXTENSION
 
 private fun tablePart(table: ResultTable, baseName: String, part: String?) = ResultPart(
     title = table.title,
@@ -136,13 +140,13 @@ private fun partName(title: String): String =
 
 /** PC1 against PC2, when the components table has both. */
 private fun scatterOf(components: PhenotypeTable): Chart.Scatter? {
-    val numeric = components.attributes.filter { it.type == PhenotypeTable.AttributeType.covariate }
+    val numeric = components.attributes(AttributeType.covariate).filterIsInstance<NumericAttribute>()
     if (numeric.size < 2) return null
     return Chart.Scatter(
         xLabel = numeric[0].name,
         yLabel = numeric[1].name,
-        x = FloatArray(components.numberOfObservations) { (numeric[0].values[it] as? Float) ?: 0f },
-        y = FloatArray(components.numberOfObservations) { (numeric[1].values[it] as? Float) ?: 0f },
+        x = numeric[0].toFloatArray(),
+        y = numeric[1].toFloatArray(),
     )
 }
 
@@ -152,10 +156,11 @@ private class ResultTableView(private val table: ResultTable) : TableView {
     override fun cell(row: Int, column: Int): String = ResultTable.formatCell(table[row, column])
 }
 
-private class PhenotypeTableView(private val table: PhenotypeTable) : TableView {
+/** A phenotype table read cell by cell, spelled as the exported file spells it. */
+internal class PhenotypeTableView(private val table: PhenotypeTable) : TableView {
     override val columnNames: List<String> = table.attributes.map { it.name }
     override val rowCount: Int get() = table.numberOfObservations
-    override fun cell(row: Int, column: Int): String = PhenotypeTable.formatCell(table.attributes[column].values[row])
+    override fun cell(row: Int, column: Int): String = table.attributes[column].format(row)
 }
 
 /** The square matrix as TASSEL 5 writes it: the taxon name, then its whole row. */

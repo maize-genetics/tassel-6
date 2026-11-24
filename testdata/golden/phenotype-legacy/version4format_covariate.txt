@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	covariate
+Taxa	Q1
+taxon1	0.1
+taxon2	0.2
+taxon3	0.3

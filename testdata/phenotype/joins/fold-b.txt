@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	data
+Taxa	height
+Mo17	20.0
+W22	30.0
+Oh43	40.0

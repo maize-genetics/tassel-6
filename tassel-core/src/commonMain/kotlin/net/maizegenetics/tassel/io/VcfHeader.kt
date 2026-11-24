@@ -64,6 +64,24 @@ internal suspend fun readVcfHeaderLines(nextLine: suspend () -> String?): VcfHea
 }
 
 /**
+ * [readVcfHeaderLines] for header lines already in memory.
+ *
+ * [requireTaxon] stays true for VCF. A BCF header may name no samples, and that call passes false. The column
+ * checks are unchanged either way.
+ */
+internal fun readVcfHeaderLines(lines: Iterator<String>, requireTaxon: Boolean = true): VcfHeader {
+    val contigs = ArrayList<VcfContig>()
+    if (!lines.hasNext()) throw IllegalArgumentException("VCF input is empty")
+    var line = lines.next()
+    while (line.startsWith("##")) {
+        contigOrNull(line.encodeToByteArray())?.let { contigs.add(it) }
+        if (!lines.hasNext()) throw IllegalArgumentException("VCF input has no #CHROM header line")
+        line = lines.next()
+    }
+    return headerFrom(line, contigs, requireTaxon)
+}
+
+/**
  * One line, without its `\n` or the `\r` of a `\r\n`. A final line with no break is returned whole, including a
  * bare `\r`, matching [kotlinx.io.readLine]. Returns null when [this] is already exhausted.
  */
@@ -76,7 +94,7 @@ private fun Source.readVcfLine(): ByteArray? {
     return if (raw.isNotEmpty() && raw[raw.lastIndex] == CARRIAGE_RETURN) raw.copyOf(raw.size - 1) else raw
 }
 
-private fun headerFrom(text: String, contigs: List<VcfContig>): VcfHeader {
+private fun headerFrom(text: String, contigs: List<VcfContig>, requireTaxon: Boolean = true): VcfHeader {
     val names = text.split('\t')
     // TASSEL 5 accepts #CHR as well as #CHROM.
     val chromosomeColumn = maxOf(names.indexOf("#CHROM"), names.indexOf("#CHR"))
@@ -92,7 +110,9 @@ private fun headerFrom(text: String, contigs: List<VcfContig>): VcfHeader {
     require(fixed > maxOf(chromosomeColumn, positionColumn, referenceColumn, alternateColumn)) {
         "VCF header must name INFO or FORMAT after the other columns: ${vcfExcerpt(text)}"
     }
-    require(names.size > fixed) { "VCF header must name at least one taxon: ${vcfExcerpt(text)}" }
+    if (requireTaxon) {
+        require(names.size > fixed) { "VCF header must name at least one taxon: ${vcfExcerpt(text)}" }
+    }
     return VcfHeader(
         contigs = contigs,
         taxaNames = names.subList(fixed, names.size).toList(),

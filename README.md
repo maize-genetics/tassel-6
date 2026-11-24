@@ -8,8 +8,9 @@ An analysis is written once, in `commonMain`, and the same code runs in a comman
 desktop application, and a browser tab with no server. Every ported analysis is tested against
 TASSEL 5's own output, byte for byte where the format allows it.
 
-> **Status: alpha (`6.0.0-alpha.1`).** Genotype summary, site and taxa filters, Centered IBS kinship,
-> and PCA are ported, and this release reads bgzipped VCF and one region of a CSI- or TBI-indexed VCF
+> **Status: alpha (`6.0.0-alpha.2`).** Genotype summary, site and taxa filters, Centered IBS kinship,
+> and PCA are ported. This release reads bgzipped VCF, BCF, and one region of a CSI- or TBI-indexed
+> file, writes VCF and BCF, and reads, summarizes, transforms, and joins TASSEL 5 phenotype files,
 > on the command line, the desktop app, and in the browser. It is not a replacement for TASSEL 5 yet,
 > and the [known limits](docs/poc/benchmarks.md#known-limits) are written down rather than glossed over.
 
@@ -19,7 +20,10 @@ TASSEL 5's own output, byte for byte where the format allows it.
 |---|---|---|---|
 | Read HapMap, plain or gzipped | yes | yes | yes |
 | Read VCF, the `GT` field only, plain or bgzipped | yes | yes | yes |
+| Read BCF, whole file or one `.csi` region | yes | yes | yes |
 | Read one region of an indexed VCF (`.csi`, then `.tbi`) | yes (`--region`) | yes | yes |
+| Write VCF or BCF (chosen by output suffix) | yes | yes | yes |
+| Phenotypes: read, summarize, transform, filter, join | yes | yes | yes |
 | `summary`, `filter-sites`, `filter-taxa` | yes | yes | yes |
 | `kinship` (Centered IBS) | yes | yes | yes |
 | `pca` (scores, eigenvalues, eigenvectors) | yes | yes | yes |
@@ -57,6 +61,17 @@ T=tassel-cli/build/install/tassel/bin/tassel
 $T filter-sites --input testdata/tutorial/mdp_genotype.hmp.txt --min-maf 0.05 --output filtered
 $T kinship      --input filtered.hmp.txt --output kinship
 $T pca          --input filtered.hmp.txt --output pca
+```
+
+Phenotype files work the same way. `--input` of a phenotype operation takes a `<Phenotype>` file or
+TASSEL 5's `<Trait>`, `<Covariate>`, `<Factor>`, and `<Header>` layouts, detected from the first tag
+and not the file name. The joins repeat `--input`, in order, and `join-genotype-phenotype` takes one
+genotype and one or more phenotypes:
+
+```bash
+$T phenotype-summary --input testdata/tutorial/mdp_traits.txt --output summary   # summary.attributes.txt, .levels.txt, .taxa.txt
+$T transform-phenotype --input testdata/tutorial/mdp_traits.txt --log natural --output logged
+$T join-phenotypes --input testdata/tutorial/mdp_traits.txt --input testdata/tutorial/mdp_population_structure.txt --output joined
 ```
 
 Every subcommand and every one of its options is generated from an operation spec, so `--help` is

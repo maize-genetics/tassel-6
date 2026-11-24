@@ -86,7 +86,7 @@ private fun ChartPane(chart: Chart, modifier: Modifier = Modifier) {
  * screen (`.cursor/rules/compose-ui.mdc`). Columns are capped rather than lazy, so the row scrolls as one.
  */
 @Composable
-private fun ResultTablePane(table: TableView, modifier: Modifier = Modifier) {
+internal fun ResultTablePane(table: TableView, modifier: Modifier = Modifier) {
     val columns = table.columnNames.size.coerceAtMost(MAX_COLUMNS)
     val scroll = rememberScrollState()
     Column(modifier = modifier) {

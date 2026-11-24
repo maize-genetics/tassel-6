@@ -24,11 +24,14 @@ import kotlin.coroutines.resumeWithException
  * [BlobGenotypeFile] seeks through [BlobRandomAccessSource]. The tutorial stays text: it is the uncompressed HapMap
  * the page serves, and the tutorial button is not a file the user picked.
  *
- * The chooser has `multiple` set. Pairing a VCF with its index is [resolveOpen]'s job, because this page cannot see
- * the files next to the one the user picked.
+ * The chooser has `multiple` set. Pairing a `.vcf.gz` with its `.csi` or `.tbi`, or a `.bcf` with its `.bcf.csi`,
+ * is [resolveOpen]'s job, because this page cannot see the files next to the one the user picked.
  */
 class BrowserGenotypeFiles : GenotypeFiles {
     override suspend fun tutorial(): GenotypeFile = TextGenotypeFile(TUTORIAL_FILE_NAME) { get(TUTORIAL_FILE_NAME) }
+
+    override suspend fun tutorialPhenotypes(): List<GenotypeFile> =
+        TUTORIAL_PHENOTYPE_FILE_NAMES.map { fileName -> TextGenotypeFile(fileName) { get(fileName) } }
 
     override suspend fun choose(): List<GenotypeFile>? {
         val files = pickFiles() ?: return null
@@ -43,7 +46,7 @@ private class TextGenotypeFile(override val name: String, private val text: susp
 
 /**
  * A file the user picked. [open] copies it whole, which is what HapMap and a plain VCF need. [openRandomAccess]
- * seeks, which is what a region of a bgzipped VCF needs.
+ * seeks, which is what a region of a bgzipped VCF or BCF needs.
  */
 private class BlobGenotypeFile(private val file: File) : GenotypeFile {
     override val name: String get() = file.name
@@ -56,7 +59,7 @@ private class BlobGenotypeFile(private val file: File) : GenotypeFile {
 /**
  * Shows a file chooser and returns what the user picked, or null when they cancel.
  *
- * `multiple` is set so a bgzipped VCF and its index can be picked together. The input element is added to the
+ * `multiple` is set so a bgzipped VCF or BCF and its index can be picked together. The input element is added to the
  * document because Safari ignores `click()` on a detached one, hidden because the app's own UI is the chooser the
  * user sees, and removed again either way. The [File] objects are copied out before the element is removed.
  */

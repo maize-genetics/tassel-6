@@ -2,6 +2,7 @@ package net.maizegenetics.tassel.app.testing
 
 import kotlinx.io.Buffer
 import kotlinx.io.Sink
+import kotlinx.io.readByteArray
 import kotlinx.io.readString
 import net.maizegenetics.tassel.app.analysis.AnalysisEngine
 import net.maizegenetics.tassel.app.analysis.LocalAnalysisEngine
@@ -39,14 +40,18 @@ class RecordingResultFiles(private val accept: Boolean = true) : ResultFiles {
     /** File names the app asked to save, in order. */
     val names: MutableList<String> = mutableListOf()
 
-    /** What was written under each of [names]. */
-    val contents: MutableList<String> = mutableListOf()
+    /** Bytes written under each of [names], with no text decoding. */
+    val bytes: MutableList<ByteArray> = mutableListOf()
+
+    /** [bytes] decoded as UTF-8. Text exports are ASCII, so this is the file those writers produced. */
+    val contents: List<String>
+        get() = bytes.map { it.decodeToString() }
 
     override suspend fun save(fileName: String, write: suspend (Sink) -> Unit): Boolean {
         names += fileName
         val buffer = Buffer()
         write(buffer)
-        contents += buffer.readString()
+        bytes += buffer.readByteArray()
         return accept
     }
 }

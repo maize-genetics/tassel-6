@@ -82,6 +82,8 @@ class ByteGenotypeFile(override val name: String, private val bytes: ByteArray) 
 class FakeGenotypeFiles(
     private val tutorial: GenotypeFile = TextGenotypeFile("tutorial.hmp.txt", SMALL_HAPMAP),
     private val chosen: GenotypeFile? = null,
+    private val chosenFiles: List<GenotypeFile>? = chosen?.let { listOf(it) },
+    private val tutorialPhenotypes: List<GenotypeFile> = emptyList(),
 ) : GenotypeFiles {
     /** How many times the app asked for the tutorial dataset. */
     var tutorialRequests: Int = 0
@@ -93,9 +95,11 @@ class FakeGenotypeFiles(
 
     override suspend fun tutorial(): GenotypeFile = tutorial.also { tutorialRequests++ }
 
+    override suspend fun tutorialPhenotypes(): List<GenotypeFile> = tutorialPhenotypes
+
     override suspend fun choose(): List<GenotypeFile>? {
         chooseRequests++
-        return chosen?.let { listOf(it) }
+        return chosenFiles
     }
 }
 
@@ -105,6 +109,14 @@ class FakeGenotypeFiles(
  */
 class NamedGenotypeFile(override val name: String, override val index: GenotypeFile? = null) : GenotypeFile {
     override suspend fun open(): Source = error("$name was opened")
+}
+
+/** A `<Phenotype>` file with taxa `B73`, `Mo17`, `CML247` (any [taxa]) and one data trait per name in [traits]. */
+fun phenotypeText(traits: Map<String, List<String>>, taxa: List<String> = listOf("B73", "Mo17", "CML247")): String {
+    val types = (listOf("taxa") + traits.keys.map { "data" }).joinToString("\t")
+    val names = (listOf("Taxon") + traits.keys).joinToString("\t")
+    val rows = taxa.indices.map { row -> (listOf(taxa[row]) + traits.values.map { it[row] }).joinToString("\t") }
+    return (listOf("<Phenotype>", types, names) + rows).joinToString("\n") + "\n"
 }
 
 /** Three taxa, two sites: enough to tell that a file was parsed and not invented. */

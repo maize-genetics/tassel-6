@@ -15,8 +15,10 @@
 # --only vcf times wheat-scale VCF reads (tassel-6#81, tassel-6#89). It generates a loadable plain
 # VCF and a bgzipped file larger than 2 GiB with scripts/bench/generate-wheat-vcf.sh, then times the
 # TASSEL 6 CLI on the plain and bgzipped files, TASSEL 5 -vcf on both, BGZF inflate at 1 worker and
-# at the host worker count, htslib, and indexed region reads of chr3B (tassel-6#90). vcf needs
-# --heap 8g, plus bgzip and bcftools from htslib 1.25.
+# at the host worker count, htslib, and indexed region reads of chr3B (tassel-6#90). It also converts
+# the loadable VCF to BCF and times in-process Bcf.read against Vcf.read (tassel-6#123), then times
+# BGZF compression of the plain VCF and of uncompressed BCF at 1 worker and at the host count
+# (tassel-6#132). vcf needs --heap 8g, plus bgzip and bcftools from htslib 1.25.
 #
 # Requires curl, tar, /usr/bin/time, and a JDK 21+ for TASSEL 5. The TASSEL 6 CLI brings its own
 # JDK 25 through the Gradle toolchain. --only vcf also requires htslib 1.25.
@@ -66,7 +68,7 @@ while [[ $# -gt 0 ]]; do
     --million) MILLION=1; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
-    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -398,6 +400,75 @@ run_vcf() {
   echo "TASSEL 6 decompress rows are dev bgzf-bench: inflate only, one warm-up discarded, startup excluded."
   echo "TASSEL 6 region rows are dev vcf-region-bench: one region, one warm-up discarded, startup excluded."
   echo "Full tool output: $LOG"
+
+  local load_bcf="${load%.vcf}.bcf"
+  if [[ ! -f "$load_bcf" || "$load_gz" -nt "$load_bcf" ]]; then
+    echo "Converting the loadable VCF to BCF: bcftools view --no-version -Ob"
+    bcftools view --no-version -Ob -o "$load_bcf" "$load_gz"
+  fi
+  local bcf_bytes
+  bcf_bytes=$(file_bytes "$load_bcf")
+  echo
+  echo "In-process Bcf.read and Vcf.read. One warm-up is discarded and JVM startup is excluded."
+  echo "The .bcf is bcftools view --no-version -Ob of the loadable .vcf.gz."
+  echo "  bcf $(file_bytes_human "$bcf_bytes") ($bcf_bytes bytes) $load_bcf"
+  printf '| Tool | Read | Input | Median | Peak | Command |\n'
+  printf '|------|------|-------|-------:|-----:|:--------|\n'
+  reader_bench_row bcf "$load_bcf" "loadable .bcf"
+  reader_bench_row vcf "$load_gz" "loadable .vcf.gz"
+
+  local load_ubcf="${load%.vcf}.uncompressed.bcf"
+  if [[ ! -f "$load_ubcf" || "$load_gz" -nt "$load_ubcf" ]]; then
+    echo "Writing uncompressed BCF: bcftools view --no-version -Ou"
+    bcftools view --no-version -Ou -o "$load_ubcf" "$load_gz"
+  fi
+  local ubcf_bytes
+  ubcf_bytes=$(file_bytes "$load_ubcf")
+  echo
+  echo "BGZF writing. One warm-up is discarded and JVM startup is excluded."
+  echo "VCF rows stream the plain loadable VCF through BgzfWriter. BCF rows stream uncompressed BCF."
+  echo "Output bytes are counted and dropped. htslib rows are bgzip of the plain VCF."
+  echo "  uncompressed bcf $(file_bytes_human "$ubcf_bytes") ($ubcf_bytes bytes) $load_ubcf"
+  printf '| Tool | Write | Input | Median | Peak | Command |\n'
+  printf '|------|-------|-------|-------:|-----:|:--------|\n'
+  bgzf_write_row "$load" vcf 1 "plain .vcf"
+  bgzf_write_row "$load" vcf "" "plain .vcf"
+  bgzf_write_row "$load_ubcf" bcf 1 "uncompressed .bcf"
+  bgzf_write_row "$load_ubcf" bcf "" "uncompressed .bcf"
+  command="bgzip -@ 1 -o /dev/null $load"
+  result=$(repeat_measure bgzip -@ 1 -o /dev/null "$load")
+  vcf_row "htslib" "compress, 1 thread" "plain .vcf" "$result" "$command"
+  command="bgzip -@ $VCF_BGZIP_THREADS -o /dev/null $load"
+  result=$(repeat_measure bgzip -@ "$VCF_BGZIP_THREADS" -o /dev/null "$load")
+  vcf_row "htslib" "compress, $VCF_BGZIP_THREADS threads" "plain .vcf" "$result" "$command"
+}
+
+# One dev bgzf-write-bench invocation. [workers] empty means the host count. Prints a table row.
+bgzf_write_row() {
+  local input="$1" layout="$2" workers="$3" label="$4"
+  local -a args=(--quiet dev bgzf-write-bench --input "$input" --layout "$layout" --runs "$RUNS")
+  if [[ -n "$workers" ]]; then
+    args+=(--workers "$workers")
+  fi
+  local stats="$WORK/.time" out="$WORK/bgzf-write-bench.out" rss line median count command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "bgzf-write-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  count=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "workers") print p[2] } }' <<<"$line")
+  [[ -n "$median" && -n "$count" ]] || die "bgzf-write-bench wrote no median: $(cat "$out")"
+  local what="compress, $count worker"
+  if [[ "$count" != "1" ]]; then
+    what="compress, $count workers"
+  fi
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "$what" "$label" "$median" "${rss:-0}" "$command"
 }
 
 # One dev bgzf-bench invocation. [workers] empty means the host count. Prints a table row.
@@ -426,6 +497,32 @@ bgzf_bench_row() {
   command="$TASSEL6 ${args[*]}"
   printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
     "TASSEL 6" "$label" "loadable .vcf.gz" "$median" "${rss:-0}" "$command"
+}
+
+# One dev bcf-bench invocation. [kind] is bcf or vcf. The median excludes JVM startup. Prints a table row.
+reader_bench_row() {
+  local kind="$1" input="$2" label="$3"
+  local -a args=(--quiet dev bcf-bench --runs "$RUNS")
+  if [[ "$kind" == "bcf" ]]; then
+    args+=(--bcf "$input")
+  else
+    args+=(--vcf "$input")
+  fi
+  local stats="$WORK/.time" out="$WORK/bcf-bench.out" rss line median sites command
+  /usr/bin/time $TIME_FLAG "$TASSEL6" "${args[@]}" >"$out" 2>"$stats" || die "bcf-bench failed; see $LOG"
+  cat "$stats" >>"$LOG"
+  if [[ "$TIME_FLAG" == "-l" ]]; then
+    rss=$(awk '/maximum resident set size/ { printf "%.0f", $1 / 1048576 }' "$stats")
+  else
+    rss=$(awk -F': ' '/Maximum resident set size/ { printf "%.0f", $2 / 1024 }' "$stats")
+  fi
+  line=$(tr -d '\r' <"$out" | awk 'NF { last = $0 } END { print last }')
+  median=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "median") print p[2] } }' <<<"$line")
+  sites=$(awk '{ for (i = 1; i <= NF; i++) { split($i, p, "="); if (p[1] == "sites") print p[2] } }' <<<"$line")
+  [[ -n "$median" && "$sites" == "$VCF_SITES" ]] || die "bcf-bench wrote '$line', expected $VCF_SITES sites"
+  command="$TASSEL6 ${args[*]}"
+  printf '| %s | %s | %s | %s s | %s MiB | `%s` |\n' \
+    "TASSEL 6" "whole-file read" "$label" "$median" "${rss:-0}" "$command"
 }
 
 # One dev vcf-region-bench invocation. The median excludes JVM startup. Prints a table row.

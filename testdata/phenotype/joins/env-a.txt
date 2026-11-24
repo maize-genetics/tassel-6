@@ -1,0 +1,11 @@
+<Phenotype>
+taxa	factor	factor	data
+Taxa	env	rep	yield
+B73	E1	1	33.5
+B73	E1	2	34.5
+B73	E2	1	35.5
+B73	E2	2	36.5
+Mo17	E1	1	43.5
+Mo17	E1	2	44.5
+Mo17	E2	1	45.5
+Mo17	E2	2	46.5

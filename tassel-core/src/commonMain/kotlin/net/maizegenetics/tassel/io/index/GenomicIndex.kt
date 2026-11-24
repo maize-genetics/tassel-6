@@ -168,21 +168,42 @@ internal class Reference(
  * Reads a CSI or TBI index from [source].
  *
  * The index is BGZF-compressed and small, so it is inflated whole. [source] is not closed.
+ * A CSI with no contig names is rejected. The overload that takes a name list reads that shape.
  *
  * @throws IllegalArgumentException when the magic is wrong, the index is truncated, the tabix
  *   configuration names an unknown format, or a CSI index has no contig names.
  */
-fun readGenomicIndex(source: Source): GenomicIndex {
+fun readGenomicIndex(source: Source): GenomicIndex = readIndex(source, contigNames = null)
+
+/**
+ * Reads a CSI whose auxiliary field is empty, naming each reference from [contigNames].
+ *
+ * [contigNames] is one name per reference, in index order. For a BCF that order is the header
+ * contig order: a BCF CSI stores no names of its own (`l_aux` is 0, ADR-0022). A count that does
+ * not match the index says which side is short. A TBI, or a CSI whose auxiliary field already
+ * contains names, is an error. The two lists are not compared, and neither is preferred.
+ *
+ * The index is BGZF-compressed and small, so it is inflated whole. [source] is not closed.
+ *
+ * @throws IllegalArgumentException when the magic is wrong, the index is truncated, the index
+ *   already contains contig names, or [contigNames] does not have one entry per reference.
+ */
+fun readGenomicIndex(source: Source, contigNames: List<String>): GenomicIndex = readIndex(source, contigNames)
+
+private fun readIndex(source: Source, contigNames: List<String>?): GenomicIndex {
     val bytes = source.decompressing().source.readByteArray()
     if (bytes.size < 4) throw IllegalArgumentException("truncated genomic index")
     return when {
-        isMagic(bytes, 'C', 'S', 'I') -> parseCsi(bytes)
-        isMagic(bytes, 'T', 'B', 'I') -> parseTbi(bytes)
+        isMagic(bytes, 'C', 'S', 'I') -> parseCsi(bytes, contigNames)
+        isMagic(bytes, 'T', 'B', 'I') -> {
+            if (contigNames != null) throw IllegalArgumentException("TBI index already contains contig names")
+            parseTbi(bytes)
+        }
         else -> throw IllegalArgumentException("genomic index magic is not CSI or TBI")
     }
 }
 
-private fun parseCsi(bytes: ByteArray): GenomicIndex {
+private fun parseCsi(bytes: ByteArray, externalNames: List<String>?): GenomicIndex {
     val cursor = Cursor(bytes)
     cursor.skip(4)
     val minShift = cursor.i32()
@@ -191,11 +212,40 @@ private fun parseCsi(bytes: ByteArray): GenomicIndex {
     if (auxLength < 0) throw IllegalArgumentException("truncated genomic index")
     val aux = cursor.take(auxLength)
     val references = cursor.i32()
+    val names = if (externalNames == null) {
+        namesFromAux(aux, references)
+    } else {
+        namesFromCaller(aux, externalNames, references)
+    }
+    return assemble(minShift, depth, names, readReferences(cursor, references, csi = true, depth), readUnplaced(cursor))
+}
+
+/** The one-argument reader: names live in the auxiliary field, and an empty field is an error. */
+private fun namesFromAux(aux: ByteArray, references: Int): List<String> {
     val names = contigNames(aux)
     if (names.size != references) {
         throw IllegalArgumentException("genomic index contig names do not match its references")
     }
-    return assemble(minShift, depth, names, readReferences(cursor, references, csi = true, depth), readUnplaced(cursor))
+    return names
+}
+
+/**
+ * A nameless CSI. A non-empty auxiliary field means the index already named its contigs, so the
+ * supplied list is refused rather than compared.
+ */
+private fun namesFromCaller(aux: ByteArray, contigNames: List<String>, references: Int): List<String> {
+    if (aux.isNotEmpty()) throw IllegalArgumentException("CSI index already contains contig names")
+    if (contigNames.size < references) {
+        throw IllegalArgumentException(
+            "contig name list is short: ${contigNames.size} names for $references references",
+        )
+    }
+    if (contigNames.size > references) {
+        throw IllegalArgumentException(
+            "genomic index is short: $references references for ${contigNames.size} contig names",
+        )
+    }
+    return contigNames
 }
 
 private fun parseTbi(bytes: ByteArray): GenomicIndex {
@@ -319,7 +369,8 @@ private fun binLevel(bin: Long): Int {
 /**
  * Tabix `format`, `col_seq`, `col_beg`, `col_end`, `meta`, `skip`, and `l_nm`, then the contig names.
  *
- * A CSI written for BCF has no tabix configuration. That is rejected: this reader names contigs from `aux`.
+ * A CSI written for BCF has no tabix configuration. The one-argument reader rejects that shape.
+ * [readGenomicIndex] with a name list is what accepts an empty auxiliary field.
  */
 private fun contigNames(aux: ByteArray): List<String> {
     if (aux.size < TABIX_HEADER) throw IllegalArgumentException("genomic index has no contig names")

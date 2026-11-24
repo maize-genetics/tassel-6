@@ -1,0 +1,14 @@
+[package]
+name = "gpu-gram"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Benchmark harness for the dense Float32 Gram spike. Not part of the TASSEL 6 build."
+
+# Harness only. These crates are not dependencies of tassel-core, tassel-cli, or tassel-app.
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+# wgpu 27.0.1 requires Rust 1.88. 26.0.1 is the newest release that builds on the
+# 1.87.0 toolchain this issue asks for (its own MSRV is 1.84).
+wgpu = "=26.0.1"

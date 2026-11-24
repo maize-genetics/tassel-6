@@ -3,35 +3,44 @@ package net.maizegenetics.tassel.app.state
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import net.maizegenetics.tassel.analysis.PhenotypeTransformResult
 import net.maizegenetics.tassel.app.analysis.AnalysisEngine
 import net.maizegenetics.tassel.app.analysis.analysisForm
-import net.maizegenetics.tassel.app.analysis.genotypeFileName
 import net.maizegenetics.tassel.app.analysis.resultParts
 import net.maizegenetics.tassel.app.analysis.withProblems
 import net.maizegenetics.tassel.app.data.GenotypeFile
 import net.maizegenetics.tassel.app.data.GenotypeFiles
 import net.maizegenetics.tassel.app.data.OpenPlan
 import net.maizegenetics.tassel.app.data.RegionSource
+import net.maizegenetics.tassel.app.data.isPhenotype
 import net.maizegenetics.tassel.app.data.openRegionSource
 import net.maizegenetics.tassel.app.data.readGenotypes
+import net.maizegenetics.tassel.app.data.readPhenotype
 import net.maizegenetics.tassel.app.data.resolveOpen
 import net.maizegenetics.tassel.app.data.validateRegion
+import net.maizegenetics.tassel.app.export.GenotypeExportFormat
 import net.maizegenetics.tassel.app.export.ResultFiles
+import net.maizegenetics.tassel.app.export.genotypeFileName
+import net.maizegenetics.tassel.app.export.phenotypeFileName
+import net.maizegenetics.tassel.app.export.writeGenotype
+import net.maizegenetics.tassel.app.export.writePhenotype
+import net.maizegenetics.tassel.app.logAppMessage
 import net.maizegenetics.tassel.app.yieldToEventLoop
 import net.maizegenetics.tassel.engine.DataHandle
 import net.maizegenetics.tassel.engine.RunRequest
 import net.maizegenetics.tassel.genotype.GenotypeTable
-import net.maizegenetics.tassel.io.HapMap
 import net.maizegenetics.tassel.io.parseVcfRegion
 import net.maizegenetics.tassel.ops.InvalidParametersException
 import net.maizegenetics.tassel.ops.Progress
 import net.maizegenetics.tassel.ops.ProgressReporter
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -44,10 +53,11 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param engine the engine analyses run on. The UI never calls an analysis directly.
  * @param results where an exported result is written on this target.
  * @param scope the scope loads and runs happen in; it should live as long as the screen.
- * @param readContext the context HapMap parsing runs on. Desktop passes a background dispatcher. The browser has
+ * @param readContext the context genotype parsing runs on. Desktop passes a background dispatcher. The browser has
  *   one thread and no worker here, so it passes [EmptyCoroutineContext] and the parse runs on the UI thread,
  *   giving it back at every progress report (ADR-0019) so the page keeps drawing.
- * @param openIndexed opens a bgzipped VCF with its index. Tests pass a fake so the region step needs no BGZF bytes.
+ * @param openIndexed opens a bgzipped VCF or BCF with its index. Tests pass a fake so the region step needs no
+ *   BGZF bytes.
  */
 class AppViewModel internal constructor(
     private val files: GenotypeFiles,
@@ -67,7 +77,7 @@ class AppViewModel internal constructor(
     private var export: Job? = null
     private var nextId = 1L
 
-    /** The indexed VCF behind [RegionPrompt], open until Load, Cancel, or another file replaces it. */
+    /** The indexed VCF or BCF behind [RegionPrompt], open until Load, Cancel, or another file replaces it. */
     private var session: RegionSource? = null
 
     /** Handles the engine issued for each dataset, so a second analysis of the same data uploads nothing again. */
@@ -81,15 +91,21 @@ class AppViewModel internal constructor(
     /** Applies one user action. Returns at once; work continues in [scope]. */
     fun handle(event: AppEvent) {
         when (event) {
-            AppEvent.OpenTutorial -> open { listOf(files.tutorial()) }
-            AppEvent.OpenFile -> open { files.choose() }
+            AppEvent.OpenTutorial -> open {
+                // Named, not sniffed: the tutorial is known, and in the browser a sniff would fetch it twice.
+                Picked(listOf(files.tutorial()), files.tutorialPhenotypes())
+            }
+            AppEvent.OpenFile -> open { files.choose()?.let { Picked(it) } }
             is AppEvent.SetRegion -> setRegion(event.text)
             is AppEvent.UseContig -> setRegion(event.name)
             AppEvent.ConfirmRegion -> confirmRegion()
             AppEvent.CancelRegion -> cancelRegion()
-            is AppEvent.Select -> mutate { copy(showing = Showing.Dataset(event.id)) }
+            is AppEvent.ToggleChecked -> toggleChecked(event.id)
+            is AppEvent.Select -> mutate {
+                copy(showing = Showing.Dataset(event.id), checked = emptyList()).withApplicableForm()
+            }
             is AppEvent.Close -> close(event.id)
-            is AppEvent.ExportDataset -> exportDataset(event.id)
+            is AppEvent.ExportDataset -> exportDataset(event.id, event.format)
             is AppEvent.ShowForm -> showForm(event.operationId)
             is AppEvent.SetParameter -> mutate { copy(form = form?.with(event.name, event.value)) }
             AppEvent.CloseForm -> mutate { copy(form = null) }
@@ -98,7 +114,9 @@ class AppViewModel internal constructor(
                 load?.cancel()
                 run?.cancel()
             }
-            is AppEvent.SelectResult -> mutate { copy(showing = Showing.Result(event.id, event.part)) }
+            is AppEvent.SelectResult -> mutate {
+                copy(showing = Showing.Result(event.id, event.part), checked = emptyList()).withApplicableForm()
+            }
             is AppEvent.CloseResult -> mutate {
                 copy(results = results.filterNot { it.id == event.id }, showing = showingAfterClose(event.id))
             }
@@ -110,12 +128,12 @@ class AppViewModel internal constructor(
     /**
      * Reads the files [choose] returns, if any.
      *
-     * A HapMap or plain VCF is added to the tree. A bgzipped VCF is opened with its index and the region step is
-     * shown; the sites are read later, from [confirmRegion]. One load at a time: a second request cancels the first,
-     * so a user who picks another file while a big one is parsing does not leave two readers competing for the
-     * browser's single thread.
+     * A HapMap, plain VCF, or whole BCF is added to the tree. A bgzipped VCF with its index, or a BCF with its
+     * `.csi`, opens the region step; the sites are read later, from [confirmRegion]. One load at a time: a second
+     * request cancels the first, so a user who picks another file while a big one is parsing does not leave two
+     * readers competing for the browser's single thread.
      */
-    private fun open(choose: suspend () -> List<GenotypeFile>?) {
+    private fun open(choose: suspend () -> Picked?) {
         load?.cancel()
         // UNDISPATCHED so that clicking "Open file" shows the file dialog in the same frame as the click.
         load = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -136,39 +154,60 @@ class AppViewModel internal constructor(
                 }
                 closeSession()
                 mutate { copy(region = null) }
-                when (val plan = resolveOpen(picked)) {
-                    is OpenPlan.Rejected ->
-                        mutate { copy(activity = Activity.Failed(plan.name, plan.message)) }
-                    is OpenPlan.WholeFile -> {
-                        name = plan.file.name
-                        mutate { copy(activity = Activity.Loading(name, Progress(0, 0, "Opening $name"))) }
-                        val table = withContext(readContext) { plan.file.readGenotypes(loadProgress()) }
-                        add(name, table)
-                        mutate { copy(activity = Activity.Idle) }
-                    }
-                    is OpenPlan.Indexed -> {
-                        name = plan.data.name
-                        mutate {
-                            copy(activity = Activity.Loading(name, Progress(0, 0, "Reading index of $name")))
+                // A phenotype is told from a genotype by its first line, so both can be opened together (the tutorial
+                // does). The genotype goes first and stays on screen; the phenotypes are added beneath it.
+                mutate {
+                    val first = picked.files.firstOrNull()?.name.orEmpty()
+                    copy(activity = Activity.Loading(first, Progress(0, 0, "Opening $first")))
+                }
+                val phenotypes = picked.phenotypes ?: picked.files.filter { it.isPhenotype() }
+                val genotypeFiles = picked.files - phenotypes.toSet()
+                val plan = if (genotypeFiles.isEmpty()) null else resolveOpen(genotypeFiles)
+                if (plan != null) {
+                    when (plan) {
+                        is OpenPlan.Rejected ->
+                            mutate { copy(activity = Activity.Failed(plan.name, plan.message)) }
+                        is OpenPlan.WholeFile -> {
+                            name = plan.file.name
+                            mutate { copy(activity = Activity.Loading(name, Progress(0, 0, "Opening $name"))) }
+                            val table = withContext(readContext) { plan.file.readGenotypes(loadProgress()) }
+                            add(name, table)
+                            mutate { copy(activity = Activity.Idle) }
                         }
-                        val indexed = withContext(readContext) { openIndexed(plan.data, plan.index) }
-                        opened = indexed
-                        session = indexed
-                        val names = indexed.contigs.map { it.name }
-                        mutate {
-                            copy(
-                                activity = Activity.Idle,
-                                region = RegionPrompt(
-                                    fileName = plan.data.name,
-                                    contigs = indexed.contigs.map { ContigRow(it.name, it.length) },
-                                    text = "",
-                                    message = validateRegion("", names),
-                                ),
-                            )
+                        is OpenPlan.Indexed -> {
+                            name = plan.data.name
+                            mutate {
+                                copy(activity = Activity.Loading(name, Progress(0, 0, "Reading index of $name")))
+                            }
+                            val indexed = withContext(readContext) { openIndexed(plan.data, plan.index) }
+                            opened = indexed
+                            session = indexed
+                            val names = indexed.contigs.map { it.name }
+                            mutate {
+                                copy(
+                                    activity = Activity.Idle,
+                                    region = RegionPrompt(
+                                        fileName = plan.data.name,
+                                        contigs = indexed.contigs.map { ContigRow(it.name, it.length) },
+                                        text = "",
+                                        message = validateRegion("", names),
+                                    ),
+                                )
+                            }
+                            published = true
                         }
-                        published = true
                     }
                 }
+                if (plan is OpenPlan.Rejected) return@launch
+                val shownBefore = state.value.showing
+                for (file in phenotypes) {
+                    name = file.name
+                    mutate { copy(activity = Activity.Loading(name, Progress(0, 0, "Opening $name"))) }
+                    val table = withContext(readContext) { file.readPhenotype(loadProgress()) }
+                    add(name, table)
+                    mutate { copy(activity = Activity.Idle) }
+                }
+                if (plan != null && phenotypes.isNotEmpty()) mutate { copy(showing = shownBefore) }
             } catch (failure: CancellationException) {
                 if (!published) {
                     opened?.close()
@@ -204,7 +243,7 @@ class AppViewModel internal constructor(
         }
     }
 
-    /** Closes the region step and the indexed VCF behind it. No dataset is added. */
+    /** Closes the region step and the indexed file behind it. No dataset is added. */
     private fun cancelRegion() {
         closeSession()
         mutate { copy(region = null) }
@@ -270,9 +309,14 @@ class AppViewModel internal constructor(
     }
 
     /** Adds [table] to the tree under [name] and shows it. */
-    private fun add(name: String, table: GenotypeTable): Dataset {
-        val dataset = Dataset(nextId++, name, table)
-        mutate { copy(datasets = datasets + dataset, showing = Showing.Dataset(dataset.id)) }
+    private fun add(name: String, table: GenotypeTable): Dataset = add(name, DatasetData.Genotypes(table))
+
+    /** Adds [table] to the tree under [name] and shows it. */
+    private fun add(name: String, table: PhenotypeTable): Dataset = add(name, DatasetData.Phenotypes(table))
+
+    private fun add(name: String, data: DatasetData): Dataset {
+        val dataset = Dataset(nextId++, name, data)
+        mutate { copy(datasets = datasets + dataset, showing = Showing.Dataset(dataset.id), checked = emptyList()) }
         return dataset
     }
 
@@ -290,9 +334,30 @@ class AppViewModel internal constructor(
             copy(
                 datasets = remaining,
                 results = results.filterNot { it.datasetId == id },
+                checked = checked - id,
                 showing = keep ?: remaining.lastOrNull()?.let { Showing.Dataset(it.id) } ?: Showing.Nothing,
-            )
+            ).withApplicableForm()
         }
+    }
+
+    /**
+     * Ticks or unticks [id]. The first tick while another dataset is shown ticks that one too, so "this and that" is
+     * two clicks and the shown dataset is the first join input.
+     */
+    private fun toggleChecked(id: Long) = mutate {
+        if (datasets.none { it.id == id }) return@mutate this
+        val next = when {
+            id in checked -> checked - id
+            checked.isEmpty() -> listOfNotNull(selected?.id?.takeIf { it != id }) + id
+            else -> checked + id
+        }
+        copy(checked = next).withApplicableForm()
+    }
+
+    /** Drops the open form when its operation cannot run on what is now selected. */
+    private fun AppState.withApplicableForm(): AppState {
+        val open = form ?: return this
+        return if (availableOperations.any { it.id == open.operationId }) this else copy(form = null)
     }
 
     /** Opens the form for [operationId], prefilled with the spec's defaults. */
@@ -323,19 +388,30 @@ class AppViewModel internal constructor(
      */
     private fun runAnalysis() {
         val form = state.value.form ?: return
-        val dataset = state.value.selected ?: return
+        val selection = state.value.selection
+        if (selection.isEmpty()) return
         run?.cancel()
         run = scope.launch {
+            // A join gets a one-off handle for its DataSet; a single dataset keeps the handle it was given.
+            var transient: DataHandle? = null
             try {
                 mutate {
                     copy(activity = Activity.Running(form.operationId, Progress(0, 0, "Running ${form.operationId}")))
                 }
                 yield()
-                val handle = handles.getOrPut(dataset.id) { engine.put(dataset.table) }
+                require(state.value.availableOperations.any { it.id == form.operationId }) {
+                    "${form.operationId} does not take ${describe(selection)}"
+                }
+                val handle = if (selection.size == 1) {
+                    val only = selection[0]
+                    handles.getOrPut(only.id) { engine.put(only.data.value) }
+                } else {
+                    engine.put(dataSetOf(selection)).also { transient = it }
+                }
                 val request = RunRequest(form.operationId, handle, form.parameters)
                 val output = engine.result(engine.run(request, runProgress()))
                 yield()
-                show(dataset, form.operationId, output)
+                show(selection, form.operationId, output)
                 mutate { copy(activity = Activity.Idle, form = null) }
             } catch (failure: CancellationException) {
                 // Only if no later run has started, so a cancelled run cannot clear its successor's banner.
@@ -346,24 +422,50 @@ class AppViewModel internal constructor(
                 mutate { copy(activity = Activity.Idle, form = form.withProblems(invalid)) }
             } catch (failure: Exception) {
                 mutate { copy(activity = Activity.Failed(form.operationId, failure.message ?: failure.toString())) }
+            } finally {
+                transient?.let { handle -> withContext(NonCancellable) { engine.release(handle) } }
             }
         }
     }
 
+    /** `2 datasets` or `a phenotype dataset`, for the message when the form no longer fits the selection. */
+    private fun describe(selection: List<Dataset>): String =
+        if (selection.size == 1) "a ${selection[0].inputType} dataset" else "${selection.size} datasets"
+
     /**
-     * Puts [output] where the user can see it: a genotype table becomes another dataset in the tree, because that
-     * is what a filter produces and what the next analysis takes as input; everything else becomes a result node.
+     * Puts [output] where the user can see it: a genotype or phenotype table becomes another dataset in the tree,
+     * because that is what a filter, a transform, or a join produces and what the next analysis takes as input;
+     * everything else becomes a result node under the first dataset it was run on.
      */
-    private fun show(dataset: Dataset, operationId: String, output: Any) {
-        if (output is GenotypeTable) {
-            add("${dataset.name} + $operationId", output)
-            return
+    private fun show(selection: List<Dataset>, operationId: String, output: Any) {
+        val first = selection.first()
+        val source = if (selection.size ==
+            1
+        ) {
+            first.name
+        } else {
+            selection.joinToString(" + ") { it.name.substringBefore('.') }
+        }
+        when (output) {
+            is GenotypeTable -> {
+                add("$source + $operationId", output)
+                return
+            }
+            is PhenotypeTable -> {
+                add("$source + $operationId", output)
+                return
+            }
+            is PhenotypeTransformResult -> {
+                output.warnings.forEach { logAppMessage("$operationId: $it") }
+                add("$source + $operationId", output.table)
+                return
+            }
         }
         val result = AnalysisResult(
             id = nextId++,
-            datasetId = dataset.id,
+            datasetId = first.id,
             operationId = operationId,
-            parts = resultParts(output, baseName(dataset.name, operationId)),
+            parts = resultParts(output, baseName(source, operationId)),
         )
         mutate { copy(results = results + result, showing = Showing.Result(result.id, 0)) }
     }
@@ -377,13 +479,27 @@ class AppViewModel internal constructor(
         }
     }
 
-    /** Writes a dataset out as HapMap, which is how TASSEL 5 exports genotypes. */
-    private fun exportDataset(id: Long) {
+    /**
+     * Writes a dataset in [format]. The name is fixed before the save dialog, and the dialog does not
+     * choose the writer.
+     */
+    private fun exportDataset(id: Long, format: GenotypeExportFormat) {
         val dataset = state.value.datasets.firstOrNull { it.id == id } ?: return
-        val fileName = genotypeFileName(dataset.name)
+        val data = dataset.data
+        val fileName = when (data) {
+            is DatasetData.Phenotypes -> phenotypeFileName(dataset.name)
+            is DatasetData.Genotypes -> genotypeFileName(dataset.name, format)
+        }
         export?.cancel()
         export = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            saving(fileName) { results.save(fileName) { sink -> HapMap.write(dataset.table, sink) } }
+            saving(fileName) {
+                results.save(fileName) { sink ->
+                    when (data) {
+                        is DatasetData.Phenotypes -> writePhenotype(data.table, sink)
+                        is DatasetData.Genotypes -> writeGenotype(data.table, format, sink)
+                    }
+                }
+            }
         }
     }
 
@@ -434,6 +550,12 @@ class AppViewModel internal constructor(
         mutableState.value = mutableState.value.change()
     }
 }
+
+/**
+ * What a file dialog or the tutorial handed over. [phenotypes] is null when [files] still has to be sniffed to tell
+ * a phenotype from a genotype, and the phenotype files when the caller already knows which they are.
+ */
+private class Picked(val files: List<GenotypeFile>, val phenotypes: List<GenotypeFile>? = null)
 
 /** `mdp_genotype.kinship`, the stem `tassel-cli`'s `--output` would be given for the same run. */
 internal fun baseName(datasetName: String, operationId: String): String =

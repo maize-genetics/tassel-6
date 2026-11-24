@@ -3,7 +3,8 @@ package net.maizegenetics.tassel.app.export
 import kotlinx.browser.document
 import kotlinx.io.Buffer
 import kotlinx.io.Sink
-import kotlinx.io.readString
+import kotlinx.io.readByteArray
+import net.maizegenetics.tassel.io.byteArrayToArrayBuffer
 import org.w3c.dom.HTMLAnchorElement
 import org.w3c.dom.url.URL
 import org.w3c.files.Blob
@@ -16,6 +17,9 @@ import kotlin.js.set
  * Browser export: the file is built in memory and handed to the page as a download, because there is no file
  * system here and no way to stream into one.
  *
+ * Every export, text included, is one byte-array Blob. `readString()` would replace anything that is not
+ * UTF-8, which corrupts BCF and bgzipped VCF. The download name is [fileName].
+ *
  * The whole file is buffered before the download starts, which is the cost of having no file system; for the
  * results this PoC produces (a 281 x 281 kinship matrix is about 1 MB of text) that is acceptable.
  */
@@ -25,8 +29,8 @@ class BrowserResultFiles : ResultFiles {
         val buffer = Buffer()
         write(buffer)
         val parts = JsArray<JsAny?>()
-        parts[0] = buffer.readString().toJsString()
-        val blob = Blob(parts, BlobPropertyBag(type = "text/plain;charset=utf-8"))
+        parts[0] = byteArrayToArrayBuffer(buffer.readByteArray())
+        val blob = Blob(parts, BlobPropertyBag(type = "application/octet-stream"))
         val url = URL.createObjectURL(blob)
         try {
             val anchor = document.createElement("a") as HTMLAnchorElement

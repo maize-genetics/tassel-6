@@ -1,0 +1,8 @@
+<Phenotype>
+taxa	data	data	data	data
+Taxa	yield.1	height	yield.3	ear
+B73	1.0	NaN	NaN	NaN
+Mo17	2.0	20.0	22.0	200.0
+W22	3.0	30.0	33.0	300.0
+Oh43	NaN	40.0	NaN	NaN
+CML52	NaN	NaN	55.0	500.0

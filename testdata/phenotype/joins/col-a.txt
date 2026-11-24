@@ -1,0 +1,6 @@
+<Phenotype>
+taxa	data	data
+Taxa	yield	height
+B73	10.0	100.0
+Mo17	9.0	NA
+W22	NA	80.0
