@@ -79,6 +79,13 @@ FULL_CLASSES="$CACHE/full-precision-classes"
 rm -rf "$FULL_CLASSES"
 "$JAVAC" --release 21 -d "$FULL_CLASSES" "$ROOT/scripts/golden/DoubleFormat.java"
 
+# Colt 1.2.0 ships in the standalone's lib/; Distributions.java calls it directly.
+COLT="$T5/lib/colt-1.2.0.jar"
+[[ -f "$COLT" ]] || die "colt-1.2.0.jar not found in $T5/lib"
+DIST_CLASSES="$CACHE/distributions-classes"
+rm -rf "$DIST_CLASSES"
+"$JAVAC" --release 21 -cp "$COLT" -d "$DIST_CLASSES" "$ROOT/scripts/golden/Distributions.java"
+
 INPUTS=(mdp_genotype.hmp.txt mdp_genotype_w_depth.vcf mdp_traits.txt mdp_population_structure.txt)
 mkdir -p "$TESTDATA/tutorial"
 for f in "${INPUTS[@]}"; do
@@ -381,6 +388,20 @@ for mode in intersect union; do
     -runfork1 -runfork2
   output "$J/mdp_traits.q.$mode.txt" "phenotype rows-unordered"
 done
+
+# Colt 1.2.0 cern.jet.stat.Gamma, which LinearModelUtils.Ftest and every TASSEL 5 GLM and MLM p-value call.
+# The grid is in scripts/golden/Distributions.java: incompleteBeta over shapes 1e-8..1e7 and x from 1e-300 to 1
+# (power series, the a/b swap and its 1 - MACHEP cap, log-space scaling, underflow to 0), the F-test arguments for
+# integer and non-integer degrees of freedom, incompleteGamma and its complement over shapes 1e-8..1e5 and x up to
+# 1e8, gamma and logGamma from -1e5 to 1e300, and the domain errors, written as `error`. Rows whose value moves by
+# more than 2e-14 relative under a 2-ulp nudge of any argument are left out: they are ill-conditioned, and platform
+# exp, log, and pow differ enough in the last bit that no port can hold rel 1e-13 on them.
+S=golden/stats
+section stats "Colt 1.2.0 cern.jet.stat.Gamma: incompleteBeta, incompleteGamma, incompleteGammaComplement, gamma, logGamma"
+manifest "command = java -cp colt-1.2.0.jar:Distributions.class Distributions $S/special-functions.txt"
+(cd "$TESTDATA" && "$JAVA" -cp "$COLT:$DIST_CLASSES" Distributions "$S/special-functions.txt") ||
+  die "Distributions failed"
+output "$S/special-functions.txt" "rel 1e-13"
 
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"
