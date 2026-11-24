@@ -1,8 +1,13 @@
 package net.maizegenetics.tassel.ops
 
+import net.maizegenetics.tassel.analysis.phenotypeSummaryOperation
+import net.maizegenetics.tassel.analysis.transformPhenotypeOperation
 import net.maizegenetics.tassel.distance.kinshipOperation
+import net.maizegenetics.tassel.filter.filterPhenotypeOperation
 import net.maizegenetics.tassel.filter.filterSitesOperation
 import net.maizegenetics.tassel.filter.filterTaxaOperation
+import net.maizegenetics.tassel.join.joinGenotypePhenotypeOperation
+import net.maizegenetics.tassel.join.joinPhenotypesOperation
 
 /**
  * Every operation TASSEL 6 ships. The CLI, the app, the MCP tools, and the legacy translator are
@@ -20,5 +25,10 @@ object TasselOperations {
             filterTaxaOperation, // #16 FilterTaxaBuilderPlugin
             kinshipOperation, // #18 KinshipPlugin
             pcaOperation, // #19 PrincipalComponentsPlugin
+            filterPhenotypeOperation, // #158 FilterTraitsPlugin
+            phenotypeSummaryOperation, // #159
+            transformPhenotypeOperation, // #160 TransformDataPlugin
+            joinPhenotypesOperation, // #162 IntersectionAlignmentPlugin
+            joinGenotypePhenotypeOperation, // #163
         )
 }

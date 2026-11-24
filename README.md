@@ -59,6 +59,17 @@ $T kinship      --input filtered.hmp.txt --output kinship
 $T pca          --input filtered.hmp.txt --output pca
 ```
 
+Phenotype files work the same way. `--input` of a phenotype operation takes a `<Phenotype>` file or
+TASSEL 5's `<Trait>`, `<Covariate>`, `<Factor>`, and `<Header>` layouts, detected from the first tag
+and not the file name. The joins repeat `--input`, in order, and `join-genotype-phenotype` takes one
+genotype and one or more phenotypes:
+
+```bash
+$T phenotype-summary --input testdata/tutorial/mdp_traits.txt --output summary   # summary.attributes.txt, .levels.txt, .taxa.txt
+$T transform-phenotype --input testdata/tutorial/mdp_traits.txt --log natural --output logged
+$T join-phenotypes --input testdata/tutorial/mdp_traits.txt --input testdata/tutorial/mdp_population_structure.txt --output joined
+```
+
 Every subcommand and every one of its options is generated from an operation spec, so `--help` is
 always current and the CLI, the UI's parameter forms, and the future language bindings cannot drift
 apart.

@@ -5,6 +5,7 @@ import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.OptionWithValues
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
+import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.choice
@@ -48,15 +49,48 @@ class OperationCommand(
     private val descriptor: OperationDescriptor,
     private val registry: OperationRegistry = TasselOperations.registry,
 ) : CliktCommand(name = descriptor.id) {
-    private val input = if (descriptor.inputType != "Unit") {
-        option("--input", "-i", help = "Genotype file to analyze (HapMap, VCF, or BCF)", metavar = "PATH")
-            .required()
-            .also { registerOption(it) }
-    } else {
-        null
+    /** The `--input` paths, in command-line order; empty for an operation that takes no input. */
+    private val inputs: () -> List<String> = when (descriptor.inputType) {
+        "Unit" -> {
+            { emptyList() }
+        }
+        "DataSet" -> {
+            val option = option(
+                "--input",
+                "-i",
+                help = "File to include. Repeat it for each input, in order. A phenotype file " +
+                    "(<Phenotype>, <Trait>, <Covariate>, <Factor>, or <Header>) is read as a phenotype; " +
+                    "anything else is a genotype (HapMap, VCF, or BCF). Detected from the content, not the name.",
+                metavar = "PATH",
+            ).multiple(required = true).also { registerOption(it) }
+            ({ option.value })
+        }
+        "PhenotypeTable" -> {
+            val option = option(
+                "--input",
+                "-i",
+                help = "Phenotype file to analyze (<Phenotype>, or TASSEL 5's <Trait>, <Covariate>, <Factor>, " +
+                    "and <Header> layouts)",
+                metavar = "PATH",
+            ).required().also { registerOption(it) }
+            ({ listOf(option.value) })
+        }
+        else -> {
+            val option = option(
+                "--input",
+                "-i",
+                help = "Genotype file to analyze (HapMap, VCF, or BCF)",
+                metavar = "PATH",
+            )
+                .required()
+                .also { registerOption(it) }
+            ({ listOf(option.value) })
+        }
     }
 
-    private val region = if (descriptor.inputType == "GenotypeTable") {
+    private val takesGenotypes = descriptor.inputType == "GenotypeTable" || descriptor.inputType == "DataSet"
+
+    private val region = if (takesGenotypes) {
         option(
             "--region",
             help = "Read one region of a bgzipped, indexed VCF or BCF (.bcf), for example " +
@@ -68,7 +102,7 @@ class OperationCommand(
         null
     }
 
-    private val index = if (descriptor.inputType == "GenotypeTable") {
+    private val index = if (takesGenotypes) {
         option(
             "--index",
             help = "CSI or TBI index for --region. When omitted, look beside the VCF for .csi, then .tbi. " +
@@ -84,7 +118,9 @@ class OperationCommand(
         "-o",
         help = "Where to write the result. For a genotype, the suffix selects the format, ignoring case: " +
             "filtered.hmp.txt, filtered.vcf, filtered.vcf.gz, or filtered.bcf. " +
-            "Any other name stays HapMap, and so does standard output. Omit to write to standard output.",
+            "Any other name stays HapMap, and so does standard output. A phenotype is written as <Phenotype> " +
+            "text, and a result of several tables as one file per table. " +
+            "Omit to write to standard output.",
         metavar = "PATH",
     ).also { registerOption(it) }
 
@@ -99,9 +135,8 @@ class OperationCommand(
     override fun help(context: Context): String = descriptor.help
 
     override fun run() = cliRun {
-        if (input != null && descriptor.inputType != "GenotypeTable") {
-            // The CLI reads HapMap and VCF, so an operation over anything else needs a reader here
-            // before its subcommand can run.
+        if (descriptor.inputType !in setOf("Unit", "GenotypeTable", "PhenotypeTable", "DataSet")) {
+            // An operation over anything else needs a reader here before its subcommand can run.
             unsupported("'${descriptor.id}' takes a ${descriptor.inputType}, which the CLI cannot read yet")
         }
         val supplied = parameters.mapNotNull { (name, read) -> read()?.let { name to it } }.toMap()
@@ -115,14 +150,42 @@ class OperationCommand(
         }
         val engine = LocalEngine(registry)
         runBlocking {
-            val genotypes = input?.let {
-                readGenotypes(it.value, stderrProgress("Reading"), regionText, indexText)
-            }
-            val handle = genotypes?.let { engine.put(it) }
+            val data = readInput(regionText, indexText)
+            val handle = data?.let { engine.put(it) }
             val request = RunRequest(descriptor.id, handle, supplied)
             CliLog.info("running ${descriptor.id}")
             val result = engine.get(engine.run(request, stderrProgress(descriptor.id)))
             writeResult(result, output.value, stderrProgress("Writing"))
+        }
+    }
+
+    /** Reads `--input` as the type the operation takes, or `null` when it takes none. */
+    private suspend fun readInput(region: String?, index: String?): Any? {
+        val paths = inputs()
+        val progress = stderrProgress("Reading")
+        return when (descriptor.inputType) {
+            "GenotypeTable" -> {
+                val path = paths.single()
+                if (sniffInput(path) == InputKind.Phenotype) {
+                    throw IllegalArgumentException(
+                        "$path is a phenotype file, but '${descriptor.id}' takes a genotype (HapMap, VCF, or BCF)",
+                    )
+                }
+                readGenotypes(path, progress, region, index)
+            }
+            "PhenotypeTable" -> {
+                val path = paths.single()
+                // A missing file falls through to readPhenotype, which names it.
+                if (isRegularFile(path) && sniffInput(path) != InputKind.Phenotype) {
+                    throw IllegalArgumentException(
+                        "$path is not a phenotype file, but '${descriptor.id}' takes one; " +
+                            "it must start with <Phenotype>, <Trait>, <Covariate>, <Factor>, or <Header>",
+                    )
+                }
+                readPhenotype(path, progress)
+            }
+            "DataSet" -> readDataSet(paths, progress, region, index)
+            else -> null
         }
     }
 
