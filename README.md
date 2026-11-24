@@ -8,8 +8,9 @@ An analysis is written once, in `commonMain`, and the same code runs in a comman
 desktop application, and a browser tab with no server. Every ported analysis is tested against
 TASSEL 5's own output, byte for byte where the format allows it.
 
-> **Status: alpha (`6.0.0-alpha.1`).** Genotype summary, site and taxa filters, Centered IBS kinship,
-> and PCA are ported, and this release reads bgzipped VCF and one region of a CSI- or TBI-indexed VCF
+> **Status: alpha (`6.0.0-alpha.2`).** Genotype summary, site and taxa filters, Centered IBS kinship,
+> and PCA are ported. This release reads bgzipped VCF, BCF, and one region of a CSI- or TBI-indexed
+> file, writes VCF and BCF, and reads, summarizes, transforms, and joins TASSEL 5 phenotype files,
 > on the command line, the desktop app, and in the browser. It is not a replacement for TASSEL 5 yet,
 > and the [known limits](docs/poc/benchmarks.md#known-limits) are written down rather than glossed over.
 
@@ -19,7 +20,10 @@ TASSEL 5's own output, byte for byte where the format allows it.
 |---|---|---|---|
 | Read HapMap, plain or gzipped | yes | yes | yes |
 | Read VCF, the `GT` field only, plain or bgzipped | yes | yes | yes |
+| Read BCF, whole file or one `.csi` region | yes | yes | yes |
 | Read one region of an indexed VCF (`.csi`, then `.tbi`) | yes (`--region`) | yes | yes |
+| Write VCF or BCF (chosen by output suffix) | yes | yes | yes |
+| Phenotypes: read, summarize, transform, filter, join | yes | yes | yes |
 | `summary`, `filter-sites`, `filter-taxa` | yes | yes | yes |
 | `kinship` (Centered IBS) | yes | yes | yes |
 | `pca` (scores, eigenvalues, eigenvectors) | yes | yes | yes |
