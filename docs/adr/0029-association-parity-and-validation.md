@@ -1,6 +1,6 @@
 # ADR-0029: Parity and validation policy for association mapping
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-25
 
 ## Context

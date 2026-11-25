@@ -17,8 +17,8 @@ classes: port statistical behavior, keep TASSEL 5-compatible outputs, fix legacy
 deliberately, and design for later methods (logistic, stepwise, LOCO, FarmCPU/BLINK, genomic
 prediction) without building them now.
 
-**Proposed decisions for the maintainer** (each is an ADR in `Proposed` state; see the table at
-the end for the open questions):
+**Accepted decisions** (ADR-0025 to ADR-0029, accepted by the maintainer on 2026-11-25; section 11
+records the answers to Q1–Q9):
 
 - ADR-0025: one decomposition-based modeling layer in `commonMain` (pivoted QR, Cholesky,
   existing eigensolver; no explicit inverse; FWL reuse; log-space p-values).
@@ -251,7 +251,7 @@ TASSEL 5 defects that this epic must not copy, and the parity consequences of ea
 "Do not copy" row of section 2's last table; each one that changes a golden value goes through the
 ADR-0029 departure procedure.
 
-## 4. Proposed statistical modeling architecture
+## 4. Statistical modeling architecture
 
 All of it is `tassel-core` `commonMain`, pure Kotlin, `Double` arithmetic, no new dependencies.
 
@@ -372,7 +372,8 @@ ADR-0025's kernel hook.
   (`appendAddDom`, false), `maxP` (`maxP`, 1.0), `permute` (`permute`) and `nperm` (`nperm`) with a
   new `seed`, `phenoOnly` (`phenoOnly`) for BLUEs, new `minMaf` and `minMac` (off by default),
   `missingGenotypes` (`drop` default, `impute-mean`), and `report` (`legacy`, `modern`, `both`).
-  `saveToFile`, `siteFile`, `alleleFile`, `bluesFile`, and `anovaFile` wait for decision Q4;
+  `saveToFile`, `siteFile`, `alleleFile`, `bluesFile`, and `anovaFile` are `file(kind = Output)`
+  parameters with those legacy names (decision Q4; #209 adds the streaming sinks);
   `siteStatsOut` and `siteStatFile` are dead in TASSEL 5 and are not ported.
 - `mlm`: `operation<DataSet, AssociationTable>`, `legacyPlugin = "MLMPlugin"` (the GUI plugin;
   the pipeline's `-mlm` runs `WeightedMLMPlugin`, whose weights are out of scope). The GLM model and
@@ -475,11 +476,11 @@ What each needs from this epic's architecture:
 
 | ADR | Title | Status | Decides |
 |---|---|---|---|
-| [0025](../adr/0025-statistical-modeling-layer.md) | A decomposition-based statistical modeling layer in `commonMain` | Proposed | Packages, kernels, no inverse, rank handling, FWL rules, log p, determinism |
-| [0026](../adr/0026-association-inputs-and-marker-encoding.md) | Association inputs, taxon alignment, missing data, and marker encoding | Proposed | `DataSet` contents, observation sets, replicates, kinship input and validation, encodings, `MarkerSource` |
-| [0027](../adr/0027-association-results.md) | Association results: columnar records, sinks, legacy reports, and provenance | Proposed | `AssociationTable`, sinks, report compatibility, provenance; leaves streaming (Q4) open |
-| [0028](../adr/0028-mixed-model-formulation.md) | Mixed linear model formulation, REML, P3D, and failure semantics | Proposed | Variance model, REML search, P3D default, re-estimation, h², kinship scaling, failures |
-| [0029](../adr/0029-association-parity-and-validation.md) | Parity and validation policy for association mapping | Proposed | Goldens, `testdata/oracle/`, tolerances, departures |
+| [0025](../adr/0025-statistical-modeling-layer.md) | A decomposition-based statistical modeling layer in `commonMain` | Accepted | Packages, kernels, no inverse, rank handling, FWL rules, log p, determinism |
+| [0026](../adr/0026-association-inputs-and-marker-encoding.md) | Association inputs, taxon alignment, missing data, and marker encoding | Accepted | `DataSet` contents, observation sets, replicates, kinship input and validation, encodings, `MarkerSource` |
+| [0027](../adr/0027-association-results.md) | Association results: columnar records, sinks, legacy reports, and provenance | Accepted | `AssociationTable`, sinks, report compatibility, provenance; streaming through `file` output parameters (Q4) |
+| [0028](../adr/0028-mixed-model-formulation.md) | Mixed linear model formulation, REML, P3D, and failure semantics | Accepted | Variance model, REML search, P3D default, re-estimation, h², kinship scaling, failures |
+| [0029](../adr/0029-association-parity-and-validation.md) | Parity and validation policy for association mapping | Accepted | Goldens, `testdata/oracle/`, tolerances, departures |
 
 Not proposed here, needed later: a compute-backend ADR (BLAS/FFM, native BLAS, WebGPU, dispatch);
 an ADR for Arrow/Parquet output if it adds a dependency.
@@ -700,12 +701,13 @@ later phases; P2 informs the design and is out of scope here.
 | P2 | Arrow/Parquet result output | Fast hand-off to R, Python, and DuckDB | ADR-0027 follow-up |
 | P2 | MCP tools for `glm` and `mlm` generated from the specs | Conversational GWAS (roadmap Phase 5) | Free once specs are registered |
 
-## 11. Decisions that need maintainer approval
+## 11. Decisions (answered 2026-11-25)
 
-Beyond accepting ADR-0025 to ADR-0029, these questions change user-visible behavior, and the
-listed issues wait on them. Each has a recommendation.
+These questions change user-visible behavior. The maintainer accepted ADR-0025 to ADR-0029 and
+answered every question with the recommended option on 2026-11-25. The "Decision" column is the
+answer; the issues in the last column follow it.
 
-| # | Question | Options | Recommendation | Blocks |
+| # | Question | Options | Decision | Applies to |
 |---|---|---|---|---|
 | Q1 | GLM with replicated taxa, which TASSEL 5 refuses | (a) taxa nested within marker as the error term, as TASSEL 5's manual describes; (b) refuse, as TASSEL 5's code does; (c) test against the residual (pseudo-replication) | (a), validated against R, with BLUEs-then-GLM and MLM documented as alternatives | B4 |
 | Q2 | Effect allele for `additive` coding | (a) minor allele among the trait's analysis observations; (b) major allele; (c) TASSEL 5's order (most frequent allele over all genotype taxa) | (a), stated in every record; (c) stays inside the TASSEL 5 `add_F` computation for parity | B2 |
@@ -713,6 +715,6 @@ listed issues wait on them. Each has a recommendation.
 | Q4 | Bounded-memory output | (a) declare TASSEL 5's `saveToFile`, `siteFile`, `alleleFile` (and MLM's output base) as `file(kind = Output)` parameters, writing through kotlinx-io `SystemFileSystem` on JVM, native, and Node and refused in the browser; (b) a CLI-only streaming path that calls the kernel directly | (a): the spec stays the single source (ADR-0002) and the legacy names map one to one | F3, D1 |
 | Q5 | MLM compression | Default `None` (TASSEL 5's code default) or `Optimum` (its GUI and docs); whether C5 must land before the first MLM release | Default `None`; C5 follows the first release. Exact parity is limited where UPGMA ties depend on TASSEL 5's `HashSet` kinship order, and C5 states which inputs are tie-free | C3, C5 |
 | Q6 | TASSEL 5 report columns that are wrong (MLM `errordf`, `appendAddDom` effects when a base factor has other than two levels, multiallelic `add_F`) | (a) reproduce them in the compatible report; (b) correct them there and list the departure | (b): users get correct numbers; the departure table says exactly which cells differ and why | B3, C3 |
-| Q7 | Starting tolerances (ADR-0029) | GLM `rel 1e-8`, MLM `rel 1e-6`, `log10 p` `abs 1e-6` past underflow | Accept; tighten when ports do better | B4, C2, C3 |
-| Q8 | External tools for oracle fixtures | Pinned containers for R, `mpmath`, PLINK 2, GCTA, GEMMA, used only to generate committed fixtures (no build or runtime dependency; GEMMA is GPL, its outputs are data) | Accept | A2, E3 |
+| Q7 | Starting tolerances (ADR-0029) | GLM `rel 1e-8`, MLM `rel 1e-6`, `log10 p` `abs 1e-6` past underflow | Accepted; tighten when ports do better | B4, C2, C3 |
+| Q8 | External tools for oracle fixtures | Pinned containers for R, `mpmath`, PLINK 2, GCTA, GEMMA, used only to generate committed fixtures (no build or runtime dependency; GEMMA is GPL, its outputs are data) | Accepted | A2, E3 |
 | Q9 | GitHub mechanics | Create the epic and sub-issues now in the TASSEL 6 project, with this plan PR as A1 | Done 2026-11-25 at the maintainer's request: epic #181, sub-issues #182–#209, section 5 maps the letter IDs | All |

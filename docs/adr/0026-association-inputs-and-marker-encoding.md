@@ -1,6 +1,6 @@
 # ADR-0026: Association inputs, taxon alignment, missing data, and marker encoding
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-25
 
 ## Context
@@ -79,8 +79,8 @@ TASSEL 5 (inventory in `docs/llm_notes/ASSOCIATION_PLAN.md` section 2):
   nested within marker classes, and the marker is tested against the taxa-within-marker mean
   square with that term's df, the design TASSEL 5's manual describes. The report names the error
   term. It is validated against R (`aov` with an error stratum), not a TASSEL 5 golden. Averaging
-  replicates first (BLUEs, then GLM) and MLM remain the alternatives users are pointed to. Decision
-  Q1 in the plan confirms this before #191 implements it.
+  replicates first (BLUEs, then GLM) and MLM remain the alternatives users are pointed to. The
+  maintainer chose this option on 2026-11-25 (plan decision Q1); #191 implements it.
 - MLM models replicates through an incidence matrix `Z` mapping observations to taxa, so `K` stays
   taxa by taxa (`V = sigma_g^2 Z K Z' + sigma_e^2 I`). Unreplicated data use `Z = I` without
   forming it.

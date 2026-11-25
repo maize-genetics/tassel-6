@@ -1,6 +1,6 @@
 # ADR-0028: Mixed linear model formulation, REML, P3D, and failure semantics
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-25
 
 ## Context
@@ -91,9 +91,9 @@ heritability assumptions, correct replicates, and never a silent fall back to GL
 ### Compression
 
 Compressed MLM (UPGMA clustering, group kinship, the `Optimum` and custom levels) is a later issue
-in this epic that reproduces TASSEL 5 for parity. The proposed TASSEL 6 default is no compression,
-which is TASSEL 5's pipeline default (its GUI and documentation suggest `Optimum`; decision Q5 in
-the plan).
+in this epic (#199) that reproduces TASSEL 5 for parity. The TASSEL 6 default is no compression,
+which is TASSEL 5's pipeline default (its GUI and documentation suggest `Optimum`). Compressed MLM
+follows the first MLM release rather than blocking it (plan decision Q5, 2026-11-25).
 
 ## Consequences
 

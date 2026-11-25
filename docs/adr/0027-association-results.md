@@ -1,6 +1,6 @@
 # ADR-0027: Association results: columnar records, sinks, legacy reports, and provenance
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-25
 
 ## Context
@@ -64,11 +64,14 @@ and streams to files with GLM's `saveToFile`, `siteFile`, and `alleleFile` and M
 - Output filters (`maxP`, `ok`-only, top-k per trait) are applied by the sink, so a filtered run
   stores only what it keeps. Summary counts (tested, skipped by reason, failed) are always kept in
   full.
-- Bounded-memory streaming to files is a front-end concern: the CLI may pass a file-backed sink to
-  the kernel through a JVM/native entry point and keep only summaries in memory. Whether the
-  operation spec gains an `output` file parameter for that, or the CLI streams by default for large
-  inputs, needs maintainer approval and is tracked as an open question in the epic, not decided
-  here.
+- **Bounded-memory streaming to files** (plan decision Q4, chosen 2026-11-25). The `glm` and `mlm`
+  specs declare TASSEL 5's `saveToFile`, `siteFile`, and `alleleFile` (and MLM's output base) as
+  `file(kind = FileKind.Output)` parameters with those legacy names. When they are set, the kernel
+  writes through a file-backed `AssociationSink` that uses kotlinx-io `SystemFileSystem`
+  (ADR-0017) on the JVM, native, and Node targets, flushing per site block, and the returned
+  `AssociationTable` keeps only summaries and `maxP` survivors. In the browser, where there is no
+  file system, the parameters are refused with a clear message. The spec stays the single source
+  for every front end (ADR-0002), and the CLI does not need a separate streaming path.
 
 ### Reports
 
@@ -78,7 +81,8 @@ and streams to files with GLM's `saveToFile`, `siteFile`, and `alleleFile` and M
   the parity surface for goldens (ADR-0029). Their columns never change; new information goes
   elsewhere. A column whose TASSEL 5 value is wrong (for example MLM `errordf`, which is not the
   df used for `p`) is listed in the departure table and either reproduced for compatibility or
-  corrected, as the maintainer decides per column (decision Q6).
+  corrected. The maintainer chose to correct them (plan decision Q6, 2026-11-25): the compatible
+  report prints the correct value, and the departure table names each affected column and why.
 - **Modern reports** are TSV (and CSV) with the full record schema, explicit `log10_p`, effect
   alleles, and status. Columns are versioned by a `#schema` header line. Columnar formats (Arrow,
   Parquet) are a later, JVM-first writer behind the same table and need their own dependency ADR.
@@ -98,7 +102,8 @@ excluded observations and markers by reason. Modern reports write it as `##key=v
   nothing with one, instead of gigabytes.
 - `ResultTable` is unchanged; `AssociationTable` can produce one for small displays.
 - Plots (Manhattan, QQ) and multiple-testing corrections read the same columns.
-- The streaming-to-file question stays open and must be decided before the 1M x 5,000 benchmark.
+- Streaming output (#209) adds a file-backed sink behind the same `AssociationSink` interface; the
+  in-memory and streamed reports must be byte-identical.
 
 ## Alternatives considered
 
