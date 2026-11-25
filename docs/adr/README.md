@@ -33,3 +33,8 @@ sequentially; use a short kebab-case title.
 | [0022](0022-bcf-reading-and-writing.md) | BCF reading and writing, and BGZF writing | Proposed |
 | [0023](0023-phenotype-model.md) | Phenotype data model and TASSEL 5 file compatibility | Proposed |
 | [0024](0024-multi-input-and-phenotype-joins.md) | Multi-input operations (`DataSet`) and phenotype join semantics | Proposed |
+| [0025](0025-statistical-modeling-layer.md) | A decomposition-based statistical modeling layer in `commonMain` | Proposed |
+| [0026](0026-association-inputs-and-marker-encoding.md) | Association inputs, taxon alignment, missing data, and marker encoding | Proposed |
+| [0027](0027-association-results.md) | Association results: columnar records, sinks, legacy reports, and provenance | Proposed |
+| [0028](0028-mixed-model-formulation.md) | Mixed linear model formulation, REML, P3D, and failure semantics | Proposed |
+| [0029](0029-association-parity-and-validation.md) | Parity and validation policy for association mapping | Proposed |
