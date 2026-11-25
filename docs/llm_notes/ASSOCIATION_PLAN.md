@@ -445,7 +445,7 @@ sub-issue of #181 with the full task text: goal, TASSEL 5 sources, contracts, wh
 |---|---|---|---|
 | F1 | #207 | `feat(core)`: multiple-testing corrections and genomic inflation | core |
 | F2 | #208 | `feat(core)`: formula-style model input | core |
-| F3 | #209 | `feat(cli)`: bounded-memory streaming of association results | CLI, decision |
+| F3 | #209 | `feat(core)`: bounded-memory streaming of association results | core (decision Q4) |
 
 ### Later epics (inform the design, not scheduled here)
 
