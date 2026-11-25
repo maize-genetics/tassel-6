@@ -3,8 +3,10 @@ package net.maizegenetics.tassel.stats
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.expm1
 import kotlin.math.floor
 import kotlin.math.ln
+import kotlin.math.ln1p
 import kotlin.math.pow
 import kotlin.math.sin
 
@@ -242,6 +244,233 @@ object SpecialFunctions {
         t = if (y < MINLOG) 0.0 else exp(y)
         return if (flag) capped(t) else t
     }
+
+    // ---- Log-space tails (ADR-0025) -------------------------------------------------------------------------------
+
+    private const val LOG_EPS = 1.1102230246251565e-16
+    private const val FPMIN = 1.0e-300
+    private const val LOG_MAX_ITERATIONS = 200_000
+
+    /**
+     * `ln I_x(a, b)`, the natural log of [regularizedIncompleteBeta], evaluated in log space so it stays finite where
+     * `I_x(a, b)` underflows (down to a log of about `-1e300`) and accurate where `I_x(a, b)` is within rounding of 1.
+     *
+     * The prefactor `x^a (1 - x)^b / (a B(a, b))` is formed as a sum of logs and the Lentz continued fraction, which is
+     * `O(1)`, is added as a log. The fraction converges on the side of `x < (a + 1) / (a + b + 2)`; the other side is
+     * `ln(1 - I_{1-x}(b, a))`. Unlike [regularizedIncompleteBeta] this is not a branch-for-branch Cephes port: the
+     * Cephes branches that stay in `p` are only taken to agree with it where `p` is representable.
+     *
+     * `1 - x` is formed as `1.0 - x`, which loses relative accuracy when `x` is near 1; callers that have it exactly
+     * should use the four-argument internal form.
+     *
+     * @throws IllegalArgumentException for `a <= 0`, `b <= 0`, or `x` outside `[0, 1]`. `x = 0` gives `-Infinity`
+     *   and `x = 1` gives 0. A NaN argument gives NaN.
+     */
+    fun logRegularizedIncompleteBeta(a: Double, b: Double, x: Double): Double {
+        if (a.isNaN() || b.isNaN() || x.isNaN()) return Double.NaN
+        require(a > 0.0 && b > 0.0) { "incbet: Domain error! a=$a, b=$b" }
+        require(x in 0.0..1.0) { "incbet: Domain error! x=$x" }
+        return logIncompleteBeta(a, b, x, 1.0 - x)
+    }
+
+    /**
+     * `ln I_x(a, b)` for the pair `x`, `xc = 1 - x`, each given to full relative accuracy, with their logs when `x` or
+     * `xc` is below the smallest double and so cannot carry its own log. `logX = -Infinity` means `x = 0` and
+     * `logXc = -Infinity` means `x = 1`.
+     */
+    internal fun logIncompleteBeta(
+        a: Double,
+        b: Double,
+        x: Double,
+        xc: Double,
+        logX: Double = naturalLog(x, xc),
+        logXc: Double = naturalLog(xc, x),
+    ): Double {
+        if (logX == Double.NEGATIVE_INFINITY) return Double.NEGATIVE_INFINITY
+        if (logXc == Double.NEGATIVE_INFINITY) return 0.0
+        if (x < (a + 1.0) / (a + b + 2.0)) return logBetaDirect(a, b, x, xc, logX, logXc)
+        return log1mExp(logBetaDirect(b, a, xc, x, logXc, logX))
+    }
+
+    /** `ln v` for `v` with exact complement [vc], taking the `ln1p` form where `v` is near 1. */
+    internal fun naturalLog(v: Double, vc: Double): Double = if (v > 0.5) ln1p(-vc) else ln(v)
+
+    /** `ln I_x(a, b)` by the continued fraction, for `x` on the side where it converges quickly. */
+    private fun logBetaDirect(a: Double, b: Double, x: Double, xc: Double, logX: Double, logXc: Double): Double =
+        a * logX + b * logXc - logBeta(a, b) - ln(a) + ln(betaLentz(a, b, x, xc))
+
+    /**
+     * The incomplete beta continued fraction by the modified Lentz method (Numerical Recipes `betacf`).
+     *
+     * For `x > 1/2` every `1 + (partial term)` that sits near `1 - x` is formed from the exact complement [xc]
+     * instead (see [betaLentzNearOne]): with large `a` the plain form subtracts two numbers within `1 - x` of each other
+     * at each step and loses up to `log10(1 / (1 - x))` digits.
+     */
+    private fun betaLentz(a: Double, b: Double, x: Double, xc: Double): Double {
+        if (x > 0.5) return betaLentzNearOne(a, b, x, xc)
+        val qab = a + b
+        val qap = a + 1.0
+        val qam = a - 1.0
+        var c = 1.0
+        var d = 1.0 - qab * x / qap
+        if (abs(d) < FPMIN) d = FPMIN
+        d = 1.0 / d
+        var h = d
+        for (m in 1..LOG_MAX_ITERATIONS) {
+            val mm = m.toDouble()
+            val m2 = 2.0 * mm
+            var aa = mm * (b - mm) * x / ((qam + m2) * (a + m2))
+            d = 1.0 + aa * d
+            if (abs(d) < FPMIN) d = FPMIN
+            c = 1.0 + aa / c
+            if (abs(c) < FPMIN) c = FPMIN
+            d = 1.0 / d
+            h *= d * c
+            aa = -(a + mm) * (qab + mm) * x / ((a + m2) * (qap + m2))
+            d = 1.0 + aa * d
+            if (abs(d) < FPMIN) d = FPMIN
+            c = 1.0 + aa / c
+            if (abs(c) < FPMIN) c = FPMIN
+            d = 1.0 / d
+            val delta = d * c
+            h *= delta
+            if (abs(delta - 1.0) < LOG_EPS) break
+        }
+        return h
+    }
+
+    /**
+     * [betaLentz] for `x > 1/2`, the same recurrence with the odd step's `1 + aa * d` and `1 + aa / c`, where
+     * `aa = -x r` and `r = (a + m)(a + b + m) / ((a + 2m)(a + 1 + 2m))` is within `O(1/a)` of 1, rewritten as
+     * `(1 - 1/p) + (1/p)((1 - r) + r (1 - x))` with `p` the previous `d` or `c`. Here `1 - r` is a closed form with no
+     * subtraction and `1 - x` is [xc], so no step cancels to a small difference of nearly equal numbers.
+     */
+    private fun betaLentzNearOne(a: Double, b: Double, x: Double, xc: Double): Double {
+        val qab = a + b
+        val qap = a + 1.0
+        val qam = a - 1.0
+        var c = 1.0
+        var d = ((1.0 - b) + qab * xc) / qap
+        if (abs(d) < FPMIN) d = FPMIN
+        d = 1.0 / d
+        var h = d
+        for (m in 1..LOG_MAX_ITERATIONS) {
+            val mm = m.toDouble()
+            val m2 = 2.0 * mm
+            // Even step: aa is small, so D = 1 + aa d and C = 1 + aa / c are taken as they are.
+            val even = mm * (b - mm) * x / ((qam + m2) * (a + m2))
+            val dEven = even * d
+            val cEven = even / c
+            var dd = 1.0 + dEven
+            if (abs(dd) < FPMIN) dd = FPMIN
+            var cc = 1.0 + cEven
+            if (abs(cc) < FPMIN) cc = FPMIN
+            d = 1.0 / dd
+            c = cc
+            h *= d * c
+            // Odd step: aa = -x r.
+            val denominator = (a + m2) * (qap + m2)
+            val r = (a + mm) * (qab + mm) / denominator
+            val oneMinusR = (a * (1.0 - b) + mm * (2.0 * a + 2.0 - b) + 3.0 * mm * mm) / denominator
+            val oneMinusXr = oneMinusR + r * xc
+            // 1 - d = (D - 1) / D = dEven * d, and likewise 1 - 1/c = cEven / c.
+            dd = d * (dEven + oneMinusXr)
+            if (abs(dd) < FPMIN) dd = FPMIN
+            cc = (cEven + oneMinusXr) / c
+            if (abs(cc) < FPMIN) cc = FPMIN
+            d = 1.0 / dd
+            c = cc
+            val delta = d * c
+            h *= delta
+            if (abs(delta - 1.0) < LOG_EPS) break
+        }
+        return h
+    }
+
+    /**
+     * `ln Q(a, x)`, the natural log of [regularizedGammaQ], finite where `Q` underflows and accurate where `Q` is
+     * within rounding of 1. As in [regularizedGammaQ], `x <= 0` or `a <= 0` gives 0 (`Q = 1`), and `x = Infinity`
+     * gives `-Infinity`. A NaN argument gives NaN.
+     *
+     * For `x < a + 1` it is `ln(1 - P)` from the power series; beyond that the Lentz continued fraction for `Q` is
+     * added to the log prefactor `a ln x - x - lnGamma(a)`.
+     */
+    fun logRegularizedGammaQ(a: Double, x: Double): Double {
+        if (a.isNaN() || x.isNaN()) return Double.NaN
+        if (x <= 0.0 || a <= 0.0) return 0.0
+        if (x == Double.POSITIVE_INFINITY) return Double.NEGATIVE_INFINITY
+        val logPrefactor = logGammaPrefactor(a, x)
+        if (x < a + 1.0) {
+            var term = 1.0 / a
+            var sum = term
+            var ap = a
+            for (n in 1..LOG_MAX_ITERATIONS) {
+                ap += 1.0
+                term *= x / ap
+                sum += term
+                if (abs(term) < abs(sum) * LOG_EPS) break
+            }
+            return log1mExp(logPrefactor + ln(sum))
+        }
+        var b = x + 1.0 - a
+        var c = 1.0 / FPMIN
+        var d = 1.0 / b
+        var h = d
+        for (i in 1..LOG_MAX_ITERATIONS) {
+            val an = -i.toDouble() * (i.toDouble() - a)
+            b += 2.0
+            d = an * d + b
+            if (abs(d) < FPMIN) d = FPMIN
+            c = b + an / c
+            if (abs(c) < FPMIN) c = FPMIN
+            d = 1.0 / d
+            val delta = d * c
+            h *= delta
+            if (abs(delta - 1.0) < LOG_EPS) break
+        }
+        return logPrefactor + ln(h)
+    }
+
+    /**
+     * `ln(x^a e^-x / Gamma(a))`. Near `x = a` with large `a` the direct form cancels terms of size `a`, so from
+     * `a = 15` it is taken from Loader's saddle-point form, `ln a - stirlerr(a) - bd0(a, x) - ln(2 pi a) / 2`, where
+     * `stirlerr` is the tail of Stirling's series and `bd0` is `a ln(a / x) + x - a` summed as a series near `x = a`.
+     */
+    private fun logGammaPrefactor(a: Double, x: Double): Double {
+        if (a < 15.0) return a * ln(x) - x - logGamma(a)
+        return ln(a) - stirlingError(a) - deviance(a, x) - 0.5 * ln(2.0 * PI * a)
+    }
+
+    /** `lnGamma(n + 1) - ((n + 1/2) ln n - n + ln(2 pi) / 2)` for `n >= 15`, by its asymptotic series. */
+    internal fun stirlingError(n: Double): Double {
+        val inverse = 1.0 / n
+        val square = inverse * inverse
+        return inverse *
+            (1.0 / 12.0 - square * (1.0 / 360.0 - square * (1.0 / 1260.0 - square * (1.0 / 1680.0 - square / 1188.0))))
+    }
+
+    /** `x ln(x / mean) + mean - x` without cancellation when `x` is close to [mean] (Loader's `bd0`). */
+    internal fun deviance(x: Double, mean: Double): Double {
+        if (abs(x - mean) < 0.1 * (x + mean)) {
+            val v = (x - mean) / (x + mean)
+            var sum = (x - mean) * v
+            var term = 2.0 * x * v
+            val vSquare = v * v
+            var j = 1
+            while (j < 1000) {
+                term *= vSquare
+                val next = sum + term / (2 * j + 1)
+                if (next == sum) return next
+                sum = next
+                j++
+            }
+            return sum
+        }
+        return x * ln(x / mean) + mean - x
+    }
+
+    /** `ln(1 - exp(l))` for `l <= 0`, without cancellation at either end. */
+    internal fun log1mExp(l: Double): Double = if (l > -0.6931471805599453) ln(-expm1(l)) else ln1p(-exp(l)) + 0.0
 
     /** `1 - t` for the swapped branch, held just below 1 when `t` is at most machine epsilon. */
     private fun capped(t: Double): Double = if (t <= MACHEP) 1.0 - MACHEP else 1.0 - t
@@ -529,3 +758,46 @@ object SpecialFunctions {
  */
 fun fTestPValue(f: Double, df1: Double, df2: Double): Double =
     SpecialFunctions.regularizedIncompleteBeta(df2 / 2.0, df1 / 2.0, df2 / (df2 + df1 * f))
+
+/**
+ * `ln` of [fTestPValue], evaluated in log space so it stays finite where the p-value underflows to 0. The beta
+ * argument is formed as the exact pair `q / (1 + q)` and `1 / (1 + q)` with `q = df2 / (df1 f)`, so neither end loses
+ * relative accuracy. Same domain rules as [fTestPValue]: `f = 0` gives 0, `f = Infinity` gives `-Infinity`, NaN gives
+ * NaN, and `f < 0` or a non-positive degree of freedom throws.
+ */
+internal fun fTestLogPValue(f: Double, df1: Double, df2: Double): Double {
+    if (f.isNaN() || df1.isNaN() || df2.isNaN()) return Double.NaN
+    require(df1 > 0.0 && df2 > 0.0) { "incbet: Domain error! a=${df2 / 2.0}, b=${df1 / 2.0}" }
+    require(f >= 0.0) { "incbet: Domain error! x=${df2 / (df2 + df1 * f)}" }
+    if (f == 0.0) return 0.0
+    if (f == Double.POSITIVE_INFINITY) return Double.NEGATIVE_INFINITY
+    val dx = df1 * f
+    val q = if (dx.isInfinite() || dx == 0.0) 0.0 else df2 / dx
+    if (q < 1e-300 || q > 1e300) {
+        // Either end of the beta argument has left the normal range: take both from logQ = ln q.
+        val logQ = ln(df2) - ln(df1) - ln(f)
+        val logOnePlusQ = if (logQ > 0.0) logQ + ln1p(exp(-logQ)) else ln1p(exp(logQ))
+        return SpecialFunctions.logIncompleteBeta(
+            df2 / 2.0,
+            df1 / 2.0,
+            exp(logQ - logOnePlusQ),
+            exp(-logOnePlusQ),
+            logQ - logOnePlusQ,
+            -logOnePlusQ,
+        )
+    }
+    return SpecialFunctions.logIncompleteBeta(df2 / 2.0, df1 / 2.0, q / (1.0 + q), 1.0 / (1.0 + q))
+}
+
+/**
+ * `log10` of [fTestPValue], finite where the p-value underflows to 0 (TASSEL 5's `0.0`), and equal to
+ * `log10(fTestPValue(f, df1, df2))` to about `1e-12` wherever the p-value is at least `1e-290`. Same domain rules as
+ * [fTestPValue].
+ *
+ * @throws IllegalArgumentException for `f < 0`, or `df1 <= 0` or `df2 <= 0`.
+ * @see fTestPValue
+ * @see net.maizegenetics.stats.linearmodels.LinearModelUtils.Ftest
+ */
+fun fTestLog10PValue(f: Double, df1: Double, df2: Double): Double = fTestLogPValue(f, df1, df2) / LN_10
+
+internal val LN_10: Double = ln(10.0)

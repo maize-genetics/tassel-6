@@ -27,6 +27,15 @@ interface ContinuousDistribution {
     fun sf(x: Double): Double
 
     /**
+     * `ln P(X > x)`, finite where [sf] underflows to zero (down to about `-1e300`) and accurate in log space
+     * everywhere. `-Infinity` above the support and 0 below it. NaN gives NaN.
+     */
+    fun logSf(x: Double): Double
+
+    /** `log10 P(X > x)`, [logSf] divided by `ln 10`. */
+    fun log10Sf(x: Double): Double = logSf(x) / LN_10
+
+    /**
      * The `x` with `cdf(x) = p`, to about `1e-14` relative where that is representable. `p = 0` and `p = 1` give the
      * lower and upper support bounds, which may be infinite.
      *

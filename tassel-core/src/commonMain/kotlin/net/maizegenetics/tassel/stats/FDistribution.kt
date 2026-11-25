@@ -58,6 +58,12 @@ class FDistribution(val df1: Double, val df2: Double) : ContinuousDistribution {
         else -> fTestPValue(x, df1, df2)
     }
 
+    override fun logSf(x: Double): Double = when {
+        x.isNaN() -> Double.NaN
+        x <= 0.0 -> 0.0
+        else -> fTestLogPValue(x, df1, df2)
+    }
+
     override fun quantile(p: Double): Double {
         requireProbability("p", p)
         return when {
