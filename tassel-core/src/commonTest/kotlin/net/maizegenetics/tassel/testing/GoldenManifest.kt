@@ -29,7 +29,11 @@ class GoldenManifest(val sections: Map<String, Section>) {
 
         fun load(): GoldenManifest = parse(TestData.readText(PATH))
 
-        fun parse(text: String): GoldenManifest {
+        /**
+         * [outputPrefix] is the start of a key that names an output file: `golden/` here, and
+         * `oracle/` for `testdata/oracle/MANIFEST` (see [OracleManifest]).
+         */
+        fun parse(text: String, outputPrefix: String = "golden/"): GoldenManifest {
             val sections = linkedMapOf<String, Section>()
             var name: String? = null
             var properties = linkedMapOf<String, String>()
@@ -59,7 +63,7 @@ class GoldenManifest(val sections: Map<String, Section>) {
                 val value = line.substring(separator + 3)
                 when {
                     key == "command" -> commands += value
-                    key.startsWith("golden/") -> outputs[key] = Tolerance.parse(value)
+                    key.startsWith(outputPrefix) -> outputs[key] = Tolerance.parse(value)
                     else -> properties[key] = value
                 }
             }

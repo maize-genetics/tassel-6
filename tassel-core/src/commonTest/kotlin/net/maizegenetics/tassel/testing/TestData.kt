@@ -17,6 +17,12 @@ object TestData {
     /** Bytes of [path], relative to `testdata/` (for example `tutorial/mdp_genotype.hmp.txt`). */
     fun readBytes(path: String): ByteArray = readFile("$root/$path")
 
+    /** Absolute path of [path], relative to `testdata/oracle/` (see [OracleManifest]). */
+    fun oraclePath(path: String): String = "$root/oracle/$path"
+
+    /** Text of [path], relative to `testdata/oracle/`, decoded as UTF-8. */
+    fun readOracleText(path: String): String = readText("oracle/$path")
+
     /** Text of [path], relative to `testdata/`, decoded as UTF-8 with line endings unchanged. */
     fun readText(path: String): String = readBytes(path).decodeToString()
 }
