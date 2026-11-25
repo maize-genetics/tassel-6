@@ -49,6 +49,12 @@ class ChiSquaredDistribution(val df: Double) : ContinuousDistribution {
         else -> SpecialFunctions.regularizedGammaQ(shape, x / 2.0)
     }
 
+    override fun logSf(x: Double): Double = when {
+        x.isNaN() -> Double.NaN
+        x <= 0.0 -> 0.0
+        else -> SpecialFunctions.logRegularizedGammaQ(shape, x / 2.0)
+    }
+
     override fun quantile(p: Double): Double {
         requireProbability("p", p)
         return when {

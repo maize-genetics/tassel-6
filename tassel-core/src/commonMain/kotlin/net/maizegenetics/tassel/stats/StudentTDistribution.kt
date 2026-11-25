@@ -60,6 +60,26 @@ class StudentTDistribution(val df: Double) : ContinuousDistribution {
 
     override fun cdf(x: Double): Double = sf(-x)
 
+    /** `ln P(T > a)` for `a >= 0`, from the same beta identity as [upperTail] with both ends of `w` exact. */
+    private fun logUpperTail(a: Double): Double {
+        if (a == 0.0) return -LN_2
+        if (a == Double.POSITIVE_INFINITY) return Double.NEGATIVE_INFINITY
+        // w = df / (df + a^2) and 1 - w = a^2 / (df + a^2), written so that a^2 does not overflow.
+        val ratio = df / a
+        val w = ratio / (ratio + a)
+        val wc = a / (ratio + a)
+        // w can underflow beyond a = 1e154 * sqrt(df), so its log comes from the ratio rather than from w.
+        val logW = if (w > 0.5) ln1p(-wc) else ln(ratio) - ln(ratio + a)
+        val logWc = if (wc > 0.5) ln1p(-w) else ln(a) - ln(ratio + a)
+        return -LN_2 + SpecialFunctions.logIncompleteBeta(halfDf, 0.5, w, wc, logW, logWc)
+    }
+
+    override fun logSf(x: Double): Double = when {
+        x.isNaN() -> Double.NaN
+        x >= 0.0 -> logUpperTail(x)
+        else -> SpecialFunctions.log1mExp(logUpperTail(-x))
+    }
+
     override fun quantile(p: Double): Double {
         requireProbability("p", p)
         return when {
@@ -80,5 +100,9 @@ class StudentTDistribution(val df: Double) : ContinuousDistribution {
             q < 0.5 -> solveTail(q, true, 1.0, ::sf, ::logPdf)
             else -> -solveTail(1.0 - q, true, 1.0, ::sf, ::logPdf)
         }
+    }
+
+    private companion object {
+        const val LN_2 = 0.6931471805599453
     }
 }
