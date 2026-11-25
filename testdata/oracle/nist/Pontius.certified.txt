@@ -1,0 +1,17 @@
+dataset = Pontius
+observations = 40
+model = B0 + B1*x + B2*(x**2)
+intercept = true
+parameters = 3
+B0 = 0.673565789473684E-03 0.107938612033077E-03
+B1 = 0.732059160401003E-06 0.157817399981659E-09
+B2 = -0.316081871345029E-14 0.486652849992036E-16
+residual_sd = 0.205177424076185E-03
+r_squared = 0.999999900178537
+df_regression = 2
+ss_regression = 15.6040343244198
+ms_regression = 7.80201716220991
+f_statistic = 185330865.995752
+df_residual = 37
+ss_residual = 0.155761768796992E-05
+ms_residual = 0.420977753505385E-07

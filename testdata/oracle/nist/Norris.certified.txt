@@ -1,0 +1,16 @@
+dataset = Norris
+observations = 36
+model = B0 + B1*x
+intercept = true
+parameters = 2
+B0 = -0.262323073774029 0.232818234301152
+B1 = 1.00211681802045 0.429796848199937E-03
+residual_sd = 0.884796396144373
+r_squared = 0.999993745883712
+df_regression = 1
+ss_regression = 4255954.13232369
+ms_regression = 4255954.13232369
+f_statistic = 5436385.54079785
+df_residual = 34
+ss_residual = 26.6173985294224
+ms_residual = 0.782864662630069

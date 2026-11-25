@@ -1,0 +1,15 @@
+dataset = NoInt1
+observations = 11
+model = B1*x
+intercept = false
+parameters = 1
+B1 = 2.07438016528926 0.165289256198347E-01
+residual_sd = 3.56753034006338
+r_squared = 0.999365492298663
+df_regression = 1
+ss_regression = 200457.727272727
+ms_regression = 200457.727272727
+f_statistic = 15750.2500000000
+df_residual = 10
+ss_residual = 127.272727272727
+ms_residual = 12.7272727272727
