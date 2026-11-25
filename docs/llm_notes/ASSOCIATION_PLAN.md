@@ -1,9 +1,9 @@
 # Association mapping (GLM and MLM): audit, architecture, and phased plan
 
-Epic: to be opened (working title "Association mapping: GLM and MLM on a shared statistical
-modeling layer"). Written 2026-11-25, after `6.0.0-alpha.2`. Once the epic exists, its issues are
-the live task list; ADR-0025 to ADR-0029 hold the decisions. Full issue drafts are in
-[`ASSOCIATION_ISSUES.md`](ASSOCIATION_ISSUES.md).
+Epic [#181](https://github.com/maize-genetics/tassel-6/issues/181) ("Association mapping: GLM and MLM on a shared statistical modeling
+layer"). Written 2026-11-25, after `6.0.0-alpha.2`. The epic's sub-issues (#182–#209) are the live
+task list and hold each task's full text; ADR-0025 to ADR-0029 hold the decisions. The letter IDs
+below (A1, B4, …) map to issue numbers in section 5.
 
 ## Context
 
@@ -384,66 +384,67 @@ ADR-0025's kernel hook.
 
 ## 5. Phased implementation roadmap
 
-One issue, one branch, one PR, under ~600 changed lines excluding test data. Full drafts are in
-[`ASSOCIATION_ISSUES.md`](ASSOCIATION_ISSUES.md).
+One issue, one branch, one PR, under ~600 changed lines excluding test data. Every row is a
+sub-issue of #181 with the full task text: goal, TASSEL 5 sources, contracts, what to build,
+"Done when", out of scope, verification commands, where to run it, and dependencies.
 
 ### Phase A: decisions and foundations
 
-| ID | Title | Kind |
-|---|---|---|
-| A1 | `docs(adr)`: association ADRs 0025–0029 and the plan | decision |
-| A2 | `build(testdata)`: independent oracle fixtures for statistics | fixtures |
-| A3 | `feat(core)`: log-space tail probabilities and log10 p-values | core |
-| A4 | `feat(core)`: dense linear algebra kernels | core |
-| A5 | `feat(core)`: linear model specification, design matrices, fits, and tests | core |
-| A6 | `feat(core)`: kinship matrix input, subsetting, and validation | core |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| A1 | #182 | `docs(adr)`: association ADRs 0025–0029 and the plan | decision |
+| A2 | #183 | `build(testdata)`: independent oracle fixtures for statistics | fixtures |
+| A3 | #184 | `feat(core)`: log-space tail probabilities and log10 p-values | core |
+| A4 | #185 | `feat(core)`: dense linear algebra kernels | core |
+| A5 | #186 | `feat(core)`: linear model specification, design matrices, fits, and tests | core |
+| A6 | #187 | `feat(core)`: kinship matrix input, subsetting, and validation | core |
 
 ### Phase B: GLM (parity first, then speed)
 
-| ID | Title | Kind |
-|---|---|---|
-| B1 | `test(testdata)`: TASSEL 5 GLM goldens | goldens |
-| B2 | `feat(core)`: marker encodings and the `MarkerSource` seam | core |
-| B3 | `feat(core)`: association results, sinks, TASSEL 5-compatible GLM reports, provenance | core |
-| B4 | `feat(core)`: GLM reference kernel and the `glm` spec | core, parity |
-| B5 | `perf(core)`: GLM fast path (FWL, missingness-pattern cache, multi-trait, workers) | performance |
-| B6 | `feat(core)`: phenotype-only GLM and BLUEs | core, parity |
-| B7 | `feat(core)`: GLM permutation test | core, parity |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| B1 | #188 | `test(testdata)`: TASSEL 5 GLM goldens | goldens |
+| B2 | #189 | `feat(core)`: marker encodings and the `MarkerSource` seam | core |
+| B3 | #190 | `feat(core)`: association results, sinks, TASSEL 5-compatible GLM reports, provenance | core |
+| B4 | #191 | `feat(core)`: GLM reference kernel and the `glm` spec | core, parity |
+| B5 | #192 | `perf(core)`: GLM fast path (FWL, missingness-pattern cache, multi-trait, workers) | performance |
+| B6 | #193 | `feat(core)`: phenotype-only GLM and BLUEs | core, parity |
+| B7 | #194 | `feat(core)`: GLM permutation test | core, parity |
 
 ### Phase C: MLM
 
-| ID | Title | Kind |
-|---|---|---|
-| C1 | `test(testdata)`: TASSEL 5 MLM goldens and the tutorial kinship input | goldens |
-| C2 | `feat(core)`: REML null mixed model (EMMA-style) with diagnostics | core |
-| C3 | `feat(core)`: MLM P3D marker tests, replicated taxa, and the `mlm` spec | core, parity |
-| C4 | `feat(core)`: per-marker variance re-estimation and MLM performance | core, performance |
-| C5 | `feat(core)`: compressed MLM (`Optimum` and custom levels) | core, parity |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| C1 | #195 | `test(testdata)`: TASSEL 5 MLM goldens and the tutorial kinship input | goldens |
+| C2 | #196 | `feat(core)`: REML null mixed model (EMMA-style) with diagnostics | core |
+| C3 | #197 | `feat(core)`: MLM P3D marker tests, replicated taxa, and the `mlm` spec | core, parity |
+| C4 | #198 | `feat(core)`: per-marker variance re-estimation and MLM performance | core, performance |
+| C5 | #199 | `feat(core)`: compressed MLM (`Optimum` and custom levels) | core, parity |
 
 ### Phase D: front ends
 
-| ID | Title | Kind |
-|---|---|---|
-| D1 | `feat(cli)`: `glm` and `mlm` subcommands, kinship input, association outputs | CLI |
-| D2 | `feat(app)`: association analyses and kinship datasets in the shared UI | app |
-| D3 | `feat(app)`: Manhattan and QQ plots | app |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| D1 | #200 | `feat(cli)`: `glm` and `mlm` subcommands, kinship input, association outputs | CLI |
+| D2 | #201 | `feat(app)`: association analyses and kinship datasets in the shared UI | app |
+| D3 | #202 | `feat(app)`: Manhattan and QQ plots | app |
 
 ### Phase E: validation and performance
 
-| ID | Title | Kind |
-|---|---|---|
-| E1 | `feat(core)`: simulated genotypes and phenotypes with known effects | tooling |
-| E2 | `test(core)`: statistical validation suite | tests |
-| E3 | `test(testdata)`: PLINK 2, GCTA, and GEMMA oracle fixtures | fixtures |
-| E4 | `docs(docs)`: association benchmarks | benchmarks |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| E1 | #203 | `feat(core)`: simulated genotypes and phenotypes with known effects | tooling |
+| E2 | #204 | `test(core)`: statistical validation suite | tests |
+| E3 | #205 | `test(testdata)`: PLINK 2, GCTA, and GEMMA oracle fixtures | fixtures |
+| E4 | #206 | `docs(docs)`: association benchmarks | benchmarks |
 
 ### Phase F: usability and scale
 
-| ID | Title | Kind |
-|---|---|---|
-| F1 | `feat(core)`: multiple-testing corrections and genomic inflation | core |
-| F2 | `feat(core)`: formula-style model input | core |
-| F3 | `feat(cli)`: bounded-memory streaming of association results | CLI, decision |
+| ID | Issue | Title | Kind |
+|---|---|---|---|
+| F1 | #207 | `feat(core)`: multiple-testing corrections and genomic inflation | core |
+| F2 | #208 | `feat(core)`: formula-style model input | core |
+| F3 | #209 | `feat(cli)`: bounded-memory streaming of association results | CLI, decision |
 
 ### Later epics (inform the design, not scheduled here)
 
@@ -487,53 +488,53 @@ an ADR for Arrow/Parquet output if it adds a dependency.
 
 ```mermaid
 flowchart LR
-  A1["A1 ADRs + plan"] --> A2["A2 oracle fixtures"]
-  A2 --> A3["A3 log-space tails"]
-  A2 --> A4["A4 linear algebra"]
-  A3 --> A5["A5 model layer"]
+  A1["A1 #182 ADRs + plan"] --> A2["A2 #183 oracle fixtures"]
+  A2 --> A3["A3 #184 log-space tails"]
+  A2 --> A4["A4 #185 linear algebra"]
+  A3 --> A5["A5 #186 model layer"]
   A4 --> A5
-  A1 --> A6["A6 kinship input"]
-  A1 --> B1["B1 GLM goldens"]
-  A1 --> B2["B2 marker encodings"]
-  A1 --> B3["B3 results + reports"]
+  A1 --> A6["A6 #187 kinship input"]
+  A1 --> B1["B1 #188 GLM goldens"]
+  A1 --> B2["B2 #189 marker encodings"]
+  A1 --> B3["B3 #190 results + reports"]
   A3 --> B3
-  A5 --> B4["B4 GLM reference + spec"]
+  A5 --> B4["B4 #191 GLM reference + spec"]
   B1 --> B4
   B2 --> B4
   B3 --> B4
-  B4 --> B5["B5 GLM fast path"]
-  A5 --> B6["B6 phenotype-only / BLUEs"]
+  B4 --> B5["B5 #192 GLM fast path"]
+  A5 --> B6["B6 #193 phenotype-only / BLUEs"]
   B3 --> B6
   B1 --> B6
-  B4 --> B7["B7 permutation"]
-  A1 --> C1["C1 MLM goldens"]
-  A4 --> C2["C2 REML null model"]
+  B4 --> B7["B7 #194 permutation"]
+  A1 --> C1["C1 #195 MLM goldens"]
+  A4 --> C2["C2 #196 REML null model"]
   A5 --> C2
   A6 --> C2
   C1 --> C2
-  C2 --> C3["C3 MLM P3D + spec"]
+  C2 --> C3["C3 #197 MLM P3D + spec"]
   B4 --> C3
-  C3 --> C4["C4 re-estimation + perf"]
+  C3 --> C4["C4 #198 re-estimation + perf"]
   B5 --> C4
-  C3 --> C5["C5 compressed MLM"]
-  A6 --> D1["D1 CLI"]
+  C3 --> C5["C5 #199 compressed MLM"]
+  A6 --> D1["D1 #200 CLI"]
   B4 --> D1
   C3 --> D1
-  D1 --> D2["D2 app"]
-  D2 --> D3["D3 Manhattan / QQ"]
-  E1["E1 simulate phenotypes"] --> E2["E2 validation suite"]
+  D1 --> D2["D2 #201 app"]
+  D2 --> D3["D3 #202 Manhattan / QQ"]
+  E1["E1 #203 simulate phenotypes"] --> E2["E2 #204 validation suite"]
   B4 --> E2
   C3 --> E2
-  A2 --> E3["E3 PLINK/GCTA/GEMMA"]
+  A2 --> E3["E3 #205 PLINK/GCTA/GEMMA"]
   C4 --> E3
-  B5 --> E4["E4 benchmarks"]
+  B5 --> E4["E4 #206 benchmarks"]
   C4 --> E4
   E1 --> E4
   D1 --> E4
-  B3 --> F1["F1 FDR / lambda GC"]
-  A5 --> F2["F2 formulas"]
+  B3 --> F1["F1 #207 FDR / lambda GC"]
+  A5 --> F2["F2 #208 formulas"]
   B4 --> F2
-  B3 --> F3["F3 streaming output"]
+  B3 --> F3["F3 #209 streaming output"]
   D1 --> F3
 ```
 
@@ -714,4 +715,4 @@ listed issues wait on them. Each has a recommendation.
 | Q6 | TASSEL 5 report columns that are wrong (MLM `errordf`, `appendAddDom` effects when a base factor has other than two levels, multiallelic `add_F`) | (a) reproduce them in the compatible report; (b) correct them there and list the departure | (b): users get correct numbers; the departure table says exactly which cells differ and why | B3, C3 |
 | Q7 | Starting tolerances (ADR-0029) | GLM `rel 1e-8`, MLM `rel 1e-6`, `log10 p` `abs 1e-6` past underflow | Accept; tighten when ports do better | B4, C2, C3 |
 | Q8 | External tools for oracle fixtures | Pinned containers for R, `mpmath`, PLINK 2, GCTA, GEMMA, used only to generate committed fixtures (no build or runtime dependency; GEMMA is GPL, its outputs are data) | Accept | A2, E3 |
-| Q9 | GitHub mechanics | Create the epic and sub-issues now in the TASSEL 6 project, with this plan PR as A1 | Accept; issue numbers then replace the letter IDs in the plan | All |
+| Q9 | GitHub mechanics | Create the epic and sub-issues now in the TASSEL 6 project, with this plan PR as A1 | Done 2026-11-25 at the maintainer's request: epic #181, sub-issues #182–#209, section 5 maps the letter IDs | All |

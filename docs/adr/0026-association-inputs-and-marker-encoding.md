@@ -49,8 +49,7 @@ TASSEL 5 (inventory in `docs/llm_notes/ASSOCIATION_PLAN.md` section 2):
   `GenotypeTable` plus one or more `PhenotypeTable`s (joined with `join-genotype-phenotype`'s
   intersect rules first), and for `mlm` exactly one `DistanceMatrix` as kinship. A `glm` run for
   BLUEs (`phenoOnly`) takes phenotypes alone. Anything else is an error naming what was found. The
-  CLI already accepts `DataSet` inputs; the app needs kinship to become a selectable dataset (D2 in
-  the plan).
+  CLI already accepts `DataSet` inputs; the app needs kinship to become a selectable dataset (#201).
 - `DataSet` gains `distanceMatrices()` and `genotypePhenotypes()` accessors. This is additive;
   `Operation`, `RunRequest`, and `Engine` do not change.
 - Alignment is by exact, case-sensitive taxon name throughout (ADR-0024). Kinship is subset to the
@@ -81,7 +80,7 @@ TASSEL 5 (inventory in `docs/llm_notes/ASSOCIATION_PLAN.md` section 2):
   square with that term's df, the design TASSEL 5's manual describes. The report names the error
   term. It is validated against R (`aov` with an error stratum), not a TASSEL 5 golden. Averaging
   replicates first (BLUEs, then GLM) and MLM remain the alternatives users are pointed to. Decision
-  Q1 in the plan confirms this before B4 implements it.
+  Q1 in the plan confirms this before #191 implements it.
 - MLM models replicates through an incidence matrix `Z` mapping observations to taxa, so `K` stays
   taxa by taxa (`V = sigma_g^2 Z K Z' + sigma_e^2 I`). Unreplicated data use `Z = I` without
   forming it.
