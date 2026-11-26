@@ -73,7 +73,49 @@ class DistanceMatrix(
     /** [writeDelimited] into a string. */
     fun toDelimitedString(delimiter: String = "\t"): String = buildString { writeDelimited(this, delimiter) }
 
+    /**
+     * The matrix over [names], in the order given, as a new matrix with the same annotations.
+     *
+     * A name asked for twice is kept at its first position and listed in [DistanceMatrixSubset.repeated].
+     * A name this matrix lacks is an error, unless [missing] is [MissingTaxa.Drop]; then it is left
+     * out and listed in [DistanceMatrixSubset.missing]. Names match exactly, case included.
+     *
+     * @throws IllegalArgumentException for a missing name under [MissingTaxa.Error]; the message
+     *   gives the count and the first few names.
+     */
+    fun subset(names: List<String>, missing: MissingTaxa = MissingTaxa.Error): DistanceMatrixSubset {
+        val chosen = ArrayList<Int>(names.size)
+        val kept = HashSet<String>(names.size)
+        val absent = ArrayList<String>()
+        val repeated = ArrayList<String>()
+        for (name in names) {
+            val index = taxa.indexOf(name)
+            when {
+                index < 0 -> if (name !in absent) absent += name
+                kept.add(name) -> chosen += index
+                else -> if (name !in repeated) repeated += name
+            }
+        }
+        if (absent.isNotEmpty() && missing == MissingTaxa.Error) {
+            val shown = absent.take(MAX_NAMED_MISSING).joinToString { "'$it'" }
+            val more = if (absent.size > MAX_NAMED_MISSING) ", ..." else ""
+            throw IllegalArgumentException("${absent.size} taxa are not in the matrix: $shown$more")
+        }
+        val size = chosen.size
+        val subsetValues = FloatArray(triangleSize(size))
+        var next = 0
+        for (row in 0 until size) {
+            for (column in 0..row) {
+                subsetValues[next++] = distance(chosen[row], chosen[column])
+            }
+        }
+        val subsetTaxa = TaxaList(chosen.map { taxa[it] })
+        return DistanceMatrixSubset(DistanceMatrix(subsetTaxa, subsetValues, annotations), absent, repeated)
+    }
+
     companion object {
+        private const val MAX_NAMED_MISSING = 5
+
         /** Annotation key naming the kind of matrix, for example `Centered_IBS`. */
         const val MATRIX_TYPE: String = "Matrix_Type"
 
@@ -84,3 +126,18 @@ class DistanceMatrix(
         fun triangleSize(numberOfTaxa: Int): Int = numberOfTaxa * (numberOfTaxa + 1) / 2
     }
 }
+
+/** What [DistanceMatrix.subset] does with a requested name the matrix lacks. */
+enum class MissingTaxa {
+    /** Fail, naming the taxa. */
+    Error,
+
+    /** Leave them out and report them. */
+    Drop,
+}
+
+/**
+ * A matrix restricted to some taxa. [missing] holds the requested names the source lacked, which
+ * are empty unless [MissingTaxa.Drop] was passed, and [repeated] the names requested more than once.
+ */
+class DistanceMatrixSubset(val matrix: DistanceMatrix, val missing: List<String>, val repeated: List<String>)
