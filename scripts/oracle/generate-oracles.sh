@@ -4,7 +4,7 @@
 # Rebuilds testdata/oracle/ and its MANIFEST from scratch with pinned tools run in containers:
 #   * NIST StRD linear-regression datasets (public domain), normalized by nist.py;
 #   * mpmath log-survival grids for F, t, and chi-square, from tails.py;
-#   * R lm()/anova()/drop1() fixtures, from lm-fixtures.R (seed set; tassel-6#186 extends it).
+#   * R lm()/anova()/drop1() fixtures, from lm-fixtures.R (seed set; tassel-6#186 adds the model designs).
 # Output is deterministic: running the script twice gives byte-identical files. Nothing outside
 # testdata/oracle/ is modified. Run by people regenerating fixtures, never by CI or Gradle.
 #
@@ -22,6 +22,8 @@ PYTHON_TAG="python:3.12.8-slim"
 R_IMAGE="rocker/r-ver@sha256:df26749182af64d5263bf64149d51a427b476ed28c4e046997143be3f97fdd7c"
 R_TAG="rocker/r-ver:4.4.2"
 MPMATH_VERSION="1.3.0"
+# R designs written by lm-fixtures.R for tassel-6#186; lm-collinear has no drop1 file.
+LM_MODELS=(lm-covariates lm-factors lm-mixed lm-mixed-sum lm-strong lm-collinear lm-empty-level lm-unbalanced lm-weighted)
 
 NIST_BASE="https://www.itl.nist.gov/div898/strd/lls/data/LINKS/DATA"
 # name sha256 of the NIST .dat file, as downloaded.
@@ -172,12 +174,21 @@ manifest \
   "oracle/tails/log-sf.tsv = $TAIL_TOLERANCE" \
   "" \
   "[r-lm]" \
-  "description = R lm(), anova(), drop1(F) on a small covariate-plus-factor design" \
-  "status = seed fixture only; tassel-6#186 adds the designs, contrasts, collinearity, and missing-row cases" \
+  "description = R lm(), anova(), drop1(F) on covariate, factor, and mixed designs (tassel-6#186)" \
+  "contrasts = treatment coding takes the LAST present level as the reference (TASSEL 5's convention); sum coding is contr.sum" \
+  "files = <name>.data.tsv (all rows; keep = 0 rows are left out of the fit), <name>.model.txt (formula, contrast, weights), <name>.coefficients.tsv, <name>.anova.tsv (sequential), <name>.drop1.tsv (marginal); NA is written as NA; log10p is R's own log-scale tail in base 10" \
   "command = Rscript /work/scripts/lm-fixtures.R /work/out/r" \
   "oracle/r/lm-smoke.data.tsv = exact"
 for part in coefficients anova drop1; do
   manifest "oracle/r/lm-smoke.$part.tsv = $R_TOLERANCE"
+done
+for name in "${LM_MODELS[@]}"; do
+  manifest "oracle/r/$name.data.tsv = exact" "oracle/r/$name.model.txt = exact"
+  parts=(coefficients anova)
+  [[ "$name" == "lm-collinear" ]] || parts+=(drop1)
+  for part in "${parts[@]}"; do
+    manifest "oracle/r/$name.$part.tsv = $R_TOLERANCE"
+  done
 done
 
 # --- Publish ------------------------------------------------------------------
