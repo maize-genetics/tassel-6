@@ -78,6 +78,43 @@ object DoubleFormat {
         return "${mantissa[0]}.${fraction}E$exponent"
     }
 
+    /** Leading [digits] of a value, and the power of ten of the first one. */
+    internal class SignificantDigits(val digits: String, val power: Int)
+
+    /**
+     * The decimals of [count] significant digits that bracket [magnitude] (finite, positive): the one nearest the
+     * exact value first, then the neighbour on the other side. A value that needs fewer digits is returned exactly.
+     */
+    internal fun significantDigits(magnitude: Double, count: Int): List<SignificantDigits> {
+        val expansion = exactDigits(magnitude)
+        val power = expansion.digits.length - expansion.scale - 1
+        if (count >= expansion.digits.length) return listOf(SignificantDigits(expansion.digits, power))
+        fun fit(digits: String, power: Int) = if (digits.length >
+            count
+        ) {
+            SignificantDigits(digits.substring(0, count), power + 1)
+        } else {
+            SignificantDigits(digits, power)
+        }
+        val down = SignificantDigits(expansion.digits.substring(0, count), power)
+        val up = fit(increment(down.digits), power)
+        val nearest = fit(round(expansion.digits, count, expansion.tieRoundsUp), power)
+        return if (nearest.digits == down.digits && nearest.power == down.power) listOf(down, up) else listOf(up, down)
+    }
+
+    /** [digits] plus one in the last place; one digit longer when it carries out, as `"99"` gives `"100"`. */
+    private fun increment(digits: String): String {
+        val kept = digits.toCharArray()
+        for (index in kept.indices.reversed()) {
+            if (kept[index] != '9') {
+                kept[index]++
+                return kept.concatToString()
+            }
+            kept[index] = '0'
+        }
+        return "1" + kept.concatToString()
+    }
+
     /**
      * [digits] rounded to its [keep] leading digits, half-even unless [tieRoundsUp]. The result is
      * [keep] digits long, or [keep] + 1 when rounding carried, as `"99"` kept to one digit gives

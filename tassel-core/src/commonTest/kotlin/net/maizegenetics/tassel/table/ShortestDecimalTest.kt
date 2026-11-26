@@ -65,6 +65,16 @@ class ShortestDecimalTest {
      * analysis produces a number near there, so the layout is what matters and the digits are left
      * to the platform rather than reimplemented.
      */
+    /** Kotlin/Wasm writes `7668.1141812907445` for the first of these; Java's shortest digits are the rest. */
+    @Test
+    fun writesTheShortestDigitsWhereThePlatformWritesMore() {
+        for (text in listOf("7668.114181290744", "286.41294579060923", "0.6134140471131591", "9.273922540419748E-4")) {
+            val value = net.maizegenetics.tassel.association.exactDouble(text)
+            assertEquals(text, doubleToString(value), text)
+            assertEquals("-$text", doubleToString(-value), "-$text")
+        }
+    }
+
     @Test
     fun keepsThePlatformDigitsForTheSmallestSubnormals() {
         assertEquals(Float.MIN_VALUE, floatToString(Float.MIN_VALUE).toFloat())

@@ -25,8 +25,78 @@ fun doubleToString(value: Double): String = when {
     value.isNaN() -> NAN
     value == Double.POSITIVE_INFINITY -> INFINITY
     value == Double.NEGATIVE_INFINITY -> "-$INFINITY"
-    else -> javaLayout(value.toString())
+    else -> javaLayout(shortestRoundTrip(value))
 }
+
+/**
+ * The platform's digits for [value], shortened when they are not the shortest. Kotlin/Wasm writes `7668.1141812907445`
+ * where Java writes `7668.114181290744`: both read back as the same double, and Java's is shorter. A string of 15
+ * digits or fewer is always the shortest, so only longer ones are searched: the fewest digits that read back as
+ * [value], the one nearest the exact value when two do, as Java does.
+ *
+ * "Reads back" is decided exactly, in integers, by [readsBackAs], not by `toDouble`: Kotlin/Wasm's parser is off by an
+ * ulp for some 16 and 17 digit strings.
+ */
+private fun shortestRoundTrip(value: Double): String {
+    val platform = value.toString()
+    val mantissa = platform.trimStart('-').substringBefore('e').substringBefore('E')
+    val significant = mantissa.replace(".", "").trim('0').length
+    if (significant <= MAX_ALWAYS_SHORTEST) return platform
+    val sign = if (value < 0.0) "-" else ""
+    for (count in 1 until significant) {
+        for (candidate in DoubleFormat.significantDigits(kotlin.math.abs(value), count)) {
+            val digits = candidate.digits
+            if (!readsBackAs(value, digits.toLong(), candidate.power - digits.length + 1)) continue
+            return sign + digits[0] + "." + digits.drop(1).ifEmpty { "0" } + "E" + candidate.power
+        }
+    }
+    return platform
+}
+
+/**
+ * Whether the decimal `digits * 10^exponent` lies in the interval of reals that round to [value]: between the
+ * midpoints to its neighbours, a midpoint itself counting only when [value]'s significand is even. Exact: both
+ * sides are scaled to whole numbers and compared digit by digit.
+ */
+internal fun readsBackAs(value: Double, digits: Long, exponent: Int): Boolean {
+    val bits = kotlin.math.abs(value).toRawBits()
+    val biased = ((bits ushr 52) and 0x7FF).toInt()
+    val fraction = bits and 0x000F_FFFF_FFFF_FFFFL
+    val significand = if (biased == 0) fraction else fraction or (1L shl 52)
+    val binaryExponent = if (biased == 0) -1074 else biased - 1075
+    // Below a power of two the neighbour is twice as close, so the interval is half as wide there.
+    val narrowBelow = biased > 1 && fraction == 0L
+    val above = compare(digits, exponent, 2 * significand + 1, binaryExponent - 1)
+    val below = if (narrowBelow) {
+        compare(digits, exponent, 4 * significand - 1, binaryExponent - 2)
+    } else {
+        compare(digits, exponent, 2 * significand - 1, binaryExponent - 1)
+    }
+    val even = significand % 2 == 0L
+    return (above < 0 || (above == 0 && even)) && (below > 0 || (below == 0 && even))
+}
+
+/** The sign of `a * 10^tenPower - b * 2^twoPower`, for positive [a] and [b]. */
+private fun compare(a: Long, tenPower: Int, b: Long, twoPower: Int): Int {
+    // Multiply both sides by 10^max(-tenPower, 0) * 2^max(-twoPower, 0) so that no power is negative.
+    val left = Decimal(a)
+    if (tenPower > 0) {
+        left.multiplyByPowerOf(2, tenPower)
+        left.multiplyByPowerOf(5, tenPower)
+    }
+    if (twoPower < 0) left.multiplyByPowerOf(2, -twoPower)
+    val right = Decimal(b)
+    if (twoPower > 0) right.multiplyByPowerOf(2, twoPower)
+    if (tenPower < 0) {
+        right.multiplyByPowerOf(2, -tenPower)
+        right.multiplyByPowerOf(5, -tenPower)
+    }
+    val x = left.toString()
+    val y = right.toString()
+    return if (x.length != y.length) x.length.compareTo(y.length) else x.compareTo(y)
+}
+
+private const val MAX_ALWAYS_SHORTEST = 15
 
 private const val NAN = "NaN"
 private const val INFINITY = "Infinity"
