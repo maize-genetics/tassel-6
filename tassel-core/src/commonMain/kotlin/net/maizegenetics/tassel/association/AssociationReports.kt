@@ -38,7 +38,7 @@ private val STATS_START = listOf("Trait", "Marker", "Chr", "Pos", "marker_F", "p
  * `Trait, Marker, Chr, Pos, marker_F, p, [perm_p,] marker_Rsq, add_F, add_p, dom_F, dom_p, marker_df, marker_MS,
  * error_df, error_MS, model_df, model_MS, minorObs[, addEffect, domEffect]`. For [GlmLayout.ReferenceProbability]:
  * `Trait, Marker, Chr, Pos, marker_F, p, [perm_p,] marker_Rsq, marker_df, marker_MS, error_df, error_MS, model_df,
- * model_MS`.
+ * model_MS`. Markers that were skipped (see `reportedByTassel5`) have no row.
  *
  * @param permutations Write `perm_p` after `p`.
  * @param appendAddDom Write `addEffect` and `domEffect` last (genotype layout only).
@@ -81,6 +81,10 @@ internal fun AssociationTable.writeGlmStatistics(
             }
             j++
         }
+        if (!main.reportedByTassel5()) {
+            i = j
+            continue
+        }
         val cells = buildList {
             add(main.trait)
             add(main.marker)
@@ -112,6 +116,13 @@ internal fun AssociationTable.writeGlmStatistics(
         i = j
     }
 }
+
+/**
+ * TASSEL 5's GLM writes a row for every marker it tests and for a monomorphic one (marker df 0), but never for a marker
+ * its filters (`biallelicOnly`, `minClassSize`) drop. The other skip reasons are TASSEL 6's and have no row.
+ */
+private fun AssociationRecord.reportedByTassel5(): Boolean =
+    status == AssociationStatus.Ok || skipReason == SkipReason.Monomorphic
 
 /**
  * Writes TASSEL 5's GLM genotype-effects report, one row per effect, trait by trait: `Trait, Marker, Chr, Pos, Obs,

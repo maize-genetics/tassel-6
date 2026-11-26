@@ -4,7 +4,9 @@
 # Rebuilds testdata/oracle/ and its MANIFEST from scratch with pinned tools run in containers:
 #   * NIST StRD linear-regression datasets (public domain), normalized by nist.py;
 #   * mpmath log-survival grids for F, t, and chi-square, from tails.py;
-#   * R lm()/anova()/drop1() fixtures, from lm-fixtures.R (seed set; tassel-6#186 adds the model designs).
+#   * R lm()/anova()/drop1() fixtures, from lm-fixtures.R (seed set; tassel-6#186 adds the model designs);
+#   * R fixtures for the GLM kernel (replicated taxa and the glm-synthetic departures), from glm-fixtures.R
+#     (tassel-6#191); it reads the hand-built inputs in testdata/association/.
 # Output is deterministic: running the script twice gives byte-identical files. Nothing outside
 # testdata/oracle/ is modified. Run by people regenerating fixtures, never by CI or Gradle.
 #
@@ -84,7 +86,7 @@ docker pull -q --platform "$PLATFORM" "$PYTHON_IMAGE" >/dev/null
 docker pull -q --platform "$PLATFORM" "$R_IMAGE" >/dev/null
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE/nist" "$STAGE/tails" "$STAGE/r"
+mkdir -p "$STAGE/nist" "$STAGE/tails" "$STAGE/r" "$STAGE/models"
 
 run_python() {
   docker run --rm --platform "$PLATFORM" --user "$(id -u):$(id -g)" \
@@ -95,7 +97,7 @@ run_python() {
 
 run_r() {
   docker run --rm --platform "$PLATFORM" --user "$(id -u):$(id -g)" \
-    -v "$SCRIPTS:/work/scripts:ro" -v "$STAGE:/work/out" \
+    -v "$SCRIPTS:/work/scripts:ro" -v "$ROOT/testdata/association:/work/association:ro" -v "$STAGE:/work/out" \
     "$R_IMAGE" "$@"
 }
 
@@ -104,6 +106,7 @@ run_r() {
 run_python "python /work/scripts/nist.py /work/in /work/out/nist"
 run_python "python /work/scripts/tails.py /work/out/tails/log-sf.tsv"
 run_r Rscript /work/scripts/lm-fixtures.R /work/out/r
+run_r Rscript /work/scripts/glm-fixtures.R /work/out/models /work/association
 
 PYTHON_VERSION="$(run_python "python --version" | tr -d '\r')"
 MPMATH_INSTALLED="$(run_python "python -c 'import mpmath; print(mpmath.__version__)'" | tr -d '\r')"
@@ -119,6 +122,7 @@ NIST_HARD_TOLERANCE="rel 1e-8"   # Wampler4 and Wampler5: large noise, condition
 NIST_FILIP_TOLERANCE="rel 1e-6"  # a degree-10 polynomial; double-precision QR reaches about 7 digits
 TAIL_TOLERANCE="rel 1e-10"       # on log_sf, natural log
 R_TOLERANCE="rel 1e-10"
+GLM_TOLERANCE="rel 1e-10"
 
 : >"$MANIFEST"
 manifest \
@@ -191,10 +195,24 @@ for name in "${LM_MODELS[@]}"; do
   done
 done
 
+manifest \
+  "" \
+  "[r-glm]" \
+  "description = R lm() and anova() fixtures for the GLM kernel (tassel-6#191): GLM with replicated taxa, which TASSEL 5 refuses (taxa nested within the marker, decision Q1), and the departures from TASSEL 5 in the glm-synthetic goldens" \
+  "inputs = testdata/association/ (glm_synthetic.hmp.txt, glm_synthetic_traits.txt, glm_synthetic_collinear.txt); the replicate data is simulated in the script (seed 191) and written as glm-replicates.phenotype.tsv and glm-replicates.genotypes.tsv" \
+  "files = glm-replicates.tests.tsv and glm-synthetic.tests.tsv and glm-collinear.tests.tsv hold one row per trait and marker: observations, classes, marker and error df, F, p, log10 p, R squared, mean squares, and the additive and dominance tests with allele-copy coding; glm-synthetic.effects.tsv holds the marker coefficients and addEffect and domEffect from them; NA is written as NA" \
+  "command = Rscript /work/scripts/glm-fixtures.R /work/out/models /work/association" \
+  "oracle/models/glm-replicates.phenotype.tsv = exact" \
+  "oracle/models/glm-replicates.genotypes.tsv = exact" \
+  "oracle/models/glm-replicates.tests.tsv = $GLM_TOLERANCE" \
+  "oracle/models/glm-synthetic.tests.tsv = $GLM_TOLERANCE" \
+  "oracle/models/glm-synthetic.effects.tsv = $GLM_TOLERANCE" \
+  "oracle/models/glm-collinear.tests.tsv = $GLM_TOLERANCE"
+
 # --- Publish ------------------------------------------------------------------
 
 rm -rf "$ORACLE"
 mkdir -p "$ORACLE"
-cp -R "$STAGE/nist" "$STAGE/tails" "$STAGE/r" "$ORACLE/"
+cp -R "$STAGE/nist" "$STAGE/tails" "$STAGE/r" "$STAGE/models" "$ORACLE/"
 cp "$MANIFEST" "$ORACLE/MANIFEST"
 echo "Wrote $(find "$ORACLE" -type f | wc -l | tr -d ' ') files under testdata/oracle/"

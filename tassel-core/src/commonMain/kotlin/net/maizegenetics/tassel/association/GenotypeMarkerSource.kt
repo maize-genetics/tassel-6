@@ -205,7 +205,16 @@ internal class GenotypeMarkerSource private constructor(
                     present = classCounts.sum()
                 }
             }
-            if (distinct < 2) return fail(into, SkipReason.Monomorphic, minorObs)
+            if (distinct < 2) {
+                // One class is still a model with no marker columns, and TASSEL 5's GLM reports it (marker df 0), so
+                // the observations that have a call and the class stay readable beside the skip reason.
+                var kept = 0
+                for (i in 0 until set.size) if (classOf[i] >= 0) into.observation[kept++] = i
+                into.kept(kept, minorObs)
+                if (options.encoding == MarkerEncoding.genotype) encodeGenotype(set, into)
+                into.flagSkipped(SkipReason.Monomorphic)
+                return false
+            }
 
             var k = 0
             for (i in 0 until set.size) {
@@ -355,12 +364,14 @@ internal class GenotypeMarkerSource private constructor(
 
         /**
          * A source that also serves the `dosage` encoding from `ReferenceProbability`, which reads the whole
-         * genotype table once to find each site's major allele and each taxon's mean.
+         * genotype table once to find each site's major allele. A missing genotype is a missing dosage (not the taxon
+         * mean PCA imputes), as in TASSEL 5's GLM, so the taxon is dropped at that site.
          */
         suspend fun withDosage(
             data: GenotypePhenotype,
             progress: ProgressReporter = ProgressReporter.None,
-        ): GenotypeMarkerSource = GenotypeMarkerSource(data, ReferenceProbability.of(data.genotypes, progress))
+        ): GenotypeMarkerSource =
+            GenotypeMarkerSource(data, ReferenceProbability.of(data.genotypes, progress, imputeMissing = false))
     }
 }
 

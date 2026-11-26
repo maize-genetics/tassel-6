@@ -25,7 +25,8 @@ class OracleFixtureTest {
         for ((path, _) in manifest.outputs) {
             assertTrue(TestData.readText(path).isNotEmpty(), "$path is empty")
         }
-        assertEquals(11 * 2 + 1 + 4 + 9 * 4 + 8, manifest.outputs.size)
+        // NIST, the tails grid, the lm smoke fixture, the lm designs, then the GLM fixtures (tassel-6#191).
+        assertEquals(11 * 2 + 1 + 4 + 9 * 4 + 8 + 6, manifest.outputs.size)
     }
 
     @Test

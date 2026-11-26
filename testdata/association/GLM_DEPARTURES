@@ -1,0 +1,35 @@
+# Departures of the TASSEL 6 GLM from TASSEL 5 in the GLM goldens (ADR-0029, tassel-6#191).
+#
+# The golden comparison in GlmGoldenTest excludes exactly the cells named here, never by loosening a tolerance:
+# every other cell of every golden is compared at the MANIFEST tolerance. A 'skip' rule names one full-precision
+# golden file, the rows it applies to ('marker=<name>' or '*'), and the columns; a rule that excludes no differing
+# cell is stale and fails the test. A 'bound' rule is an error bound on a cell of TASSEL 5's own that is rounding
+# noise. Each id is a row of the departure table in the pull request, and each TASSEL 6 value is checked against
+# an independent computation in GlmDepartureTest (R fixtures in testdata/oracle/models/, or a recomputation from
+# TASSEL 5's own effects report).
+#
+# Fields are separated by '|'.
+#
+# D1  add_F, add_p, dom_F, dom_p at a multiallelic site. TASSEL 5 codes every heterozygote 1 for every allele; TASSEL 6
+#     counts allele copies (ADR-0026). The two agree at biallelic sites.
+# D2  addEffect and domEffect with a factor in the model. TASSEL 5 indexes the marker's coefficients by the number of
+#     effects, not columns, so they are wrong unless every factor has two levels (plan decision Q6). TASSEL 6 uses the
+#     marker's own coefficients.
+# D3  every statistic of the collinear-covariate golden. c3 = c1 + c2 in the file, but phenotype values are single
+#     precision, so c3 is the sum only to about 1e-7. TASSEL 5's sweep keeps it (error df 34) and its statistics are
+#     then rounding noise of a near-singular normal equation; TASSEL 6 treats it as aliased (error df 35), as R's lm
+#     does, and the sum of squares is stable.
+# D4  cancellation. TASSEL 5 forms a sum of squares as a difference of residual sums of squares, so a marker that
+#     explains almost nothing carries an absolute error of a few times eps * SSE. TASSEL 6 reads the sums of squares
+#     from Q'y and has no such error. The bound is the multiple of eps given below.
+skip|D1|glm-synthetic/model.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
+skip|D1|glm-synthetic/min-class-size-3.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
+skip|D1|glm-synthetic/append-add-dom.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
+skip|D1|glm-synthetic/factor-only.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
+skip|D1|glm-tutorial/mdp_traits.stats.full.txt|marker=PZB00063.1|add_F,add_p,dom_F,dom_p
+skip|D1|glm-tutorial-maf/mdp_traits.stats.full.txt|marker=PZB00063.1|add_F,add_p,dom_F,dom_p
+skip|D2|glm-synthetic/append-add-dom.stats.full.txt|*|addEffect,domEffect
+skip|D3|glm-synthetic/collinear.stats.full.txt|*|marker_F,p,marker_Rsq,add_F,add_p,dom_F,dom_p,marker_MS,error_df,error_MS,model_df,model_MS
+skip|D3|glm-synthetic/collinear.effects.full.txt|*|Estimate
+bound|D4|cancellation_eps_multiple|4
+bound|D4|estimate_absolute|1e-9
