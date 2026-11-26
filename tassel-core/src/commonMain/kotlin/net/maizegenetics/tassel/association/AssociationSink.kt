@@ -142,10 +142,15 @@ internal class TableSink(val builder: AssociationTableBuilder = AssociationTable
 
 /**
  * The default pipeline: chunks in any order, then in sequence order through a count of everything and the `maxP`
- * filter into an in-memory table. Call [finish] once every producer is done.
+ * filter into an in-memory table. Call [finish] once every producer is done. [traits] fixes the order reports list traits in
+ * (the order of the analysis), which a `maxP` filter that drops every row of the first trait would otherwise change.
  */
-internal class AssociationCollector(maxP: Double = 1.0, rule: MaxPRule = MaxPRule.Glm) : AssociationSink {
-    private val table = TableSink()
+internal class AssociationCollector(
+    maxP: Double = 1.0,
+    rule: MaxPRule = MaxPRule.Glm,
+    traits: List<String> = emptyList(),
+) : AssociationSink {
+    private val table = TableSink(AssociationTableBuilder().also { it.reserveTraits(traits) })
     private val counting = CountingSink(MaxPSink(maxP, rule, table))
     private val ordered = OrderedAssociationSink(counting)
 

@@ -112,7 +112,9 @@ internal enum class SkipReason {
  * what you need before the next call. Values past [size] are stale.
  *
  * Observations are positions in the set given to `scan`. [observation] lists the kept ones (those with a usable value
- * after filters), in set order, and every per-observation array here is parallel to it.
+ * after filters), in set order, and every per-observation array here is parallel to it. A marker skipped as
+ * [SkipReason.Monomorphic] still lists the observations that have a call (and, for the `genotype` encoding, its one
+ * class), because a GLM with no marker columns is a model TASSEL 5 reports; every other skip leaves [size] at 0.
  */
 internal class MarkerColumns(
     /** The largest observation set this can hold. */
@@ -202,6 +204,11 @@ internal class MarkerColumns(
         skip = reason
         this.minorObs = minorObs
         return this
+    }
+
+    /** Marks a marker skipped while keeping the observations and classes already set (a monomorphic marker). */
+    internal fun flagSkipped(reason: SkipReason) {
+        skip = reason
     }
 
     internal fun kept(size: Int, minorObs: Int) {

@@ -389,10 +389,10 @@ class GenotypeMarkerSourceTest {
     }
 
     @Test
-    fun dosageComesFromReferenceProbabilityAndNanIsMissing() = runTest {
+    fun dosageComesFromReferenceProbabilityAndAMissingCallIsMissing() = runTest {
         // Site 0: major allele A (3 copies, tied with C, A sorts first). Site 1: major allele A.
-        // t3 has no call at site 0, so it takes its taxon mean, 0.0 (its only call is C/C at site 1).
-        // t4 has no calls at all, so its mean is NaN and it is missing.
+        // GLM's dosage (NumericalGenotypePlugin without PCA's imputation) leaves a missing call missing, so t3 and t4
+        // are dropped at site 0 and t4 at site 1; the golden glm-refprob drops observations the same way.
         val table = genotypes(listOf("AA AC CC NN NN", "AA AA AC CC NN"))
         val data = alignedWith(table)
         val source = GenotypeMarkerSource.withDosage(data)
@@ -404,9 +404,10 @@ class GenotypeMarkerSourceTest {
                 results.add(snapshot(columns))
             }
         }
-        assertEquals(listOf(0, 1, 2, 3), results[0].observations)
-        assertEquals(listOf(listOf(1.0, 0.5, 0.0, 0.0)), results[0].columns)
+        assertEquals(listOf(0, 1, 2), results[0].observations)
+        assertEquals(listOf(listOf(1.0, 0.5, 0.0)), results[0].columns)
         assertEquals(listOf("dosage"), results[0].columnLabels)
+        assertEquals(listOf(0, 1, 2, 3), results[1].observations)
         assertEquals(listOf(listOf(1.0, 1.0, 0.5, 0.0)), results[1].columns)
         assertEquals(0, results[0].minorObs)
     }

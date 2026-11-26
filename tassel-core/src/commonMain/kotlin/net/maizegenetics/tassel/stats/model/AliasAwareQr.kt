@@ -32,7 +32,8 @@ internal class AliasAwareQr private constructor(
     val rank: Int get() = kept.size
 
     companion object {
-        fun of(matrix: DenseMatrix): AliasAwareQr {
+        /** [relativeTolerance] replaces the default rank tolerance of [HouseholderQr] (see its `of`). */
+        fun of(matrix: DenseMatrix, relativeTolerance: Double? = null): AliasAwareQr {
             val m = matrix.rows
             val scale = DoubleArray(matrix.columns) {
                 val norm = columnNorm(matrix, it)
@@ -53,7 +54,7 @@ internal class AliasAwareQr private constructor(
                         aliased.toIntArray(),
                     )
                 }
-                val qr = HouseholderQr.of(scaled, pivot = false)
+                val qr = HouseholderQr.of(scaled, pivot = false, relativeTolerance = relativeTolerance)
                 if (qr.rank == kept.size) {
                     return AliasAwareQr(
                         m,

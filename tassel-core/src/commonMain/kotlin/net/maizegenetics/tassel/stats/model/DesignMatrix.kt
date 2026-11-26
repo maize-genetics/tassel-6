@@ -29,6 +29,12 @@ class DesignMatrix internal constructor(
     val response: DoubleArray,
     /** Name and term of each column. */
     val columns: List<DesignColumn>,
+    /**
+     * The relative tolerance below which a column counts as a combination of the columns before it, or null for the
+     * default of [net.maizegenetics.tassel.math.HouseholderQr.of]. Phenotype values are single precision (ADR-0023), so
+     * a dependency among them holds only to about `1e-7`.
+     */
+    val rankTolerance: Double? = null,
 ) {
     init {
         require(matrix.columns == columns.size) { "${columns.size} column descriptions for ${matrix.columns} columns" }
@@ -49,7 +55,7 @@ class DesignMatrix internal constructor(
         return columns.indices.filter { columns[it].termIndex == termIndex }.toIntArray()
     }
 
-    internal val decomposition: AliasAwareQr by lazy { AliasAwareQr.of(matrix) }
+    internal val decomposition: AliasAwareQr by lazy { AliasAwareQr.of(matrix, rankTolerance) }
 
     /** Numerical rank of the design. */
     val rank: Int get() = decomposition.rank
@@ -75,12 +81,12 @@ class DesignMatrix internal constructor(
         chosen.forEachIndexed { target, (source, _) ->
             matrix.data.copyInto(sub.data, target * rows, source * rows, source * rows + rows)
         }
-        return DesignMatrix(spec.withTerms(termIndices), observations, sub, response, newColumns)
+        return DesignMatrix(spec.withTerms(termIndices), observations, sub, response, newColumns, rankTolerance)
     }
 
     /** The same design with another matrix and response of the same shape, for a transformed (whitened) model. */
     internal fun withData(newMatrix: DenseMatrix, newResponse: DoubleArray): DesignMatrix =
-        DesignMatrix(spec, observations, newMatrix, newResponse, columns)
+        DesignMatrix(spec, observations, newMatrix, newResponse, columns, rankTolerance)
 
     companion object {
         /**
@@ -99,6 +105,7 @@ class DesignMatrix internal constructor(
          * the model uses (use [completeObservations] to pick them). Marker and random-effect terms are not
          * supported yet.
          *
+         * @param rankTolerance see [DesignMatrix.rankTolerance]
          * @throws IllegalArgumentException for an unknown or wrongly typed attribute, an observation outside the
          *   table, or a missing value in a selected row
          */
@@ -106,6 +113,7 @@ class DesignMatrix internal constructor(
             spec: ModelSpec,
             phenotype: PhenotypeTable,
             observations: IntArray = completeObservations(spec, phenotype),
+            rankTolerance: Double? = null,
         ): DesignMatrix {
             observations.forEach {
                 require(it in 0 until phenotype.numberOfObservations) {
@@ -138,7 +146,7 @@ class DesignMatrix internal constructor(
             }
             val matrix = DenseMatrix(n, parts.size)
             parts.forEachIndexed { column, (_, values) -> values.copyInto(matrix.data, column * n) }
-            return DesignMatrix(spec, observations.copyOf(), matrix, response, columns)
+            return DesignMatrix(spec, observations.copyOf(), matrix, response, columns, rankTolerance)
         }
 
         private fun factorColumns(

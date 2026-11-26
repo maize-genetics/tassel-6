@@ -29,6 +29,7 @@ internal class AssociationTable internal constructor(
     private val strings: StringDictionary,
     val provenance: AnalysisProvenance,
     val summary: AssociationSummary,
+    private val reservedTraits: List<String> = emptyList(),
 ) {
     /** Number of records. */
     val size: Int get() = columns.size
@@ -52,9 +53,10 @@ internal class AssociationTable internal constructor(
 
     val effects: Sequence<AssociationEffect> get() = (0 until effectCount).asSequence().map { effect(it) }
 
-    /** Traits in order of first appearance. */
+    /** Traits in the order reserved by the analysis, then in order of first appearance. */
     val traits: List<String> by lazy {
         val seen = LinkedHashSet<Int>()
+        for (trait in reservedTraits) seen.add(strings.code(trait))
         for (row in 0 until size) seen.add(columns.traitCode(row))
         for (row in 0 until effectCount) seen.add(effectColumns.traitCode(row))
         seen.map { strings[it] }
@@ -119,8 +121,16 @@ internal class AssociationTableBuilder {
     private val columns = RecordColumns()
     private val effectColumns = EffectColumns()
     private var built = false
+    private var reserved: List<String> = emptyList()
 
     val size: Int get() = columns.size
+
+    /** Lists [traits] first, in this order, in [AssociationTable.traits], whether or not they get a row. */
+    fun reserveTraits(traits: List<String>) {
+        check(columns.size == 0) { "Traits must be reserved before the first record" }
+        reserved = traits.distinct()
+        reserved.forEach { strings.code(it) }
+    }
 
     fun append(record: AssociationRecord) {
         check(!built) { "The table has been built" }
@@ -138,7 +148,7 @@ internal class AssociationTableBuilder {
         built = true
         columns.seal()
         effectColumns.seal()
-        return AssociationTable(columns, effectColumns, strings, provenance, summary)
+        return AssociationTable(columns, effectColumns, strings, provenance, summary, reserved)
     }
 }
 

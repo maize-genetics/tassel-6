@@ -120,3 +120,15 @@ oracle/r/lm-weighted.model.txt = exact
 oracle/r/lm-weighted.coefficients.tsv = rel 1e-10
 oracle/r/lm-weighted.anova.tsv = rel 1e-10
 oracle/r/lm-weighted.drop1.tsv = rel 1e-10
+
+[r-glm]
+description = R lm() and anova() fixtures for the GLM kernel (tassel-6#191): GLM with replicated taxa, which TASSEL 5 refuses (taxa nested within the marker, decision Q1), and the departures from TASSEL 5 in the glm-synthetic goldens
+inputs = testdata/association/ (glm_synthetic.hmp.txt, glm_synthetic_traits.txt, glm_synthetic_collinear.txt); the replicate data is simulated in the script (seed 191) and written as glm-replicates.phenotype.tsv and glm-replicates.genotypes.tsv
+files = glm-replicates.tests.tsv and glm-synthetic.tests.tsv and glm-collinear.tests.tsv hold one row per trait and marker: observations, classes, marker and error df, F, p, log10 p, R squared, mean squares, and the additive and dominance tests with allele-copy coding; glm-synthetic.effects.tsv holds the marker coefficients and addEffect and domEffect from them; NA is written as NA
+command = Rscript /work/scripts/glm-fixtures.R /work/out/models /work/association
+oracle/models/glm-replicates.phenotype.tsv = exact
+oracle/models/glm-replicates.genotypes.tsv = exact
+oracle/models/glm-replicates.tests.tsv = rel 1e-10
+oracle/models/glm-synthetic.tests.tsv = rel 1e-10
+oracle/models/glm-synthetic.effects.tsv = rel 1e-10
+oracle/models/glm-collinear.tests.tsv = rel 1e-10

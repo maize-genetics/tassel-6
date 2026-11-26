@@ -106,10 +106,15 @@ internal class ReferenceProbability private constructor(
         /**
          * Reads [genotypes] once to find each site's major allele and each taxon's mean, which is
          * the first of the three passes PCA makes over the data.
+         *
+         * With [imputeMissing] false a missing genotype stays `NaN`, which is what `NumericalGenotypePlugin` hands to
+         * `FixedEffectLMPlugin` (the imputation belongs to PCA's `ImputationPlugin`): GLM then drops that taxon at the
+         * site.
          */
         suspend fun of(
             genotypes: GenotypeTable,
             progress: ProgressReporter = ProgressReporter.None,
+            imputeMissing: Boolean = true,
         ): ReferenceProbability {
             val numberOfTaxa = genotypes.numberOfTaxa
             val numberOfSites = genotypes.numberOfSites
@@ -137,7 +142,9 @@ internal class ReferenceProbability private constructor(
             }
             // ImputationByMean writes the column mean as a float, which ReferenceProbabilityBuilder
             // then quantizes. A taxon with no called genotype keeps TASSEL 5's 0.0 / 0.0 = NaN.
-            val imputed = FloatArray(numberOfTaxa) { SiteScore.quantize((sums[it] / counts[it]).toFloat()) }
+            val imputed = FloatArray(numberOfTaxa) {
+                if (imputeMissing) SiteScore.quantize((sums[it] / counts[it]).toFloat()) else Float.NaN
+            }
             return ReferenceProbability(majorAlleles, imputed)
         }
 

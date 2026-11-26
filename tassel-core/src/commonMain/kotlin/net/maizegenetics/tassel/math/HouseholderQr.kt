@@ -329,8 +329,15 @@ class HouseholderQr private constructor(
         /**
          * Factors [matrix], leaving it untouched. With [pivot] true (the default) columns are pivoted by remaining
          * norm, which is what makes the rank reliable.
+         *
+         * A diagonal of `R` counts toward the rank while it exceeds `tolerance * |r11|`, where `tolerance` is
+         * [relativeTolerance] or, by default, `max(rows, columns) * eps`. A caller whose columns are only known to
+         * single precision may pass a looser one.
          */
-        fun of(matrix: DenseMatrix, pivot: Boolean = true): HouseholderQr {
+        fun of(matrix: DenseMatrix, pivot: Boolean = true, relativeTolerance: Double? = null): HouseholderQr {
+            require(relativeTolerance == null || relativeTolerance >= 0.0) {
+                "relativeTolerance must not be negative: $relativeTolerance"
+            }
             val m = matrix.rows
             val n = matrix.columns
             val steps = min(m, n)
@@ -400,7 +407,7 @@ class HouseholderQr private constructor(
 
             var rank = 0
             if (steps > 0) {
-                val tolerance = max(m, n) * EPSILON * abs(data[0])
+                val tolerance = (relativeTolerance ?: (max(m, n) * EPSILON)) * abs(data[0])
                 while (rank < steps && abs(data[rank * m + rank]) > tolerance) rank++
             }
             return HouseholderQr(m, n, a, tau, permutation, rank)
