@@ -32,7 +32,7 @@ class TestDataTest {
         assertEquals(Tolerance.Exact(), manifest.tolerance("golden/summary/sites.txt"))
         assertEquals(Tolerance.Absolute(1e-9, upToSign = true), manifest.tolerance("golden/pca/eigenvectors.full.txt"))
         assertEquals(2, manifest.section("pca").commands.size)
-        assertEquals(47, manifest.outputs.size)
+        assertEquals(OUTPUT_COUNT, manifest.outputs.size)
     }
 
     @Test
@@ -40,6 +40,33 @@ class TestDataTest {
         for (path in GoldenManifest.load().outputs.keys) {
             assertTrue(TestData.readBytes(path).isNotEmpty(), "$path is empty")
         }
+    }
+
+    /** The GLM goldens (#188) are reports with the header TASSEL 5 writes; a smoke test that they parse. */
+    @Test
+    fun glmGoldensHaveTheExpectedHeaders() {
+        val stats = "Trait\tMarker\tChr\tPos\tmarker_F\tp\tmarker_Rsq\tadd_F\tadd_p\tdom_F\tdom_p\tmarker_df\t" +
+            "marker_MS\terror_df\terror_MS\tmodel_df\tmodel_MS\tminorObs"
+        val effects = "Trait\tMarker\tChr\tPos\tObs\tAllele\tEstimate"
+        val manifest = GoldenManifest.load()
+        val reports = manifest.outputs.keys.filter {
+            it.startsWith("golden/glm-") && it.endsWith(".txt") && "README" !in it
+        }
+        assertEquals(57, reports.size, "GLM report count")
+        for (path in reports) {
+            val lines = TestData.readText(path).trimEnd('\n').split('\n')
+            val header = lines.first().trimEnd('\r')
+            when {
+                "refprob" in path -> assertTrue(header.startsWith("Trait\tMarker\tChr\tPos\t"), "$path: $header")
+                ".effects" in path -> assertEquals(effects, header, path)
+                else -> assertTrue(header == stats || header.startsWith("$stats\t"), "$path: $header")
+            }
+            assertTrue(lines.size > 1, "$path has no rows")
+            val width = header.split('\t').size
+            assertTrue(lines.drop(1).all { it.trimEnd('\r').split('\t').size == width }, "$path has ragged rows")
+        }
+        assertEquals(Tolerance.Format(), manifest.tolerance("golden/glm-tutorial/mdp_traits.stats.txt"))
+        assertEquals(Tolerance.Relative(1e-8), manifest.tolerance("golden/glm-tutorial/mdp_traits.stats.full.txt"))
     }
 
     @Test
@@ -77,6 +104,8 @@ class TestDataTest {
     }
 
     private companion object {
+        const val OUTPUT_COUNT = 105
+
         val HAPMAP_FIXED_COLUMNS = listOf(
             "rs#", "alleles", "chrom", "pos", "strand", "assembly#",
             "center", "protLSID", "assayLSID", "panel", "QCcode",
