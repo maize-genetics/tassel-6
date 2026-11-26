@@ -33,7 +33,7 @@ import kotlin.test.assertTrue
  * The GLM kernel against R (`testdata/oracle/models/`, ADR-0029 kind 2), which TASSEL 5 cannot be for what it does not
  * do or does wrongly: replicated taxa (decision Q1), allele-copy coding at multiallelic sites, `addEffect` and
  * `domEffect` from the marker's own coefficients, and a near-collinear covariate (departures D1 to D3 in
- * `GLM_DEPARTURES`). Statistics are compared at the manifest's `rel 1e-10`, degrees of freedom exactly.
+ * the `[glm-departures]` MANIFEST section). Statistics are compared at the manifest's `rel 1e-10`, degrees of freedom exactly.
  */
 class GlmOracleTest {
     private fun fixture(name: String) = TestData.readOracleText("models/$name")

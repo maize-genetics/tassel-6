@@ -1,14 +1,14 @@
 package net.maizegenetics.tassel.association
 
-import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.assertMatchesGolden
+import net.maizegenetics.tassel.testing.goldenManifest
 import net.maizegenetics.tassel.testing.goldenText
 import net.maizegenetics.tassel.testing.normalizeLineEndings
 import kotlin.math.abs
 import kotlin.test.fail
 
 /**
- * The departures from TASSEL 5 in the GLM goldens, read from `testdata/association/GLM_DEPARTURES` (ADR-0029). The
+ * The departures from TASSEL 5 in the GLM goldens, read from the `[glm-departures]` section of `testdata/golden/MANIFEST` (ADR-0029). The
  * full-precision reports are compared with the golden at its MANIFEST tolerance after the cells that file names are
  * set aside: a `skip` cell is replaced by the golden's text, and a cell within a `bound` of TASSEL 5's own rounding
  * noise likewise. A `skip` rule that sets aside no cell that differs is stale and fails.
@@ -21,17 +21,15 @@ internal object GlmDepartures {
     private var estimateBound = 0.0
 
     init {
-        for (line in TestData.readText("association/GLM_DEPARTURES").lines()) {
-            if (line.isBlank() || line.startsWith("#")) continue
-            val fields = line.split('|')
-            when (fields[0]) {
-                "skip" -> skips += Skip(fields[1], fields[2], fields[3], fields[4].split(',').toSet())
-                "bound" -> when (fields[2]) {
-                    "cancellation_eps_multiple" -> epsilonMultiple = fields[3].toDouble()
-                    "estimate_absolute" -> estimateBound = fields[3].toDouble()
-                    else -> error("Unknown bound '${fields[2]}'")
-                }
-                else -> error("Unknown rule '$line'")
+        val section = goldenManifest.section("glm-departures")
+        for ((key, value) in section.properties) {
+            val fields = value.split('|').map { it.trim() }
+            when {
+                key.startsWith("skip.") -> skips += Skip(fields[0], fields[1], fields[2], fields[3].split(',').toSet())
+                key == "bound.cancellation_eps_multiple" -> epsilonMultiple = fields[0].toDouble()
+                key == "bound.estimate_absolute" -> estimateBound = fields[0].toDouble()
+                key == "description" -> Unit
+                else -> error("Unknown departure rule '$key'")
             }
         }
     }

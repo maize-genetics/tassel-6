@@ -1,3 +1,5 @@
+[glm-departures]
+description = Departures of the TASSEL 6 GLM from TASSEL 5 (ADR-0029, tassel-6#191): cells GlmGoldenTest sets aside
 # Departures of the TASSEL 6 GLM from TASSEL 5 in the GLM goldens (ADR-0029, tassel-6#191).
 #
 # The golden comparison in GlmGoldenTest excludes exactly the cells named here, never by loosening a tolerance:
@@ -22,14 +24,17 @@
 # D4  cancellation. TASSEL 5 forms a sum of squares as a difference of residual sums of squares, so a marker that
 #     explains almost nothing carries an absolute error of a few times eps * SSE. TASSEL 6 reads the sums of squares
 #     from Q'y and has no such error. The bound is the multiple of eps given below.
-skip|D1|glm-synthetic/model.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
-skip|D1|glm-synthetic/min-class-size-3.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
-skip|D1|glm-synthetic/append-add-dom.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
-skip|D1|glm-synthetic/factor-only.stats.full.txt|marker=multiallelic|add_F,add_p,dom_F,dom_p
-skip|D1|glm-tutorial/mdp_traits.stats.full.txt|marker=PZB00063.1|add_F,add_p,dom_F,dom_p
-skip|D1|glm-tutorial-maf/mdp_traits.stats.full.txt|marker=PZB00063.1|add_F,add_p,dom_F,dom_p
-skip|D2|glm-synthetic/append-add-dom.stats.full.txt|*|addEffect,domEffect
-skip|D3|glm-synthetic/collinear.stats.full.txt|*|marker_F,p,marker_Rsq,add_F,add_p,dom_F,dom_p,marker_MS,error_df,error_MS,model_df,model_MS
-skip|D3|glm-synthetic/collinear.effects.full.txt|*|Estimate
-bound|D4|cancellation_eps_multiple|4
-bound|D4|estimate_absolute|1e-9
+#
+# A 'skip.N' value is: id | full-precision golden file (relative to golden/) | rows ('marker=<name>' or '*') | columns.
+# A 'bound.<name>' value is a number. The file is not a golden and is never edited to make a test pass.
+skip.1 = D1 | glm-synthetic/model.stats.full.txt | marker=multiallelic | add_F,add_p,dom_F,dom_p
+skip.2 = D1 | glm-synthetic/min-class-size-3.stats.full.txt | marker=multiallelic | add_F,add_p,dom_F,dom_p
+skip.3 = D1 | glm-synthetic/append-add-dom.stats.full.txt | marker=multiallelic | add_F,add_p,dom_F,dom_p
+skip.4 = D1 | glm-synthetic/factor-only.stats.full.txt | marker=multiallelic | add_F,add_p,dom_F,dom_p
+skip.5 = D1 | glm-tutorial/mdp_traits.stats.full.txt | marker=PZB00063.1 | add_F,add_p,dom_F,dom_p
+skip.6 = D1 | glm-tutorial-maf/mdp_traits.stats.full.txt | marker=PZB00063.1 | add_F,add_p,dom_F,dom_p
+skip.7 = D2 | glm-synthetic/append-add-dom.stats.full.txt | * | addEffect,domEffect
+skip.8 = D3 | glm-synthetic/collinear.stats.full.txt | * | marker_F,p,marker_Rsq,add_F,add_p,dom_F,dom_p,marker_MS,error_df,error_MS,model_df,model_MS
+skip.9 = D3 | glm-synthetic/collinear.effects.full.txt | * | Estimate
+bound.cancellation_eps_multiple = 4
+bound.estimate_absolute = 1e-9

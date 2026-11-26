@@ -529,6 +529,10 @@ REP_ERROR="$(grep -m1 'There are more phenotype observations than taxa with geno
 manifest "error = $REP_ERROR"
 rmdir "$GOLDEN/glm-replicates" 2>/dev/null || true
 
+# The cells of the GLM goldens where TASSEL 6 departs from TASSEL 5 on purpose (ADR-0029, #191), as a reviewed list of
+# rules; GlmGoldenTest sets exactly these cells aside. Appended as it is so regeneration keeps it.
+{ echo; cat "$ROOT/scripts/golden/glm-departures.manifest"; } >>"$MANIFEST"
+
 leftover="$(cd "$TESTDATA" && find golden -type f ! -name MANIFEST | sort |
   while read -r f; do grep -qF "$f = " golden/MANIFEST || echo "$f"; done)"
 [[ -z "$leftover" ]] || die "unlisted files in testdata/golden: $leftover"
