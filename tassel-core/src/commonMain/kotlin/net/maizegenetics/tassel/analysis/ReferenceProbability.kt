@@ -86,6 +86,22 @@ internal class ReferenceProbability private constructor(
         }
     }
 
+    /**
+     * Fills [into] with site [site]'s probabilities for a block over a subset of the table's taxa: block taxon `i` is
+     * table taxon [taxa]`[i]`, which picks its imputed mean. [into] gets one value per block taxon.
+     */
+    fun column(block: SiteBlock, site: Int, taxa: IntArray, into: DoubleArray) {
+        val major = majorAlleles[site]
+        for (taxon in 0 until block.numberOfTaxa) {
+            val genotype = block.genotype(taxon, site)
+            into[taxon] = if (genotype == Genotype.UNKNOWN) {
+                imputed[taxa[taxon]].toDouble()
+            } else {
+                probability(genotype, major).toDouble()
+            }
+        }
+    }
+
     companion object {
         /**
          * Reads [genotypes] once to find each site's major allele and each taxon's mean, which is
