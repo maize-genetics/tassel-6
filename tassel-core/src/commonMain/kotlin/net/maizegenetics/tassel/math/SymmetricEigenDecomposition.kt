@@ -1,5 +1,8 @@
 package net.maizegenetics.tassel.math
 
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -33,6 +36,15 @@ import kotlin.math.sqrt
  *
  * Round-off can push eigenvalues of a positive-semidefinite matrix slightly below zero; callers that need
  * non-negative values (variance proportions, for example) should clamp them.
+ *
+ * ## Progress
+ *
+ * The `suspend` overloads of [of] take a `progress` callback and run the same code as the blocking ones, so their
+ * results are bit-identical. The callback receives a non-decreasing fraction in `[0, 1]`, once per Householder
+ * column and once per QL sweep, then `1.0` at the end. The fraction is an estimate of work done, not a measure of
+ * time: the first half is the reduction to tridiagonal form and the second half is the QL iteration. Each call is a
+ * suspension point, so the callback may `yield()` or check for cancellation, which is what keeps the browser's one
+ * thread responsive while a decomposition of thousands of taxa runs.
  *
  * @see net.maizegenetics.matrixalgebra.decomposition.SymmetricEigenvalueDecomposition
  */
@@ -79,13 +91,11 @@ class SymmetricEigenDecomposition private constructor(
         // non-converging input that slipped past the finiteness check.
         private const val MAX_ITERATIONS = 50
 
+        private const val HALF = 0.5
+
         /** Decomposes [matrix], a `size x size` matrix of rows, reading its lower triangle. */
         fun of(matrix: Array<DoubleArray>): SymmetricEigenDecomposition {
-            val size = matrix.size
-            require(size > 0) { "matrix must have at least one row" }
-            matrix.forEachIndexed { row, values ->
-                require(values.size == size) { "row $row has ${values.size} values, expected $size" }
-            }
+            val size = checkRows(matrix)
             return of(size) { row, column -> matrix[row][column] }
         }
 
@@ -94,9 +104,7 @@ class SymmetricEigenDecomposition private constructor(
          * and column-major orders agree for a symmetric matrix, so either may be passed.
          */
         fun of(size: Int, values: DoubleArray): SymmetricEigenDecomposition {
-            require(values.size == size * size) {
-                "expected ${size * size} values for a $size x $size matrix, got ${values.size}"
-            }
+            checkValues(size, values)
             return of(size) { row, column -> values[row * size + column] }
         }
 
@@ -104,7 +112,55 @@ class SymmetricEigenDecomposition private constructor(
          * Decomposes the `size x size` matrix whose entries [element] returns. [element] is called once per entry
          * of the lower triangle, so a caller holding only that triangle need not mirror it.
          */
-        fun of(size: Int, element: (row: Int, column: Int) -> Double): SymmetricEigenDecomposition {
+        fun of(size: Int, element: (row: Int, column: Int) -> Double): SymmetricEigenDecomposition =
+            runWithoutSuspending { decompose(size, element, null) }
+
+        /** As [of] with a matrix of rows, reporting [progress]; see the class comment for the callback's contract. */
+        suspend fun of(
+            matrix: Array<DoubleArray>,
+            progress: suspend (fraction: Double) -> Unit,
+        ): SymmetricEigenDecomposition {
+            val size = checkRows(matrix)
+            return decompose(size, { row, column -> matrix[row][column] }, progress)
+        }
+
+        /** As [of] with one array of `size * size` values, reporting [progress]. */
+        suspend fun of(
+            size: Int,
+            values: DoubleArray,
+            progress: suspend (fraction: Double) -> Unit,
+        ): SymmetricEigenDecomposition {
+            checkValues(size, values)
+            return decompose(size, { row, column -> values[row * size + column] }, progress)
+        }
+
+        /** As [of] with an element function, reporting [progress]. */
+        suspend fun of(
+            size: Int,
+            progress: suspend (fraction: Double) -> Unit,
+            element: (row: Int, column: Int) -> Double,
+        ): SymmetricEigenDecomposition = decompose(size, element, progress)
+
+        private fun checkRows(matrix: Array<DoubleArray>): Int {
+            val size = matrix.size
+            require(size > 0) { "matrix must have at least one row" }
+            matrix.forEachIndexed { row, values ->
+                require(values.size == size) { "row $row has ${values.size} values, expected $size" }
+            }
+            return size
+        }
+
+        private fun checkValues(size: Int, values: DoubleArray) {
+            require(values.size == size * size) {
+                "expected ${size * size} values for a $size x $size matrix, got ${values.size}"
+            }
+        }
+
+        private suspend fun decompose(
+            size: Int,
+            element: (row: Int, column: Int) -> Double,
+            progress: (suspend (fraction: Double) -> Unit)?,
+        ): SymmetricEigenDecomposition {
             require(size > 0) { "size must be positive, got $size" }
             val vectors = DoubleArray(size * size)
             for (column in 0 until size) {
@@ -117,18 +173,36 @@ class SymmetricEigenDecomposition private constructor(
             }
             val diagonal = DoubleArray(size)
             val offDiagonal = DoubleArray(size)
-            tridiagonalize(vectors, size, diagonal, offDiagonal)
-            diagonalize(vectors, size, diagonal, offDiagonal)
+            progress?.invoke(0.0)
+            tridiagonalize(vectors, size, diagonal, offDiagonal, progress)
+            diagonalize(vectors, size, diagonal, offDiagonal, progress)
             sortDescending(vectors, size, diagonal)
             normalize(vectors, size)
+            progress?.invoke(1.0)
             return SymmetricEigenDecomposition(size, diagonal, vectors)
+        }
+
+        /**
+         * Runs [block], which must never actually suspend, to completion on the calling thread. The blocking
+         * overloads pass no progress callback, so the shared `suspend` code has no suspension point to reach.
+         */
+        private fun <T> runWithoutSuspending(block: suspend () -> T): T {
+            var outcome: Result<T>? = null
+            block.startCoroutine(Continuation(EmptyCoroutineContext) { outcome = it })
+            return checkNotNull(outcome) { "a blocking decomposition suspended" }.getOrThrow()
         }
 
         /**
          * Householder reduction of [v] to tridiagonal form, leaving the accumulated transformation in [v], the
          * diagonal in [d], and the sub-diagonal in `e[1 until n]`. JAMA's `tred2`.
          */
-        private fun tridiagonalize(v: DoubleArray, n: Int, d: DoubleArray, e: DoubleArray) {
+        private suspend fun tridiagonalize(
+            v: DoubleArray,
+            n: Int,
+            d: DoubleArray,
+            e: DoubleArray,
+            progress: (suspend (fraction: Double) -> Unit)?,
+        ) {
             for (j in 0 until n) d[j] = v[j * n + n - 1]
 
             for (i in n - 1 downTo 1) {
@@ -186,6 +260,7 @@ class SymmetricEigenDecomposition private constructor(
                     }
                 }
                 d[i] = h
+                progress?.invoke(HALF * (n - i) / n)
             }
 
             // Accumulate the transformations.
@@ -217,7 +292,13 @@ class SymmetricEigenDecomposition private constructor(
          * Implicit QL iteration with shifts on the tridiagonal matrix in [d] and [e], rotating [v] as it goes.
          * JAMA's `tql2`, without its ascending sort (see [sortDescending]).
          */
-        private fun diagonalize(v: DoubleArray, n: Int, d: DoubleArray, e: DoubleArray) {
+        private suspend fun diagonalize(
+            v: DoubleArray,
+            n: Int,
+            d: DoubleArray,
+            e: DoubleArray,
+            progress: (suspend (fraction: Double) -> Unit)?,
+        ) {
             for (i in 1 until n) e[i - 1] = e[i]
             e[n - 1] = 0.0
 
@@ -237,6 +318,7 @@ class SymmetricEigenDecomposition private constructor(
                     var iteration = 0
                     do {
                         iteration++
+                        progress?.invoke(HALF + HALF * (l + 1.0 - 1.0 / (iteration + 1)) / n)
                         check(iteration <= MAX_ITERATIONS) {
                             "QL iteration did not converge for eigenvalue $l after $MAX_ITERATIONS sweeps"
                         }
@@ -290,6 +372,7 @@ class SymmetricEigenDecomposition private constructor(
                 }
                 d[l] += f
                 e[l] = 0.0
+                progress?.invoke(HALF + HALF * (l + 1.0) / n)
             }
         }
 
@@ -339,21 +422,6 @@ class SymmetricEigenDecomposition private constructor(
                 val scale = if (v[column + pivot] < 0.0) -1.0 / norm else 1.0 / norm
                 for (r in 0 until n) v[column + r] *= scale
             }
-        }
-
-        /**
-         * `sqrt(a * a + b * b)` without intermediate overflow. Ported rather than taken from `kotlin.math.hypot`
-         * so that every target computes the same bits: this form uses only division, multiplication, and `sqrt`,
-         * which IEEE 754 requires to be exactly rounded.
-         */
-        private fun pythag(a: Double, b: Double): Double = if (abs(a) > abs(b)) {
-            val r = b / a
-            abs(a) * sqrt(1 + r * r)
-        } else if (b != 0.0) {
-            val r = a / b
-            abs(b) * sqrt(1 + r * r)
-        } else {
-            0.0
         }
     }
 }
