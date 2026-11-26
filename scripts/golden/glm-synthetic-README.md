@@ -27,7 +27,7 @@ tolerances are in `testdata/golden/MANIFEST`.
 |------|-------|-------------------|
 | `glm_synthetic_traits.txt` | `y1`, `y2` data; `grp` factor (east/west/north); `c1`, `c2` covariates | the full model; `c1` is missing for `S07` and `y2` for `S04`, `S13`, `S31`, so each trait has its own observation set |
 | `glm_synthetic_factor.txt` | `y1` data; `grp` factor | a factor and no covariates |
-| `glm_synthetic_collinear.txt` | `y1` data; `c1`, `c2`, `c3 = c1 + c2` covariates | an exactly collinear covariate: TASSEL 5 sweeps it out, and the error df shows it (34 at an ordinary three-class site: 40 taxa less the mean, `c1`, `c2`, and two marker df) |
+| `glm_synthetic_collinear.txt` | `y1` data; `c1`, `c2`, `c3 = c1 + c2` covariates | a covariate that is collinear in decimal: `c3 = c1 + c2` in the file, but values are single precision, so it is the sum only to about 1e-7. TASSEL 5 does *not* sweep it out: the error df is 34 at an ordinary three-class site (40 taxa less the mean, `c1`, `c2`, `c3`, and two marker df), and its statistics are rounding noise of a near-singular normal equation. TASSEL 6 treats `c3` as aliased (error df 35), as R's `lm` does; see departure D3 in `[glm-departures]` |
 
 ## Runs
 
