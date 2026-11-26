@@ -25,7 +25,7 @@ class OracleFixtureTest {
         for ((path, _) in manifest.outputs) {
             assertTrue(TestData.readText(path).isNotEmpty(), "$path is empty")
         }
-        assertEquals(11 * 2 + 1 + 4, manifest.outputs.size)
+        assertEquals(11 * 2 + 1 + 4 + 9 * 4 + 8, manifest.outputs.size)
     }
 
     @Test

@@ -1,0 +1,3 @@
+formula = y ~ x1 + g1 + x2 + g2
+contrast = treatment
+weights = none
