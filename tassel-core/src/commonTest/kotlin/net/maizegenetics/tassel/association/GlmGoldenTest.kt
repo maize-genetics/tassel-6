@@ -13,6 +13,7 @@ import net.maizegenetics.tassel.testing.SuspendLazy
 import net.maizegenetics.tassel.testing.TestData
 import net.maizegenetics.tassel.testing.assertMatchesGolden
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * `glm` against every TASSEL 5 GLM golden (#188, ADR-0009), through the TASSEL 5-compatible writers. The rounded reports
@@ -33,6 +34,9 @@ class GlmGoldenTest {
     }
 
     private companion object {
+        /** The tutorial runs fit 3 traits at 3,093 markers; a hosted native runner needs more than the default timeout. */
+        val HEAVY = 10.minutes
+
         val inputs = Inputs()
 
         /** `-excludeLastTrait` on the population structure file drops Q3, since Q1 + Q2 + Q3 = 1. */
@@ -71,7 +75,7 @@ class GlmGoldenTest {
     }
 
     @Test
-    fun tutorialWithPopulationStructure() = runTest {
+    fun tutorialWithPopulationStructure() = runTest(timeout = HEAVY) {
         check(
             "glm-tutorial",
             "mdp_traits",
@@ -81,7 +85,7 @@ class GlmGoldenTest {
     }
 
     @Test
-    fun tutorialWithMafFilter() = runTest {
+    fun tutorialWithMafFilter() = runTest(timeout = HEAVY) {
         check(
             "glm-tutorial-maf",
             "mdp_traits",
