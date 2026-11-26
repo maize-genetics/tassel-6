@@ -1,6 +1,8 @@
 package net.maizegenetics.tassel.dataset
 
+import net.maizegenetics.tassel.distance.DistanceMatrix
 import net.maizegenetics.tassel.genotype.GenotypeTable
+import net.maizegenetics.tassel.join.GenotypePhenotype
 import net.maizegenetics.tassel.phenotype.PhenotypeTable
 
 /**
@@ -22,6 +24,12 @@ class DataSet(items: List<Any>) {
 
     /** The genotype tables among the items, in order. */
     fun genotypes(): List<GenotypeTable> = items.filterIsInstance<GenotypeTable>()
+
+    /** The distance matrices (for example kinship) among the items, in order. */
+    fun distanceMatrices(): List<DistanceMatrix> = items.filterIsInstance<DistanceMatrix>()
+
+    /** The genotype-phenotype pairings among the items, in order. */
+    fun genotypePhenotypes(): List<GenotypePhenotype> = items.filterIsInstance<GenotypePhenotype>()
 
     /** Number of items. */
     val size: Int get() = items.size
