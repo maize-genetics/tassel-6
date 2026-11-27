@@ -3,6 +3,7 @@ package net.maizegenetics.tassel.association
 import net.maizegenetics.tassel.dataset.DataSet
 import net.maizegenetics.tassel.ops.FileKind
 import net.maizegenetics.tassel.ops.operation
+import kotlin.random.Random
 
 /** Which genotype data `glm` tests (TASSEL 5's `genotypeComponent`). `AlleleProbability` is broken in TASSEL 5 and not ported. */
 internal enum class GlmGenotypeComponent { Genotype, ReferenceProbability }
@@ -20,7 +21,7 @@ internal enum class MissingGenotypes { drop, imputeMean }
  *
  * Declared here with its kernel ([glm]) and registered by tassel-6#200. The parameters that need a later kernel are
  * declared with their TASSEL 5 names, so the command line and the legacy translator keep working, and refused with the
- * task that adds them: permutations (#194), BLUEs (#193), streamed output files (#209), mean imputation.
+ * task that adds them: BLUEs (#193), streamed output files (#209), mean imputation.
  *
  * `siteStatsOut` and `siteStatFile` are dead parameters in TASSEL 5 (never read) and are not declared.
  *
@@ -96,13 +97,18 @@ internal val glmOperation = operation<DataSet, AssociationTable>(
     val permute by boolean(
         default = false,
         legacy = "permute",
-        help = "Should a permutation analysis be run? Not yet ported (tassel-6#194).",
+        help = "Should a permutation analysis be run? Shuffles each trait's base-model residuals nperm times, refits " +
+            "every marker, and reports perm_p and per-trait experiment-wise thresholds.",
     )
     val numberOfPermutations by int(
         default = 0,
         range = 0..Int.MAX_VALUE,
         legacy = "nperm",
-        help = "The number of permutations to be run for the permutation analysis. Not yet ported (tassel-6#194).",
+        help = "The number of permutations to be run for the permutation analysis. Used when permute is true.",
+    )
+    val seed by int(
+        help = "Seed of the permutation generator. Without one, a seed is drawn; either way it is recorded in the " +
+            "provenance, so a run can be repeated. TASSEL 5's permutations are unseeded.",
     )
     val phenotypeOnly by boolean(
         default = false,
@@ -137,7 +143,7 @@ internal val glmOperation = operation<DataSet, AssociationTable>(
     )
 
     run { input, progress ->
-        notYet(permute() || numberOfPermutations() > 0, "permutations", "#194")
+        require(!permute() || numberOfPermutations() > 0) { "glm: permute needs nperm of at least 1" }
         notYet(
             phenotypeOnly() || bluesFile() != null || anovaFile() != null,
             "phenoOnly and BLUEs through the operation",
@@ -180,7 +186,12 @@ internal val glmOperation = operation<DataSet, AssociationTable>(
             maxP = maxP(),
         )
         val parameters = values.toMap().mapNotNull { (name, value) -> value?.let { name to it.toString() } }.toMap()
-        glmTable(data, source, options, parameters, progress)
+        val permutation = if (permute()) {
+            PermutationOptions(numberOfPermutations(), seed()?.toLong() ?: Random.nextLong())
+        } else {
+            null
+        }
+        glmTable(data, source, options, parameters, progress, permutation = permutation)
     }
 }
 

@@ -115,6 +115,9 @@ internal suspend fun glmReference(
 /**
  * Runs [glm] (or with [kernel] `Reference`, [glmReference]) into an in-memory table with the `maxP` filter, the counts of
  * what was tested or skipped, and provenance. [parameters] are recorded as given. [workers] does not change the result.
+ *
+ * With [permutation], first runs [glmPermutationNull] and puts `perm_p` on every marker's omnibus record, and the seed and
+ * each trait's experiment-wise thresholds in the provenance.
  */
 internal suspend fun glmTable(
     data: AssociationData,
@@ -124,11 +127,16 @@ internal suspend fun glmTable(
     progress: ProgressReporter = ProgressReporter.None,
     kernel: GlmKernel = GlmKernel.Fast,
     workers: Int = associationWorkerCount(),
+    permutation: PermutationOptions? = null,
 ): AssociationTable {
     val collector = AssociationCollector(options.maxP, MaxPRule.Glm, data.traits)
+    // The permutations come first: a marker's perm_p needs every marker's minimum, so the observed scan that follows
+    // reads it off the finished null distribution. Both kernels share the one null scan, which is fast-kernel code.
+    val nullDistribution = permutation?.let { glmPermutationNull(data, source, options, it, progress, workers) }
+    val sink = if (nullDistribution == null) collector else PermutationPSink(nullDistribution, collector)
     when (kernel) {
-        GlmKernel.Fast -> glm(data, source, options, collector, progress, workers)
-        GlmKernel.Reference -> glmReference(data, source, options, collector, progress)
+        GlmKernel.Fast -> glm(data, source, options, sink, progress, workers)
+        GlmKernel.Reference -> glmReference(data, source, options, sink, progress)
     }
     val excluded = LinkedHashMap<String, Int>()
     data.traits.forEachIndexed { index, trait ->
@@ -146,6 +154,8 @@ internal suspend fun glmTable(
             ),
         ),
         model = describeModel(data, options),
+        seed = permutation?.seed,
+        permutations = nullDistribution?.summary(),
         excludedObservations = excluded,
     )
     return collector.finish(provenance)
@@ -577,17 +587,24 @@ internal class Fstat(val f: Double, val p: Double, val log10P: Double) {
                 }
                 return Fstat(f, Double.NaN, Double.NaN)
             }
-            val p = try {
-                fTestPValue(f, df.toDouble(), errorDf.toDouble())
-            } catch (e: IllegalArgumentException) {
-                Double.NaN
-            }
+            val p = pValue(ss, df, errorSs, errorDf)
             val log10P = try {
                 fTestLog10PValue(f, df.toDouble(), errorDf.toDouble())
             } catch (e: IllegalArgumentException) {
                 Double.NaN
             }
             return Fstat(f, p, log10P)
+        }
+
+        /** Just the p-value of [of], for the permutations, which need nothing else and compute millions of them. */
+        fun pValue(ss: Double, df: Int, errorSs: Double, errorDf: Int): Double {
+            val f = ss / df / errorSs * errorDf
+            if (!f.isFinite()) return if (f == Double.POSITIVE_INFINITY && df > 0 && errorDf > 0) 0.0 else Double.NaN
+            return try {
+                fTestPValue(f, df.toDouble(), errorDf.toDouble())
+            } catch (e: IllegalArgumentException) {
+                Double.NaN
+            }
         }
     }
 }

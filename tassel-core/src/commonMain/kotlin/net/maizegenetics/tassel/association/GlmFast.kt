@@ -123,19 +123,7 @@ internal suspend fun glm(
         val count = block.markers.last - first + 1
         val positions = Array(count) { source.position(first + it) }
         val outputs = arrayOfNulls<MarkerOutput>(count)
-        val bands = bands(count, workers)
-        if (bands.size == 1) {
-            states[0].fit(block, bands[0], first, positions, outputs)
-        } else {
-            val loaders = List(bands.size) { if (it == 0) block else block.fork() }
-            // Inherit the caller's dispatcher: the JVM and native engines run the bands on Dispatchers.Default, a
-            // test dispatcher and the browser's one thread run them one after another.
-            coroutineScope {
-                bands.mapIndexed { w, band ->
-                    async { states[w].fit(loaders[w], band, first, positions, outputs) }
-                }.awaitAll()
-            }
-        }
+        runBands(block, count, states) { state, loader, band -> state.fit(loader, band, first, positions, outputs) }
         val records = ArrayList<AssociationRecord>()
         val effects = ArrayList<AssociationEffect>()
         for (output in outputs) output!!.drainInto(records, effects)
@@ -144,6 +132,128 @@ internal suspend fun glm(
         progress.report(done, total, "glm")
     }
     if (stats != null) states.forEach { stats.add(it.stats) }
+}
+
+/**
+ * The permutation null of TASSEL 5's GLM (`AbstractFixedEffectLM.createPermutedData` and `updateMinP`, tassel-6#194): for
+ * each trait, [PermutationOptions.permutations] arrangements of its base-model residuals, each refitted at every marker
+ * that is tested, with the smallest marker p-value of each arrangement kept.
+ *
+ * The residuals are shuffled cumulatively (arrangement `k` is arrangement `k - 1` shuffled again) from a generator of
+ * the trait's own stream ([PermutationRandom.forTrait]), so the arrangements depend on the seed and the trait's position
+ * alone. A marker's fit is a permuted response in the same residualized basis the observed fit uses, over the marker's
+ * kept observations, so missing calls, aliased columns, and every encoding behave as in [glm]. The permuted response is the
+ * shuffled residual alone, without TASSEL 5's fitted values added back: they lie in the base model's column space,
+ * which the marker test projects out, so the p-values are the same. The statistic is the marker's omnibus test (the
+ * first record of [glm]); a marker with no test degrees of freedom has no p and leaves the minimum alone.
+ *
+ * Minimums are merged by the smallest value, which does not depend on the order or the number of workers, so any [workers]
+ * gives the same distribution. Replicated taxa are refused: shuffling residuals is only exchangeable when each
+ * observation has its own taxon.
+ *
+ * @see net.maizegenetics.analysis.association.AbstractFixedEffectLM
+ * @see net.maizegenetics.stats.linearmodels.LinearModelUtils.shuffle
+ */
+internal suspend fun glmPermutationNull(
+    data: AssociationData,
+    source: MarkerSource,
+    options: GlmOptions,
+    permutation: PermutationOptions,
+    progress: ProgressReporter = ProgressReporter.None,
+    workers: Int = associationWorkerCount(),
+    tuning: GlmFastTuning = GlmFastTuning(),
+): PermutationNull {
+    require(workers > 0) { "workers must be positive: $workers" }
+    val plan = GlmPlan(data, options, tuning)
+    val replicated = plan.groups.firstOrNull { it.replicated }
+    require(replicated == null) {
+        "glm: permutations are not defined when taxa are replicated " +
+            "(trait '${data.traits[replicated!!.traits.first()]}' has more than one observation of a taxon)"
+    }
+    val draws = plan.draw(permutation)
+    val states = Array(workers) { GlmWorker(plan, tuning.patternCacheDoubles / workers, draws) }
+    val total = source.numberOfMarkers.toLong()
+    var done = 0L
+    progress.report(0L, total, "glm permutations")
+    for (block in source.scan(plan.groups.map { it.observations }, options.marker, options.blockSize)) {
+        val first = block.markers.first
+        val count = block.markers.last - first + 1
+        runBands(block, count, states) { state, loader, band -> state.permute(loader, band, first) }
+        done += count
+        progress.report(done, total, "glm permutations")
+    }
+    val minimum = Array(data.traits.size) { DoubleArray(permutation.permutations) { 1.0 } }
+    for (state in states) {
+        val mine = state.minimumP ?: continue
+        for (trait in minimum.indices) {
+            for (k in 0 until permutation.permutations) {
+                if (mine[trait][k] <
+                    minimum[trait][k]
+                ) {
+                    minimum[trait][k] = mine[trait][k]
+                }
+            }
+        }
+    }
+    minimum.forEach { it.sort() }
+    return PermutationNull(permutation, data.traits, minimum)
+}
+
+/** A trait's base-model residuals, and each permutation's arrangement of them: `arrangement[row]` is the residual at `row`. */
+private class PermutedTrait(val residuals: DoubleArray, val arrangements: Array<IntArray>)
+
+/** The permuted residuals of every trait that can be tested, null for a trait with no observations. */
+private class PermutationDraws(val permutations: Int, val traits: Array<PermutedTrait?>)
+
+/** Draws [permutation]'s arrangements for each trait of the plan. */
+private fun GlmPlan.draw(permutation: PermutationOptions): PermutationDraws {
+    val traits = arrayOfNulls<PermutedTrait>(data.traits.size)
+    for (group in groups) {
+        val full = group.full ?: continue
+        val n = full.basis.rows
+        val rank = full.basis.baseRank
+        val q = full.q1.data
+        group.traits.forEachIndexed { slot, trait ->
+            // The residual of the base fit: y minus its projection on the orthonormal base columns Q1.
+            val values = group.values[slot]
+            val y = DoubleArray(n) { values.value(group.observations[it]) }
+            val residuals = y.copyOf()
+            for (j in 0 until rank) {
+                var dot = 0.0
+                for (i in 0 until n) dot += q[j * n + i] * y[i]
+                for (i in 0 until n) residuals[i] -= dot * q[j * n + i]
+            }
+            val random = PermutationRandom.forTrait(permutation.seed, trait)
+            val arrangement = IntArray(n) { it }
+            traits[trait] = PermutedTrait(
+                residuals,
+                Array(permutation.permutations) { arrangement.also(random::shuffle).copyOf() },
+            )
+        }
+    }
+    return PermutationDraws(permutation.permutations, traits)
+}
+
+/**
+ * Runs [work] on up to `states.size` contiguous runs of the [count] markers of [block], each with its own worker state and
+ * loader. Inherits the caller's dispatcher: the JVM and native engines run the bands on `Dispatchers.Default`, a test
+ * dispatcher and the browser's one thread run them one after another.
+ */
+private suspend fun runBands(
+    block: MarkerBlock,
+    count: Int,
+    states: Array<GlmWorker>,
+    work: (GlmWorker, MarkerBlock, IntRange) -> Unit,
+) {
+    val bands = bands(count, states.size)
+    if (bands.size == 1) {
+        work(states[0], block, bands[0])
+        return
+    }
+    val loaders = List(bands.size) { if (it == 0) block else block.fork() }
+    coroutineScope {
+        bands.mapIndexed { w, band -> async { work(states[w], loaders[w], band) } }.awaitAll()
+    }
 }
 
 /** `0 until count` in up to [workers] contiguous, nearly equal runs, in order. */
@@ -300,6 +410,9 @@ private sealed class Basis {
 
     /** The residuals (`length x k`) of [block], `rows x k` with one row per kept observation, which it may overwrite. */
     abstract fun residualize(block: DenseMatrix): DenseMatrix
+
+    /** A response over the kept observations as [responses] holds them: [y] has [rows] values, which this may overwrite. */
+    abstract fun response(y: DoubleArray): Response
 }
 
 /**
@@ -320,7 +433,7 @@ private class QrBasis(val qr: HouseholderQr, override val rows: Int, override va
     }
 
     /** Rotates the raw response [y], as the reference rotates `y` (not centered, so the sums repeat its order). */
-    fun response(y: DoubleArray): Response {
+    override fun response(y: DoubleArray): Response {
         qr.applyQt(y)
         return Response(y.copyOfRange(baseRank, rows), sumOfSquares(y, 1, baseRank))
     }
@@ -353,7 +466,7 @@ private class GramBasis(
     }
 
     /** Centers [y] (one value per kept row) over the kept rows, and projects the base out of it. */
-    fun response(y: DoubleArray): Response {
+    override fun response(y: DoubleArray): Response {
         var sum = 0.0
         for (v in y) sum += v
         var mean = sum / y.size
@@ -597,7 +710,7 @@ private class FactoredBlock(
  * One worker's state: its encoded columns, its missingness-pattern cache, a reference fitter for replicated traits, and
  * its counts. Encodes and fits the markers of a band and writes each marker's output to its own slot.
  */
-private class GlmWorker(private val plan: GlmPlan, cacheDoubles: Long) {
+private class GlmWorker(private val plan: GlmPlan, cacheDoubles: Long, private val draws: PermutationDraws? = null) {
     private val data = plan.data
     private val encoding = plan.options.marker.encoding
     private val builder = GlmRecords(plan.options)
@@ -606,6 +719,11 @@ private class GlmWorker(private val plan: GlmPlan, cacheDoubles: Long) {
     private val columns = Array(plan.groups.size) { MarkerColumns(plan.groups[it].observations.size) }
     private val loaded = BooleanArray(plan.groups.size)
     val stats = GlmFastStats()
+
+    /** Per trait, the smallest marker p-value of each permutation among this worker's markers; null without [draws]. */
+    val minimumP: Array<DoubleArray>? = draws?.let { d ->
+        Array(plan.data.traits.size) { DoubleArray(d.permutations) { 1.0 } }
+    }
 
     /** Encodes and fits markers `first + i` for `i` in [band], through [loader], into `outputs[i]`. */
     fun fit(
@@ -618,6 +736,39 @@ private class GlmWorker(private val plan: GlmPlan, cacheDoubles: Long) {
         for (i in band) {
             for (group in plan.groups) loaded[group.index] = loader.load(first + i, group.index, columns[group.index])
             outputs[i] = analyze(first + i, positions[i])
+        }
+    }
+
+    /** Encodes markers `first + i` for `i` in [band] through [loader] and folds their permuted fits into [minimumP]. */
+    fun permute(loader: MarkerBlock, band: IntRange, first: Int) {
+        for (i in band) {
+            for (group in plan.groups) loaded[group.index] = loader.load(first + i, group.index, columns[group.index])
+            for (group in plan.groups) {
+                val markerColumns = columns[group.index]
+                // A marker that is not encoded has no marker degrees of freedom, so no p-value.
+                if (group.full == null || !loaded[group.index]) continue
+                permuteGroup(group, markerColumns)
+            }
+        }
+    }
+
+    private fun permuteGroup(group: GlmGroup, markerColumns: MarkerColumns) {
+        val draws = checkNotNull(draws)
+        val basis = basis(group, markerColumns)
+        val block = FactoredBlock.of(basis, blockColumns(encoding, GlmBlock.Marker, markerColumns))
+        val n = markerColumns.size
+        val kept = markerColumns.observation
+        val y = DoubleArray(n)
+        for (trait in group.traits) {
+            val drawn = checkNotNull(draws.traits[trait])
+            val minimum = checkNotNull(minimumP)[trait]
+            for (k in 0 until draws.permutations) {
+                val arrangement = drawn.arrangements[k]
+                for (i in 0 until n) y[i] = drawn.residuals[arrangement[kept[i]]]
+                val fit = block.fit(basis, basis.response(y))
+                val p = Fstat.pValue(fit.ss, fit.df, fit.errorSs, fit.errorDf)
+                if (p < minimum[k]) minimum[k] = p
+            }
         }
     }
 

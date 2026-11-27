@@ -18,6 +18,7 @@ internal data class AnalysisInput(
  * @property model The model in canonical text.
  * @property kinship The kinship source and scaling, or empty.
  * @property seed The random seed (permutations), or null.
+ * @property permutations The permutation count and per-trait experiment-wise thresholds, or null.
  * @property excludedObservations Observations excluded, by reason.
  * @property excludedMarkers Markers excluded, by reason.
  */
@@ -29,6 +30,7 @@ internal data class AnalysisProvenance(
     val model: String = "",
     val kinship: String = "",
     val seed: Long? = null,
+    val permutations: PermutationSummary? = null,
     val excludedObservations: Map<String, Int> = emptyMap(),
     val excludedMarkers: Map<String, Int> = emptyMap(),
 ) {
@@ -56,6 +58,16 @@ internal data class AnalysisProvenance(
         if (model.isNotEmpty()) add(line("model", model))
         if (kinship.isNotEmpty()) add(line("kinship", kinship))
         if (seed != null) add(line("seed", seed.toString()))
+        if (permutations != null) {
+            add(line("permutations", permutations.permutations.toString()))
+            for ((trait, levels) in permutations.thresholds) {
+                for ((alpha, threshold) in levels) {
+                    add(
+                        line("permutation_threshold.$trait.$alpha", threshold.toString()),
+                    )
+                }
+            }
+        }
         for ((reason, count) in excludedObservations) add(line("excluded_observations.$reason", count.toString()))
         for ((reason, count) in excludedMarkers) add(line("excluded_markers.$reason", count.toString()))
     }

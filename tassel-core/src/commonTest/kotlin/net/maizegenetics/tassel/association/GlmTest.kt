@@ -434,7 +434,7 @@ class GlmTest {
         suspend fun message(vararg values: Pair<String, Any?>) = assertFailsWith<IllegalArgumentException> {
             glmOperation.run(set, glmOperation.bind(mapOf(*values)))
         }.message.orEmpty()
-        assertContains(message("permute" to true), "#194")
+        assertContains(message("permute" to true), "nperm")
         assertContains(message("phenotypeOnly" to true), "#193")
         assertContains(message("siteFile" to "stats.txt"), "#209")
         assertContains(message("missingGenotypes" to MissingGenotypes.imputeMean), "not ported")
