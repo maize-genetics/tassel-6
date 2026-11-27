@@ -80,7 +80,8 @@ internal object GlmDepartures {
         val e = expected.toDoubleOrNull()
         val a = actual.toDoubleOrNull()
         if (e == null || a == null) return expected != actual
-        if (e.isNaN() && a.isNaN()) return false
+        if (e.isNaN() || a.isNaN()) return e.isNaN() != a.isNaN()
+        if (e.isInfinite() || a.isInfinite()) return e != a
         return abs(e - a) > 1e-8 * abs(e)
     }
 

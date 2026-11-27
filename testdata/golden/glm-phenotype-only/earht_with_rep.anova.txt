@@ -1,0 +1,2 @@
+Trait	F	p	taxaDF	taxaMS	errorDF	errorMS	modelDF	modelMS
+earht	60.81095	2.0639E-16	29	815.18624	24	13.40525	30	793.00089

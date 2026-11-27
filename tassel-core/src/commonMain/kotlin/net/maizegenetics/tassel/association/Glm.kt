@@ -558,7 +558,7 @@ internal class GlmRecords(private val options: GlmOptions) {
 private fun GlmBlockFit.test(): Fstat = Fstat.of(ss, df, errorSs, errorDf)
 
 /** An F statistic and its p-values, computed as TASSEL 5 does: `((SS / df) / errorSS) * errorDf`. */
-private class Fstat(val f: Double, val p: Double, val log10P: Double) {
+internal class Fstat(val f: Double, val p: Double, val log10P: Double) {
     fun strict(): Fstat = if (f.isFinite()) this else NONE
 
     companion object {
@@ -671,7 +671,7 @@ internal class ReferenceGlm(private val data: AssociationData, private val optio
             )
         }
         if (taxonOf == null) {
-            val sums = Sums(withBlock)
+            val sums = SequentialSums(withBlock)
             val r0 = sums.rankThrough(p0)
             val r1 = sums.rankThrough(p1)
             return GlmBlockFit(
@@ -686,7 +686,7 @@ internal class ReferenceGlm(private val data: AssociationData, private val optio
             )
         }
         val withTaxa = extend(withBlock, ModelTerm.Factor(TAXON_LABEL), taxonColumns(taxonOf))
-        val sums = Sums(withTaxa)
+        val sums = SequentialSums(withTaxa)
         val r0 = sums.rankThrough(p0)
         val r1 = sums.rankThrough(p1)
         val r2 = sums.rank
@@ -728,25 +728,27 @@ internal class ReferenceGlm(private val data: AssociationData, private val optio
         }
     }
 
-    /** `Q'y` of a design's QR: the sequential sums of squares are sums of its squared entries. */
-    private class Sums(design: DesignMatrix) {
-        private val decomposition = design.decomposition
-        private val qty = design.response.copyOf().also { decomposition.qr?.applyQt(it) }
-        val rank: Int get() = decomposition.rank
-
-        /** The rank of the columns before [columnEnd]: how many of them are not aliased. */
-        fun rankThrough(columnEnd: Int): Int = decomposition.kept.count { it < columnEnd }
-
-        /** The sum of squares added by the rank positions [from] until [to]. */
-        fun ss(from: Int, to: Int): Double {
-            var sum = 0.0
-            for (i in from until minOf(to, qty.size)) sum += qty[i] * qty[i]
-            return sum
-        }
-    }
-
     private companion object {
         const val BLOCK_LABEL = "(marker)"
         const val TAXON_LABEL = "(taxon)"
+    }
+}
+
+/** `Q'y` of a design's QR: the sequential sums of squares are sums of its squared entries. */
+internal class SequentialSums(design: DesignMatrix) {
+    private val decomposition = design.decomposition
+    private val qty = design.response.copyOf().also { decomposition.qr?.applyQt(it) }
+
+    /** The design's rank. */
+    val rank: Int get() = decomposition.rank
+
+    /** The rank of the columns before [columnEnd]: how many of them are not aliased. */
+    fun rankThrough(columnEnd: Int): Int = decomposition.kept.count { it < columnEnd }
+
+    /** The sum of squares added by the rank positions [from] until [to]. */
+    fun ss(from: Int, to: Int): Double {
+        var sum = 0.0
+        for (i in from until minOf(to, qty.size)) sum += qty[i] * qty[i]
+        return sum
     }
 }

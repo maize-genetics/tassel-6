@@ -1,0 +1,4 @@
+Trait	F	p	taxaDF	taxaMS	errorDF	errorMS	modelDF	modelMS
+EarHT	-0	NaN	298	405.29585	0	Infinity	298	405.29585
+dpoll	-0	NaN	296	32.14304	0	Infinity	296	32.14304
+EarDia	-0	NaN	265	16.59382	0	Infinity	265	16.59382

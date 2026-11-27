@@ -10,6 +10,7 @@ import net.maizegenetics.tassel.ops.ProgressReporter
 import net.maizegenetics.tassel.phenotype.AttributeType
 import net.maizegenetics.tassel.phenotype.FactorAttribute
 import net.maizegenetics.tassel.phenotype.NumericAttribute
+import net.maizegenetics.tassel.phenotype.PhenotypeTable
 import net.maizegenetics.tassel.stats.model.Contrast
 import net.maizegenetics.tassel.stats.model.ModelSpec
 import net.maizegenetics.tassel.stats.model.ModelTerm
@@ -106,38 +107,7 @@ internal class AssociationData private constructor(
         /** As [of] for data that is already aligned. */
         fun of(data: GenotypePhenotype, spec: AssociationSpec = AssociationSpec()): AssociationData {
             val phenotype = data.phenotype
-            fun names(type: AttributeType) = phenotype.attributes(type).map { it.name }
-            val traits = spec.traits ?: names(AttributeType.data)
-            val covariates = spec.covariates ?: names(AttributeType.covariate)
-            val factors = spec.factors ?: names(AttributeType.factor)
-            require(traits.isNotEmpty()) { "There is no trait to analyze: the phenotype has no 'data' attribute" }
-
-            val used = HashSet<String>()
-            fun take(role: String, name: String) {
-                require(phenotype.indexOf(name) >= 0) {
-                    "The $role '$name' is not an attribute of '${phenotype.name}'"
-                }
-                require(used.add("$role:$name")) { "The $role '$name' is listed twice" }
-            }
-            traits.forEach { name ->
-                take("trait", name)
-                require(phenotype.attribute(name) is NumericAttribute) {
-                    "The trait '$name' must be numeric, not ${phenotype.attribute(name).type}"
-                }
-            }
-            covariates.forEach { name ->
-                take("covariate", name)
-                require(phenotype.attribute(name) is NumericAttribute) {
-                    "The covariate '$name' must be numeric, not ${phenotype.attribute(name).type}"
-                }
-                require(name !in traits) { "'$name' cannot be both a trait and a covariate" }
-            }
-            factors.forEach { name ->
-                take("factor", name)
-                require(phenotype.attribute(name) is FactorAttribute) {
-                    "The factor '$name' must be a factor attribute, not ${phenotype.attribute(name).type}"
-                }
-            }
+            val (traits, covariates, factors) = resolveRoles(phenotype, spec)
 
             val covariateColumns = covariates.map { phenotype.attribute(it) as NumericAttribute }
             val factorColumns = factors.map { phenotype.attribute(it) as FactorAttribute }
@@ -184,4 +154,49 @@ internal class AssociationData private constructor(
             return alignGenotypePhenotype(genotypes[0], phenotype, JoinType.intersect)
         }
     }
+}
+
+/** The traits, covariates, and factors an analysis uses, in model order. */
+internal data class AssociationRoles(val traits: List<String>, val covariates: List<String>, val factors: List<String>)
+
+/**
+ * Resolves [spec] against [phenotype]: a null list takes TASSEL 5's default for its role, and every name is checked
+ * to exist, to have the type its role needs, and to be used once.
+ *
+ * @throws IllegalArgumentException for an unknown or wrongly typed attribute, an attribute named twice, or no trait.
+ */
+internal fun resolveRoles(phenotype: PhenotypeTable, spec: AssociationSpec): AssociationRoles {
+    fun names(type: AttributeType) = phenotype.attributes(type).map { it.name }
+    val traits = spec.traits ?: names(AttributeType.data)
+    val covariates = spec.covariates ?: names(AttributeType.covariate)
+    val factors = spec.factors ?: names(AttributeType.factor)
+    require(traits.isNotEmpty()) { "There is no trait to analyze: the phenotype has no 'data' attribute" }
+
+    val used = HashSet<String>()
+    fun take(role: String, name: String) {
+        require(phenotype.indexOf(name) >= 0) {
+            "The $role '$name' is not an attribute of '${phenotype.name}'"
+        }
+        require(used.add("$role:$name")) { "The $role '$name' is listed twice" }
+    }
+    traits.forEach { name ->
+        take("trait", name)
+        require(phenotype.attribute(name) is NumericAttribute) {
+            "The trait '$name' must be numeric, not ${phenotype.attribute(name).type}"
+        }
+    }
+    covariates.forEach { name ->
+        take("covariate", name)
+        require(phenotype.attribute(name) is NumericAttribute) {
+            "The covariate '$name' must be numeric, not ${phenotype.attribute(name).type}"
+        }
+        require(name !in traits) { "'$name' cannot be both a trait and a covariate" }
+    }
+    factors.forEach { name ->
+        take("factor", name)
+        require(phenotype.attribute(name) is FactorAttribute) {
+            "The factor '$name' must be a factor attribute, not ${phenotype.attribute(name).type}"
+        }
+    }
+    return AssociationRoles(traits, covariates, factors)
 }

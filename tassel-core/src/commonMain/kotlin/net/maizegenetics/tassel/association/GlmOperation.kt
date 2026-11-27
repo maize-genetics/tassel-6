@@ -107,7 +107,8 @@ internal val glmOperation = operation<DataSet, AssociationTable>(
     val phenotypeOnly by boolean(
         default = false,
         legacy = "phenoOnly",
-        help = "Analyze the phenotype with no markers and generate BLUEs. Not yet ported (tassel-6#193).",
+        help = "Analyze the phenotype with no markers and generate BLUEs. The kernel is ported (tassel-6#193); " +
+            "the operation returns its results once registered (tassel-6#200).",
     )
     val saveToFile by boolean(
         default = false,
@@ -127,17 +128,21 @@ internal val glmOperation = operation<DataSet, AssociationTable>(
     val bluesFile by file(
         kind = FileKind.Output,
         legacy = "bluesFile",
-        help = "Name of file to which BLUEs values will be saved. Not yet ported (tassel-6#193).",
+        help = "Name of file to which BLUEs values will be saved. Needs the operation registered (tassel-6#200).",
     )
     val anovaFile by file(
         kind = FileKind.Output,
         legacy = "anovaFile",
-        help = "Name of file to which the ANOVA report will be saved. Not yet ported (tassel-6#193).",
+        help = "Name of file to which the ANOVA report will be saved. Needs the operation registered (tassel-6#200).",
     )
 
     run { input, progress ->
         notYet(permute() || numberOfPermutations() > 0, "permutations", "#194")
-        notYet(phenotypeOnly() || bluesFile() != null || anovaFile() != null, "phenoOnly and BLUEs", "#193")
+        notYet(
+            phenotypeOnly() || bluesFile() != null || anovaFile() != null,
+            "phenoOnly and BLUEs through the operation",
+            "#200; the kernel is phenotypeLm, #193",
+        )
         notYet(saveToFile() || siteFile() != null || alleleFile() != null, "streamed output files", "#209")
         notYet(missingGenotypes() != MissingGenotypes.drop, "missingGenotypes = ${missingGenotypes()}", "a later task")
 
