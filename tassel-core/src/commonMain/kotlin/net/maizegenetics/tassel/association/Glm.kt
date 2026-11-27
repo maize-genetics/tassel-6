@@ -46,16 +46,25 @@ internal const val GLM_RANK_TOLERANCE = 3.1622776601683794E-7
 /** What a replicated GLM tests the marker against, named in the `message` of its records. */
 internal const val TAXA_WITHIN_MARKER = "error term: taxa within marker"
 
+/** Which GLM kernel [glmTable] runs. Both give the same results to rounding (ADR-0025, ADR-0029). */
+internal enum class GlmKernel {
+    /** [glm]: residualization against cached null-model QRs, traits batched by observation set, markers on workers. */
+    Fast,
+
+    /** [glmReference]: one QR of the whole design per trait and marker, kept for differential tests (tassel-6#192). */
+    Reference,
+}
+
 /**
- * The GLM reference kernel: for every trait and every marker of [source], fits TASSEL 5's fixed-effect model and sends
+ * The GLM reference kernel (tassel-6#191): for every trait and every marker of [source], fits TASSEL 5's fixed-effect model and sends
  * one chunk per site block to [sink], records in marker order with each marker's traits together, omnibus test first
  * (ADR-0027). The model is the mean, the factors, the covariates, and then the marker, so the marker's sum of squares
  * is sequential: what it adds after everything else.
  *
  * Every marker is fitted from scratch on its own observations (those with a call and a trait), from a Householder QR
  * of the design, and nothing is inverted (ADR-0025). The sums of squares are read from `Q'y` and so are never a
- * difference of two residual sums. This is the reference path the fast path (tassel-6#192) is checked against: it does
- * not reuse work between markers.
+ * difference of two residual sums. This is the reference path the fast path [glm] is checked against (tassel-6#192), as
+ * `centeredIbsTassel5Order` is for kinship: it does not reuse work between markers, and it stays internal.
  *
  * - `genotype` is TASSEL 5's omnibus test of the genotype classes, with `add_F` and `dom_F` for biallelic sites
  *   (`DiscreteSitesFELM`). A monomorphic marker is reported, as TASSEL 5 does, with no marker degrees of freedom and
@@ -73,7 +82,7 @@ internal const val TAXA_WITHIN_MARKER = "error term: taxa within marker"
  * @see net.maizegenetics.analysis.association.DiscreteSitesFELM
  * @see net.maizegenetics.analysis.association.ReferenceProbabilityFELM
  */
-internal suspend fun glm(
+internal suspend fun glmReference(
     data: AssociationData,
     source: MarkerSource,
     options: GlmOptions,
@@ -104,8 +113,8 @@ internal suspend fun glm(
 }
 
 /**
- * Runs [glm] into an in-memory table with the `maxP` filter, the counts of what was tested or skipped, and provenance.
- * [parameters] are recorded as given.
+ * Runs [glm] (or with [kernel] `Reference`, [glmReference]) into an in-memory table with the `maxP` filter, the counts of
+ * what was tested or skipped, and provenance. [parameters] are recorded as given. [workers] does not change the result.
  */
 internal suspend fun glmTable(
     data: AssociationData,
@@ -113,9 +122,14 @@ internal suspend fun glmTable(
     options: GlmOptions = GlmOptions(),
     parameters: Map<String, String> = emptyMap(),
     progress: ProgressReporter = ProgressReporter.None,
+    kernel: GlmKernel = GlmKernel.Fast,
+    workers: Int = associationWorkerCount(),
 ): AssociationTable {
     val collector = AssociationCollector(options.maxP, MaxPRule.Glm, data.traits)
-    glm(data, source, options, collector, progress)
+    when (kernel) {
+        GlmKernel.Fast -> glm(data, source, options, collector, progress, workers)
+        GlmKernel.Reference -> glmReference(data, source, options, collector, progress)
+    }
     val excluded = LinkedHashMap<String, Int>()
     data.traits.forEachIndexed { index, trait ->
         for ((reason, count) in data.excludedObservations[index]) excluded["$trait.$reason"] = count
@@ -215,8 +229,8 @@ internal fun interface GlmBlockFits {
 }
 
 /**
- * Turns one trait's block fits at one marker into records and effects, as TASSEL 5's GLM reports them. It is kept
- * apart from the fitting so that the fast path (tassel-6#192) can share it and differ only in how fits are computed.
+ * Turns one trait's block fits at one marker into records and effects, as TASSEL 5's GLM reports them. Both kernels
+ * use it, so they differ only in how the fits are computed.
  */
 internal class GlmRecords(private val options: GlmOptions) {
     private val encoding: MarkerEncoding get() = options.marker.encoding
@@ -580,7 +594,7 @@ private class Fstat(val f: Double, val p: Double, val log10P: Double) {
 
 /**
  * The reference fits: each trait's model at each marker from one QR of the whole design. Holds each trait's base design
- * so it is built once. Not thread safe.
+ * so it is built once. Not thread safe; the fast kernel gives each worker its own for replicated traits.
  */
 internal class ReferenceGlm(private val data: AssociationData, private val options: GlmOptions) {
     private class Trait(val spec: ModelSpec, val observations: IntArray, val replicated: Boolean) {

@@ -24,7 +24,8 @@ import net.maizegenetics.tassel.position.Position
  * - For `additive` and `additive-dominance`, an observation with a rare or undefined allele (`Z`, `X`) is also missing,
  *   since it has no copy count. For `genotype` it is an ordinary class.
  *
- * Instances are not thread safe: a scan reuses buffers.
+ * Instances are not thread safe: a scan reuses buffers. A block's loaders from [MarkerBlock.fork] have buffers of their
+ * own and may load at the same time.
  *
  * @see net.maizegenetics.analysis.association.DiscreteSitesFELM
  * @see net.maizegenetics.analysis.association.ReferenceProbabilityFELM
@@ -89,6 +90,9 @@ internal class GenotypeMarkerSource private constructor(
             loadedSite = -1
             return object : MarkerBlock {
                 override val markers: IntRange get() = block.sites
+
+                // A site block is a read-only view of genotypes, so encoders with their own buffers can share it.
+                override fun fork(): MarkerBlock = Encoder(options, sets, genotyped, reference).block(block)
 
                 override fun load(marker: Int, set: Int, into: MarkerColumns): Boolean {
                     require(marker in block.sites) { "Marker $marker is not in block ${block.sites}" }

@@ -248,6 +248,12 @@ internal interface MarkerBlock {
      * not. Calls for different sets at the same marker reuse the one read of its genotypes.
      */
     fun load(marker: Int, set: Int, into: MarkerColumns): Boolean
+
+    /**
+     * Another loader of this block with buffers of its own, so that different coroutines can load markers of the
+     * block at the same time, one loader each. Loaders only read the block's genotypes; none changes them.
+     */
+    fun fork(): MarkerBlock
 }
 
 /**
