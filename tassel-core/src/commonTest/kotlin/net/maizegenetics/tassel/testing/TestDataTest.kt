@@ -50,7 +50,10 @@ class TestDataTest {
         val effects = "Trait\tMarker\tChr\tPos\tObs\tAllele\tEstimate"
         val manifest = GoldenManifest.load()
         val reports = manifest.outputs.keys.filter {
-            it.startsWith("golden/glm-") && it.endsWith(".txt") && "README" !in it
+            it.startsWith("golden/glm-") &&
+                it.endsWith(".txt") &&
+                "README" !in it &&
+                !it.startsWith("golden/glm-phenotype-only/")
         }
         assertEquals(57, reports.size, "GLM report count")
         for (path in reports) {
@@ -64,6 +67,16 @@ class TestDataTest {
             assertTrue(lines.size > 1, "$path has no rows")
             val width = header.split('\t').size
             assertTrue(lines.drop(1).all { it.trimEnd('\r').split('\t').size == width }, "$path has ragged rows")
+        }
+        // The phenotype-only goldens (#193) are a different report: one row per trait, and BLUEs as a phenotype.
+        val anova = "Trait\tF\tp\ttaxaDF\ttaxaMS\terrorDF\terrorMS\tmodelDF\tmodelMS"
+        for (name in listOf("earht_with_rep", "mdp_traits", "synthetic")) {
+            for (kind in listOf("anova", "anova.full")) {
+                val path = "golden/glm-phenotype-only/$name.$kind.txt"
+                assertEquals(anova, TestData.readText(path).lines().first(), path)
+            }
+            val blues = TestData.readText("golden/glm-phenotype-only/$name.blues.txt").lines()
+            assertEquals("<Phenotype>", blues.first(), name)
         }
         assertEquals(Tolerance.Format(), manifest.tolerance("golden/glm-tutorial/mdp_traits.stats.txt"))
         assertEquals(Tolerance.Relative(1e-8), manifest.tolerance("golden/glm-tutorial/mdp_traits.stats.full.txt"))
@@ -104,7 +117,7 @@ class TestDataTest {
     }
 
     private companion object {
-        const val OUTPUT_COUNT = 105
+        const val OUTPUT_COUNT = 115
 
         val HAPMAP_FIXED_COLUMNS = listOf(
             "rs#", "alleles", "chrom", "pos", "strand", "assembly#",
