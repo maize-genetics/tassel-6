@@ -54,6 +54,7 @@ association/glm_synthetic.hmp.txt = hand-built, see golden/glm-synthetic/README.
 association/glm_synthetic_traits.txt = hand-built, see golden/glm-synthetic/README.md
 association/glm_synthetic_factor.txt = hand-built, see golden/glm-synthetic/README.md
 association/glm_synthetic_collinear.txt = hand-built, see golden/glm-synthetic/README.md
+association/glm_phenotype_only.txt = hand-built, see golden/glm-phenotype-only/README.md
 
 [hapmap]
 description = HapMap export of the tutorial HapMap (reader and writer round trip)
@@ -279,6 +280,25 @@ golden/glm-synthetic/collinear.effects.txt = format
 golden/glm-synthetic/collinear.effects.full.txt = rel 1e-8
 golden/glm-synthetic/README.md = exact
 
+[glm-phenotype-only]
+description = FixedEffectLMPlugin -phenoOnly true: taxon BLUEs and the ANOVA, replicated, unreplicated, and with a covariate
+command = tassel5 -r phenotype/earht_with_rep.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/earht_with_rep.blues,golden/glm-phenotype-only/earht_with_rep.anova
+command = tassel5-full -r phenotype/earht_with_rep.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/earht_with_rep.blues.full,golden/glm-phenotype-only/earht_with_rep.anova.full
+golden/glm-phenotype-only/earht_with_rep.blues.txt = phenotype rel 1e-6 rows-unordered
+golden/glm-phenotype-only/earht_with_rep.anova.txt = format
+golden/glm-phenotype-only/earht_with_rep.anova.full.txt = rel 1e-8
+command = tassel5 -t tutorial/mdp_traits.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/mdp_traits.blues,golden/glm-phenotype-only/mdp_traits.anova
+command = tassel5-full -t tutorial/mdp_traits.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/mdp_traits.blues.full,golden/glm-phenotype-only/mdp_traits.anova.full
+golden/glm-phenotype-only/mdp_traits.blues.txt = phenotype rel 1e-6 rows-unordered
+golden/glm-phenotype-only/mdp_traits.anova.txt = format
+golden/glm-phenotype-only/mdp_traits.anova.full.txt = rel 1e-8
+command = tassel5 -r association/glm_phenotype_only.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/synthetic.blues,golden/glm-phenotype-only/synthetic.anova
+command = tassel5-full -r association/glm_phenotype_only.txt -FixedEffectLMPlugin -phenoOnly true -endPlugin -export golden/glm-phenotype-only/synthetic.blues.full,golden/glm-phenotype-only/synthetic.anova.full
+golden/glm-phenotype-only/synthetic.blues.txt = phenotype rel 1e-6 rows-unordered
+golden/glm-phenotype-only/synthetic.anova.txt = format
+golden/glm-phenotype-only/synthetic.anova.full.txt = rel 1e-8
+golden/glm-phenotype-only/README.md = exact
+
 [glm-t5-expected]
 description = TASSEL 5's ExpectedResults/discreteSitesFELM.txt (EarHT, no covariates, chr 9 and 10 HapMap)
 source = dataFiles/ExpectedResults/discreteSitesFELM.txt in the inputs artifact
@@ -315,6 +335,10 @@ description = Departures of the TASSEL 6 GLM from TASSEL 5 (ADR-0029, tassel-6#1
 # D4  cancellation. TASSEL 5 forms a sum of squares as a difference of residual sums of squares, so a marker that
 #     explains almost nothing carries an absolute error of a few times eps * SSE. TASSEL 6 reads the sums of squares
 #     from Q'y and has no such error. The bound is the multiple of eps given below.
+# D5  phenotype-only GLM with unreplicated taxa (glm-phenotype-only/mdp_traits). The model fits every observation, so the
+#     error degrees of freedom are 0 and the residual sum of squares is zero in exact arithmetic. TASSEL 5's sweep leaves
+#     rounding noise of a random sign there and prints it (F = -0.0, errorMS = Infinity); TASSEL 6 reads the sum of squares
+#     from Q'y, which is exactly zero, and writes NaN for F and errorMS (p is NaN in both).
 #
 # A 'skip.N' value is: id | full-precision golden file (relative to golden/) | rows ('marker=<name>' or '*') | columns.
 # A 'bound.<name>' value is a number. The file is not a golden and is never edited to make a test pass.
@@ -327,5 +351,6 @@ skip.6 = D1 | glm-tutorial-maf/mdp_traits.stats.full.txt | marker=PZB00063.1 | a
 skip.7 = D2 | glm-synthetic/append-add-dom.stats.full.txt | * | addEffect,domEffect
 skip.8 = D3 | glm-synthetic/collinear.stats.full.txt | * | marker_F,p,marker_Rsq,add_F,add_p,dom_F,dom_p,marker_MS,error_df,error_MS,model_df,model_MS
 skip.9 = D3 | glm-synthetic/collinear.effects.full.txt | * | Estimate
+skip.10 = D5 | glm-phenotype-only/mdp_traits.anova.full.txt | * | F,errorMS
 bound.cancellation_eps_multiple = 4
 bound.estimate_absolute = 1e-9
