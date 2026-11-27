@@ -36,7 +36,7 @@ internal class AliasAwareQr private constructor(
         fun of(matrix: DenseMatrix, relativeTolerance: Double? = null): AliasAwareQr {
             val m = matrix.rows
             val scale = DoubleArray(matrix.columns) {
-                val norm = columnNorm(matrix, it)
+                val norm = columnNorm(matrix.data, it * m, m)
                 if (norm > 0.0 && norm.isFinite()) 1.0 / norm else 0.0
             }
             val kept = (0 until matrix.columns).filter { scale[it] != 0.0 }.toMutableList()
@@ -71,12 +71,17 @@ internal class AliasAwareQr private constructor(
             }
         }
 
-        private fun columnNorm(matrix: DenseMatrix, column: Int): Double {
+        /**
+         * The Euclidean norm of [count] values of [values] from [offset], scaled by the largest so it neither overflows nor
+         * underflows: what a column is divided by before it is factored. The GLM fast path scales marker columns with it
+         * too, so it judges aliasing on the same numbers as the reference.
+         */
+        internal fun columnNorm(values: DoubleArray, offset: Int, count: Int): Double {
             var largest = 0.0
-            for (i in 0 until matrix.rows) largest = maxOf(largest, kotlin.math.abs(matrix[i, column]))
+            for (i in 0 until count) largest = maxOf(largest, kotlin.math.abs(values[offset + i]))
             if (largest == 0.0 || !largest.isFinite()) return largest
             var sum = 0.0
-            for (i in 0 until matrix.rows) (matrix[i, column] / largest).let { sum += it * it }
+            for (i in 0 until count) (values[offset + i] / largest).let { sum += it * it }
             return largest * sqrt(sum)
         }
 

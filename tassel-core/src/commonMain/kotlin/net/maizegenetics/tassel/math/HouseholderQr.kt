@@ -118,6 +118,19 @@ class HouseholderQr private constructor(
     }
 
     /**
+     * [solve] for a [b] that has already been replaced by `Q' b` ([applyQt]): the same coefficients, without rotating
+     * again. Only the first [rank] values of [qtb] are read.
+     */
+    internal fun solveRotated(qtb: DoubleArray): DoubleArray {
+        require(qtb.size >= rank) { "qtb has ${qtb.size} values, expected at least $rank" }
+        val work = qtb.copyOf(rank)
+        Triangular.solveUpper(factor, rank, work)
+        val coefficients = DoubleArray(columns)
+        for (k in 0 until rank) coefficients[permutation[k]] = work[k]
+        return coefficients
+    }
+
+    /**
      * [solve] followed by iterative refinement against the original matrix [a], for badly conditioned problems where
      * one pass of Householder QR keeps fewer digits than the data deserves (Longley, the Wampler polynomials).
      *
@@ -347,8 +360,9 @@ class HouseholderQr private constructor(
             val permutation = IntArray(n) { it }
             val kernels = denseKernels
 
-            // Partial column norms: current (below the active row) and original, for the downdating test.
-            val current = DoubleArray(n) { norm2(data, it * m, m) }
+            // Partial column norms: current (below the active row) and original, for the downdating test. Only pivoting
+            // reads them, so an unpivoted factorization (every alias-aware model fit) skips the pass over the matrix.
+            val current = if (pivot) DoubleArray(n) { norm2(data, it * m, m) } else DoubleArray(0)
             val original = current.copyOf()
 
             for (k in 0 until steps) {

@@ -46,16 +46,25 @@ internal const val GLM_RANK_TOLERANCE = 3.1622776601683794E-7
 /** What a replicated GLM tests the marker against, named in the `message` of its records. */
 internal const val TAXA_WITHIN_MARKER = "error term: taxa within marker"
 
+/** Which GLM kernel [glmTable] runs. Both give the same results to rounding (ADR-0025, ADR-0029). */
+internal enum class GlmKernel {
+    /** [glm]: residualization against cached null-model QRs, traits batched by observation set, markers on workers. */
+    Fast,
+
+    /** [glmReference]: one QR of the whole design per trait and marker, kept for differential tests (tassel-6#192). */
+    Reference,
+}
+
 /**
- * The GLM reference kernel: for every trait and every marker of [source], fits TASSEL 5's fixed-effect model and sends
+ * The GLM reference kernel (tassel-6#191): for every trait and every marker of [source], fits TASSEL 5's fixed-effect model and sends
  * one chunk per site block to [sink], records in marker order with each marker's traits together, omnibus test first
  * (ADR-0027). The model is the mean, the factors, the covariates, and then the marker, so the marker's sum of squares
  * is sequential: what it adds after everything else.
  *
  * Every marker is fitted from scratch on its own observations (those with a call and a trait), from a Householder QR
  * of the design, and nothing is inverted (ADR-0025). The sums of squares are read from `Q'y` and so are never a
- * difference of two residual sums. This is the reference path the fast path (tassel-6#192) is checked against: it does
- * not reuse work between markers.
+ * difference of two residual sums. This is the reference path the fast path [glm] is checked against (tassel-6#192), as
+ * `centeredIbsTassel5Order` is for kinship: it does not reuse work between markers, and it stays internal.
  *
  * - `genotype` is TASSEL 5's omnibus test of the genotype classes, with `add_F` and `dom_F` for biallelic sites
  *   (`DiscreteSitesFELM`). A monomorphic marker is reported, as TASSEL 5 does, with no marker degrees of freedom and
@@ -73,14 +82,14 @@ internal const val TAXA_WITHIN_MARKER = "error term: taxa within marker"
  * @see net.maizegenetics.analysis.association.DiscreteSitesFELM
  * @see net.maizegenetics.analysis.association.ReferenceProbabilityFELM
  */
-internal suspend fun glm(
+internal suspend fun glmReference(
     data: AssociationData,
     source: MarkerSource,
     options: GlmOptions,
     sink: AssociationSink,
     progress: ProgressReporter = ProgressReporter.None,
 ) {
-    val fitter = GlmFitter(data, options)
+    val fitter = ReferenceGlm(data, options)
     val capacity = data.observationSets.maxOfOrNull { it.size } ?: 0
     val columns = MarkerColumns(capacity)
     val total = source.numberOfMarkers.toLong()
@@ -104,8 +113,8 @@ internal suspend fun glm(
 }
 
 /**
- * Runs [glm] into an in-memory table with the `maxP` filter, the counts of what was tested or skipped, and provenance.
- * [parameters] are recorded as given.
+ * Runs [glm] (or with [kernel] `Reference`, [glmReference]) into an in-memory table with the `maxP` filter, the counts of
+ * what was tested or skipped, and provenance. [parameters] are recorded as given. [workers] does not change the result.
  */
 internal suspend fun glmTable(
     data: AssociationData,
@@ -113,9 +122,14 @@ internal suspend fun glmTable(
     options: GlmOptions = GlmOptions(),
     parameters: Map<String, String> = emptyMap(),
     progress: ProgressReporter = ProgressReporter.None,
+    kernel: GlmKernel = GlmKernel.Fast,
+    workers: Int = associationWorkerCount(),
 ): AssociationTable {
     val collector = AssociationCollector(options.maxP, MaxPRule.Glm, data.traits)
-    glm(data, source, options, collector, progress)
+    when (kernel) {
+        GlmKernel.Fast -> glm(data, source, options, collector, progress, workers)
+        GlmKernel.Reference -> glmReference(data, source, options, collector, progress)
+    }
     val excluded = LinkedHashMap<String, Int>()
     data.traits.forEachIndexed { index, trait ->
         for ((reason, count) in data.excludedObservations[index]) excluded["$trait.$reason"] = count
@@ -145,96 +159,129 @@ private fun describeModel(data: AssociationData, options: GlmOptions): String = 
     append("; traits=").append(data.traits.joinToString(","))
 }
 
-/** Fits one trait's model at one marker at a time. Holds each trait's base design so it is built once. */
-private class GlmFitter(private val data: AssociationData, private val options: GlmOptions) {
-    private class Trait(val spec: ModelSpec, val observations: IntArray, val replicated: Boolean) {
-        var base: DesignMatrix? = null
+/** The trait and marker a GLM record is about. */
+internal class GlmMarkerId(
+    val trait: String,
+    val marker: Int,
+    val name: String,
+    val chromosome: String,
+    val position: Int,
+) {
+    constructor(trait: String, marker: Int, position: Position) :
+        this(trait, marker, position.name, position.chromosome.name, position.position)
+}
+
+/** The blocks of marker columns a GLM test adds after the base model ([blockColumns]). */
+internal enum class GlmBlock {
+    /**
+     * The marker test: the class indicators of `genotype` (every class but the last), the `dosage` column, the allele
+     * columns of `additive`, or the additive and dominance columns of `additiveDominance`. Its coefficients are the
+     * reported effects.
+     */
+    Marker,
+
+    /** TASSEL 5's `add_F` model: the allele-copy columns of `genotype`, or the additive column of `additiveDominance`. */
+    Additive,
+}
+
+/** The columns of [block] for the marker in [columns], each holding at least `columns.size` values. Do not change them. */
+internal fun blockColumns(encoding: MarkerEncoding, block: GlmBlock, columns: MarkerColumns): List<DoubleArray> =
+    when (block) {
+        GlmBlock.Marker -> when (encoding) {
+            MarkerEncoding.genotype -> (0 until columns.numberOfClasses - 1).map { cls ->
+                DoubleArray(columns.size) { if (columns.classIndex[it] == cls) 1.0 else 0.0 }
+            }
+            MarkerEncoding.dosage -> listOf(columns.column(0))
+            MarkerEncoding.additive -> (0 until columns.columnCount).map { columns.column(it) }
+            MarkerEncoding.additiveDominance -> listOf(columns.column(0), columns.column(1))
+        }
+        GlmBlock.Additive -> when (encoding) {
+            MarkerEncoding.genotype -> (0 until columns.columnCount).map { columns.column(it) }
+            MarkerEncoding.additiveDominance -> listOf(columns.column(0))
+            else -> error("The $encoding encoding has no additive block")
+        }
     }
 
-    private val traits = data.traits.indices.map {
-        Trait(data.baseSpec(it), data.observations(it), data.hasReplicates(it))
-    }
+/**
+ * One block's fit after the base model: its sequential sum of squares and degrees of freedom, the error term it is
+ * tested against, the model and corrected total sums of squares, and (on first use) the block's own estimates.
+ */
+internal class GlmBlockFit(
+    val ss: Double,
+    val df: Int,
+    val errorSs: Double,
+    val errorDf: Int,
+    val modelSs: Double,
+    val modelDf: Int,
+    val totalSs: Double,
+    estimate: () -> GlmEstimates,
+) {
+    /** Only the marker block's are reported, so they are computed when asked for. */
+    val estimates: GlmEstimates by lazy(LazyThreadSafetyMode.NONE, estimate)
+}
 
-    fun analyze(
-        traitIndex: Int,
-        marker: Int,
-        position: Position,
+/** Coefficients and standard errors of a block's columns (`NaN` where aliased), and the residual df behind them. */
+internal class GlmEstimates(val coefficients: DoubleArray, val standardErrors: DoubleArray, val residualDf: Int)
+
+/** Fits one trait's blocks at one marker; each block is asked for at most once. */
+internal fun interface GlmBlockFits {
+    fun fit(block: GlmBlock): GlmBlockFit
+}
+
+/**
+ * Turns one trait's block fits at one marker into records and effects, as TASSEL 5's GLM reports them. Both kernels
+ * use it, so they differ only in how the fits are computed.
+ */
+internal class GlmRecords(private val options: GlmOptions) {
+    private val encoding: MarkerEncoding get() = options.marker.encoding
+
+    /**
+     * Whether a marker is tested: it is encoded, or it is a monomorphic `genotype` marker, which TASSEL 5 reports with
+     * no marker degrees of freedom and `NaN` statistics.
+     */
+    fun isTested(columns: MarkerColumns, loaded: Boolean): Boolean = loaded ||
+        (columns.skip == SkipReason.Monomorphic && encoding == MarkerEncoding.genotype && columns.size > 0)
+
+    fun skipped(id: GlmMarkerId, columns: MarkerColumns) = AssociationRecord(
+        trait = id.trait,
+        markerIndex = id.marker,
+        marker = id.name,
+        chromosome = id.chromosome,
+        position = id.position,
+        encoding = encoding,
+        minorObs = columns.minorObs,
+        status = AssociationStatus.Skipped,
+        skipReason = columns.skip,
+    )
+
+    /** The records of a marker [isTested] says is tested. [taxa] counts the distinct taxa among its observations. */
+    fun tested(
+        id: GlmMarkerId,
         columns: MarkerColumns,
         loaded: Boolean,
+        taxa: Int,
+        message: String,
+        fits: GlmBlockFits,
         records: MutableList<AssociationRecord>,
         effects: MutableList<AssociationEffect>,
     ) {
-        val trait = traits[traitIndex]
-        val identity =
-            Identity(data.traits[traitIndex], marker, position.name, position.chromosome.name, position.position)
-        val monomorphicGenotype = !loaded &&
-            columns.skip == SkipReason.Monomorphic &&
-            options.marker.encoding == MarkerEncoding.genotype &&
-            columns.size > 0
-        if (!loaded && !monomorphicGenotype) {
-            records += skipped(identity, columns)
-            return
-        }
-        val n = columns.size
-        val base = baseDesign(trait, columns)
-        val taxonOf = if (trait.replicated) {
-            IntArray(n) { data.taxonIds[trait.observations[columns.observation[it]]] }
-        } else {
-            null
-        }
-        val message = if (trait.replicated) TAXA_WITHIN_MARKER else ""
-        val context = Context(identity, columns, base, taxonOf, message)
-        when (options.marker.encoding) {
-            MarkerEncoding.genotype -> genotype(context, monomorphicGenotype, records, effects)
+        val context = Context(id, columns, taxa, message, fits)
+        when (encoding) {
+            MarkerEncoding.genotype -> genotype(context, monomorphic = !loaded, records, effects)
             MarkerEncoding.dosage -> dosage(context, records, effects)
             MarkerEncoding.additive -> additive(context, records)
             MarkerEncoding.additiveDominance -> additiveDominance(context, records)
         }
     }
 
-    private class Identity(
-        val trait: String,
-        val marker: Int,
-        val name: String,
-        val chromosome: String,
-        val position: Int,
-    )
-
     private class Context(
-        val id: Identity,
+        val id: GlmMarkerId,
         val columns: MarkerColumns,
-        val base: DesignMatrix,
-        val taxonOf: IntArray?,
+        val taxa: Int,
         val message: String,
+        val fits: GlmBlockFits,
     ) {
         val n: Int get() = columns.size
-    }
-
-    private fun skipped(id: Identity, columns: MarkerColumns) = AssociationRecord(
-        trait = id.trait,
-        markerIndex = id.marker,
-        marker = id.name,
-        chromosome = id.chromosome,
-        position = id.position,
-        encoding = options.marker.encoding,
-        minorObs = columns.minorObs,
-        status = AssociationStatus.Skipped,
-        skipReason = columns.skip,
-    )
-
-    private fun baseDesign(trait: Trait, columns: MarkerColumns): DesignMatrix {
-        val n = columns.size
-        if (n == trait.observations.size) {
-            return trait.base
-                ?: DesignMatrix.build(trait.spec, data.data.phenotype, trait.observations, GLM_RANK_TOLERANCE)
-                    .also { trait.base = it }
-        }
-        return DesignMatrix.build(
-            trait.spec,
-            data.data.phenotype,
-            IntArray(n) { trait.observations[columns.observation[it]] },
-            GLM_RANK_TOLERANCE,
-        )
     }
 
     // --- genotype -------------------------------------------------------------------------------------------------
@@ -246,24 +293,16 @@ private class GlmFitter(private val data: AssociationData, private val options: 
         effects: MutableList<AssociationEffect>,
     ) {
         val k = c.columns.numberOfClasses
-        val markerColumns = (0 until k - 1).map { cls ->
-            c.columns.classLabels[cls] to DoubleArray(c.n) { if (c.columns.classIndex[it] == cls) 1.0 else 0.0 }
-        }
-        val full = fitBlock(c.base, markerColumns, c.taxonOf)
-        val p0 = c.base.columnCount
-        val fit = LinearModelFit.of(full.design)
+        val full = c.fits.fit(GlmBlock.Marker)
         val test = full.test()
 
         // add_F and dom_F: the base model plus a copy count per allele but the last (DiscreteSitesFELM).
         val withAlleles = c.columns.columnCount > 0
-        var additive: BlockResult? = null
+        var additive: GlmBlockFit? = null
         var addTest = Fstat.NONE
         var domTest = Fstat.NONE
         if (withAlleles) {
-            val addColumns = (0 until c.columns.columnCount).map { j ->
-                c.columns.columnLabels[j] to c.columns.column(j).copyOf(c.n)
-            }
-            additive = fitBlock(c.base, addColumns, c.taxonOf)
+            additive = c.fits.fit(GlmBlock.Additive)
             // TASSEL 5 turns a non-finite add or dom statistic, and its p-value, into NaN.
             addTest = additive.test().strict()
             domTest = Fstat.of(full.ss - additive.ss, full.df - additive.df, full.errorSs, full.errorDf).strict()
@@ -274,8 +313,8 @@ private class GlmFitter(private val data: AssociationData, private val options: 
         if (options.appendAddDom && withAlleles && c.columns.columnCount == 1) {
             // Q6: TASSEL 5 indexes the marker's coefficients by the number of effects, not columns, which is wrong
             // when a factor has other than two levels; these are the marker's own coefficients.
-            val b0 = coefficient(fit, p0)
-            val b1 = coefficient(fit, p0 + 1)
+            val b0 = coefficient(full.estimates, 0)
+            val b1 = coefficient(full.estimates, 1)
             if (k == 2) {
                 addEffect = abs(b0 / 2)
             } else if (k == 3) {
@@ -293,7 +332,7 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             test = AssociationTestKind.Genotype,
             encoding = MarkerEncoding.genotype,
             observations = c.n,
-            taxa = taxa(c),
+            taxa = c.taxa,
             minorObs = c.columns.minorObs,
             statistic = test.f,
             numeratorDf = full.df.toDouble(),
@@ -341,6 +380,7 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             )
         }
         if (withAlleles) {
+            val estimates = full.estimates
             for (cls in 0 until k) {
                 val last = cls == k - 1
                 effects += AssociationEffect(
@@ -351,24 +391,25 @@ private class GlmFitter(private val data: AssociationData, private val options: 
                     position = c.id.position,
                     allele = c.columns.classLabels[cls],
                     observations = c.columns.classCounts[cls],
-                    estimate = if (last) 0.0 else coefficient(fit, p0 + cls),
-                    standardError = if (last) Double.NaN else fit.standardErrors[p0 + cls],
+                    estimate = if (last) 0.0 else coefficient(estimates, cls),
+                    standardError = if (last) Double.NaN else estimates.standardErrors[cls],
                 )
             }
         }
     }
 
     /** TASSEL 5 writes 0 for a coefficient it swept out; an aliased column here is `NaN`. */
-    private fun coefficient(fit: LinearModelFit, column: Int): Double =
-        if (column < fit.coefficients.size) fit.coefficients[column].let { if (it.isNaN()) 0.0 else it } else 0.0
+    private fun coefficient(estimates: GlmEstimates, column: Int): Double = if (column < estimates.coefficients.size) {
+        estimates.coefficients[column].let { if (it.isNaN()) 0.0 else it }
+    } else {
+        0.0
+    }
 
     // --- dosage ---------------------------------------------------------------------------------------------------
 
     private fun dosage(c: Context, records: MutableList<AssociationRecord>, effects: MutableList<AssociationEffect>) {
-        val dosage = listOf(c.columns.columnLabels[0] to c.columns.column(0).copyOf(c.n))
-        val block = fitBlock(c.base, dosage, c.taxonOf)
-        val fit = LinearModelFit.of(block.design)
-        val p0 = c.base.columnCount
+        val block = c.fits.fit(GlmBlock.Marker)
+        val estimates = block.estimates
         val test = block.test()
         records += AssociationRecord(
             trait = c.id.trait,
@@ -379,9 +420,9 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             test = AssociationTestKind.Dosage,
             encoding = MarkerEncoding.dosage,
             observations = c.n,
-            taxa = taxa(c),
-            effect = fit.coefficients[p0],
-            standardError = fit.standardErrors[p0],
+            taxa = c.taxa,
+            effect = estimates.coefficients[0],
+            standardError = estimates.standardErrors[0],
             statistic = test.f,
             numeratorDf = block.df.toDouble(),
             denominatorDf = block.errorDf.toDouble(),
@@ -400,8 +441,8 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             marker = c.id.name,
             chromosome = c.id.chromosome,
             position = c.id.position,
-            estimate = coefficient(fit, p0),
-            standardError = fit.standardErrors[p0],
+            estimate = coefficient(estimates, 0),
+            standardError = estimates.standardErrors[0],
         )
     }
 
@@ -409,17 +450,15 @@ private class GlmFitter(private val data: AssociationData, private val options: 
 
     private fun additive(c: Context, records: MutableList<AssociationRecord>) {
         val labels = c.columns.columnLabels
-        val columns = labels.indices.map { labels[it] to c.columns.column(it).copyOf(c.n) }
-        val block = fitBlock(c.base, columns, c.taxonOf)
-        val fit = LinearModelFit.of(block.design)
+        val block = c.fits.fit(GlmBlock.Marker)
         val single = labels.size == 1
         records += encodedRecord(
             c,
             block,
             block.test(),
             AssociationTestKind.Additive,
-            fit,
-            effectColumn = if (single) c.base.columnCount else -1,
+            block,
+            effectColumn = if (single) 0 else -1,
             effectAllele = labels.joinToString(","),
             singleAllele = single,
         )
@@ -427,36 +466,33 @@ private class GlmFitter(private val data: AssociationData, private val options: 
 
     private fun additiveDominance(c: Context, records: MutableList<AssociationRecord>) {
         val labels = c.columns.columnLabels
-        val addColumns = listOf(labels[0] to c.columns.column(0).copyOf(c.n))
-        val domColumns = listOf(labels[1] to c.columns.column(1).copyOf(c.n))
-        val full = fitBlock(c.base, addColumns + domColumns, c.taxonOf)
-        val additive = fitBlock(c.base, addColumns, c.taxonOf)
-        val fit = LinearModelFit.of(full.design)
-        val p0 = c.base.columnCount
-        // As TASSEL 5: add against the additive model's own error, dom against the full model's.
-        val joint = encodedRecord(
+        val full = c.fits.fit(GlmBlock.Marker)
+        val additive = c.fits.fit(GlmBlock.Additive)
+        // As TASSEL 5: add against the additive model's own error, dom against the full model's. Effects are the full
+        // model's coefficients.
+        records += encodedRecord(
             c,
             full,
             full.test(),
             AssociationTestKind.Genotype,
-            fit,
+            full,
             -1,
             labels.joinToString(","),
             true,
         )
-        records += joint
-        records += encodedRecord(c, additive, additive.test(), AssociationTestKind.Additive, fit, p0, labels[0], true)
+        records += encodedRecord(c, additive, additive.test(), AssociationTestKind.Additive, full, 0, labels[0], true)
         val domTest = Fstat.of(full.ss - additive.ss, full.df - additive.df, full.errorSs, full.errorDf)
-        records += encodedRecord(c, full, domTest, AssociationTestKind.Dominance, fit, p0 + 1, labels[1], true)
+        records += encodedRecord(c, full, domTest, AssociationTestKind.Dominance, full, 1, labels[1], true)
             .copy(numeratorDf = (full.df - additive.df).toDouble(), comparisonAllele = "")
     }
 
+    /** A record of [block]'s [test], with the effect of column [effectColumn] of [estimated] (none when negative). */
     private fun encodedRecord(
         c: Context,
-        block: BlockResult,
+        block: GlmBlockFit,
         test: Fstat,
         kind: AssociationTestKind,
-        fit: LinearModelFit,
+        estimated: GlmBlockFit,
         effectColumn: Int,
         effectAllele: String,
         singleAllele: Boolean,
@@ -464,14 +500,19 @@ private class GlmFitter(private val data: AssociationData, private val options: 
         val copies = if (singleAllele) c.columns.column(0).sumOfFirst(c.n) else Double.NaN
         val alleles = 2.0 * c.n
         val comparison = c.columns.comparisonAllele
-        val effect = if (effectColumn >= 0) fit.coefficients[effectColumn] else Double.NaN
-        val standardError = if (effectColumn >= 0) fit.standardErrors[effectColumn] else Double.NaN
+        var effect = Double.NaN
+        var standardError = Double.NaN
         var lower = Double.NaN
         var upper = Double.NaN
-        if (!standardError.isNaN() && fit.residualDf > 0) {
-            val t = StudentTDistribution(fit.residualDf.toDouble()).quantile(0.975)
-            lower = effect - t * standardError
-            upper = effect + t * standardError
+        if (effectColumn >= 0) {
+            val estimates = estimated.estimates
+            effect = estimates.coefficients[effectColumn]
+            standardError = estimates.standardErrors[effectColumn]
+            if (!standardError.isNaN() && estimates.residualDf > 0) {
+                val t = StudentTDistribution(estimates.residualDf.toDouble()).quantile(0.975)
+                lower = effect - t * standardError
+                upper = effect + t * standardError
+            }
         }
         return AssociationRecord(
             trait = c.id.trait,
@@ -480,11 +521,11 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             chromosome = c.id.chromosome,
             position = c.id.position,
             test = kind,
-            encoding = options.marker.encoding,
+            encoding = encoding,
             effectAllele = effectAllele,
             comparisonAllele = if (comparison == Allele.UNKNOWN) "" else Nucleotide.alleleString(comparison),
             observations = c.n,
-            taxa = taxa(c),
+            taxa = c.taxa,
             alleleCount = if (singleAllele) copies.toInt() else -1,
             alleleFrequency = if (singleAllele) copies / alleles else Double.NaN,
             minorAlleleCount = if (singleAllele) minOf(copies, alleles - copies).toInt() else -1,
@@ -512,43 +553,128 @@ private class GlmFitter(private val data: AssociationData, private val options: 
         for (i in 0 until count) sum += this[i]
         return sum
     }
+}
 
-    private fun taxa(c: Context): Int {
-        val taxonOf = c.taxonOf ?: return c.n
-        return taxonOf.toSet().size
+private fun GlmBlockFit.test(): Fstat = Fstat.of(ss, df, errorSs, errorDf)
+
+/** An F statistic and its p-values, computed as TASSEL 5 does: `((SS / df) / errorSS) * errorDf`. */
+private class Fstat(val f: Double, val p: Double, val log10P: Double) {
+    fun strict(): Fstat = if (f.isFinite()) this else NONE
+
+    companion object {
+        val NONE = Fstat(Double.NaN, Double.NaN, Double.NaN)
+
+        fun of(ss: Double, df: Int, errorSs: Double, errorDf: Int): Fstat {
+            val f = ss / df / errorSs * errorDf
+            if (!f.isFinite()) {
+                // TASSEL 5 turns a non-finite statistic into NaN for add and dom, and its p into NaN throughout;
+                // an infinite F with a positive error df is a perfect fit, which has p = 0.
+                if (f == Double.POSITIVE_INFINITY &&
+                    df > 0 &&
+                    errorDf > 0
+                ) {
+                    return Fstat(f, 0.0, Double.NEGATIVE_INFINITY)
+                }
+                return Fstat(f, Double.NaN, Double.NaN)
+            }
+            val p = try {
+                fTestPValue(f, df.toDouble(), errorDf.toDouble())
+            } catch (e: IllegalArgumentException) {
+                Double.NaN
+            }
+            val log10P = try {
+                fTestLog10PValue(f, df.toDouble(), errorDf.toDouble())
+            } catch (e: IllegalArgumentException) {
+                Double.NaN
+            }
+            return Fstat(f, p, log10P)
+        }
+    }
+}
+
+/**
+ * The reference fits: each trait's model at each marker from one QR of the whole design. Holds each trait's base design
+ * so it is built once. Not thread safe; the fast kernel gives each worker its own for replicated traits.
+ */
+internal class ReferenceGlm(private val data: AssociationData, private val options: GlmOptions) {
+    private class Trait(val spec: ModelSpec, val observations: IntArray, val replicated: Boolean) {
+        var base: DesignMatrix? = null
     }
 
-    // --- fitting ----------------------------------------------------------------------------------------------------
+    private val traits = data.traits.indices.map {
+        Trait(data.baseSpec(it), data.observations(it), data.hasReplicates(it))
+    }
 
-    /** Sums of squares and degrees of freedom of the block of columns added after the base model, and its error term. */
-    private class BlockResult(
-        val design: DesignMatrix,
-        val ss: Double,
-        val df: Int,
-        val errorSs: Double,
-        val errorDf: Int,
-        val modelSs: Double,
-        val modelDf: Int,
-        val totalSs: Double,
+    private val builder = GlmRecords(options)
+
+    /** Adds the records of trait [traitIndex] at [marker], whose columns for that trait's observations are [columns]. */
+    fun analyze(
+        traitIndex: Int,
+        marker: Int,
+        position: Position,
+        columns: MarkerColumns,
+        loaded: Boolean,
+        records: MutableList<AssociationRecord>,
+        effects: MutableList<AssociationEffect>,
     ) {
-        fun test(): Fstat = Fstat.of(ss, df, errorSs, errorDf)
+        val trait = traits[traitIndex]
+        val id = GlmMarkerId(data.traits[traitIndex], marker, position)
+        if (!builder.isTested(columns, loaded)) {
+            records += builder.skipped(id, columns)
+            return
+        }
+        val n = columns.size
+        val base = baseDesign(trait, columns)
+        val taxonOf = if (trait.replicated) {
+            IntArray(n) { data.taxonIds[trait.observations[columns.observation[it]]] }
+        } else {
+            null
+        }
+        val message = if (trait.replicated) TAXA_WITHIN_MARKER else ""
+        val taxa = taxonOf?.toSet()?.size ?: n
+        val encoding = options.marker.encoding
+        val fits = GlmBlockFits { block -> fitBlock(base, blockColumns(encoding, block, columns), taxonOf) }
+        builder.tested(id, columns, loaded, taxa, message, fits, records, effects)
+    }
+
+    private fun baseDesign(trait: Trait, columns: MarkerColumns): DesignMatrix {
+        val n = columns.size
+        if (n == trait.observations.size) {
+            return trait.base
+                ?: DesignMatrix.build(trait.spec, data.data.phenotype, trait.observations, GLM_RANK_TOLERANCE)
+                    .also { trait.base = it }
+        }
+        return DesignMatrix.build(
+            trait.spec,
+            data.data.phenotype,
+            IntArray(n) { trait.observations[columns.observation[it]] },
+            GLM_RANK_TOLERANCE,
+        )
     }
 
     /**
      * Fits `[base | block]`, plus taxa nested in the block when [taxonOf] is given, and reads the block's sequential sum
      * of squares from `Q'y`. The error term is the residual, or with replicated taxa the taxa term added after the block.
+     * The estimates are those of `[base | block]`, without the taxa.
      */
-    private fun fitBlock(base: DesignMatrix, block: List<Pair<String, DoubleArray>>, taxonOf: IntArray?): BlockResult {
+    private fun fitBlock(base: DesignMatrix, block: List<DoubleArray>, taxonOf: IntArray?): GlmBlockFit {
         val p0 = base.columnCount
-        val withBlock = extend(base, ModelTerm.MarkerTerm(BLOCK_LABEL), block)
+        val withBlock = extend(base, ModelTerm.MarkerTerm(BLOCK_LABEL), block.map { BLOCK_LABEL to it })
         val p1 = p0 + block.size
         val n = base.rows
+        val estimate = {
+            val fit = LinearModelFit.of(withBlock)
+            GlmEstimates(
+                fit.coefficients.copyOfRange(p0, p1),
+                fit.standardErrors.copyOfRange(p0, p1),
+                fit.residualDf,
+            )
+        }
         if (taxonOf == null) {
             val sums = Sums(withBlock)
             val r0 = sums.rankThrough(p0)
             val r1 = sums.rankThrough(p1)
-            return BlockResult(
-                withBlock,
+            return GlmBlockFit(
                 sums.ss(r0, r1),
                 r1 - r0,
                 sums.ss(sums.rank, n),
@@ -556,6 +682,7 @@ private class GlmFitter(private val data: AssociationData, private val options: 
                 sums.ss(1, sums.rank),
                 sums.rank - 1,
                 sums.ss(1, n),
+                estimate,
             )
         }
         val withTaxa = extend(withBlock, ModelTerm.Factor(TAXON_LABEL), taxonColumns(taxonOf))
@@ -563,8 +690,7 @@ private class GlmFitter(private val data: AssociationData, private val options: 
         val r0 = sums.rankThrough(p0)
         val r1 = sums.rankThrough(p1)
         val r2 = sums.rank
-        return BlockResult(
-            withBlock,
+        return GlmBlockFit(
             sums.ss(r0, r1),
             r1 - r0,
             sums.ss(r1, r2),
@@ -572,6 +698,7 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             sums.ss(1, r2),
             r2 - 1,
             sums.ss(1, n),
+            estimate,
         )
     }
 
@@ -615,41 +742,6 @@ private class GlmFitter(private val data: AssociationData, private val options: 
             var sum = 0.0
             for (i in from until minOf(to, qty.size)) sum += qty[i] * qty[i]
             return sum
-        }
-    }
-
-    /** An F statistic and its p-values, computed as TASSEL 5 does: `((SS / df) / errorSS) * errorDf`. */
-    private class Fstat(val f: Double, val p: Double, val log10P: Double) {
-        fun strict(): Fstat = if (f.isFinite()) this else NONE
-
-        companion object {
-            val NONE = Fstat(Double.NaN, Double.NaN, Double.NaN)
-
-            fun of(ss: Double, df: Int, errorSs: Double, errorDf: Int): Fstat {
-                val f = ss / df / errorSs * errorDf
-                if (!f.isFinite()) {
-                    // TASSEL 5 turns a non-finite statistic into NaN for add and dom, and its p into NaN throughout;
-                    // an infinite F with a positive error df is a perfect fit, which has p = 0.
-                    if (f == Double.POSITIVE_INFINITY &&
-                        df > 0 &&
-                        errorDf > 0
-                    ) {
-                        return Fstat(f, 0.0, Double.NEGATIVE_INFINITY)
-                    }
-                    return Fstat(f, Double.NaN, Double.NaN)
-                }
-                val p = try {
-                    fTestPValue(f, df.toDouble(), errorDf.toDouble())
-                } catch (e: IllegalArgumentException) {
-                    Double.NaN
-                }
-                val log10P = try {
-                    fTestLog10PValue(f, df.toDouble(), errorDf.toDouble())
-                } catch (e: IllegalArgumentException) {
-                    Double.NaN
-                }
-                return Fstat(f, p, log10P)
-            }
         }
     }
 

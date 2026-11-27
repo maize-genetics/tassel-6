@@ -34,6 +34,13 @@ internal object GlmDepartures {
         }
     }
 
+    /**
+     * D4's bound, `bound.cancellation_eps_multiple`: the multiple of eps of the error sum of squares within which a sum of
+     * squares that is zero in exact arithmetic is rounding noise. `GlmFastTest` builds its kernel-against-kernel bound
+     * from it, so the number has one source.
+     */
+    val cancellationEpsMultiple: Double get() = epsilonMultiple
+
     /** The ids of the rules, for the departure table. */
     val ids: Set<String> get() = skips.map { it.id }.toSet()
 
